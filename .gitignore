@@ -1,0 +1,21 @@
+# Benchmark data (keep local for now)
+experiments/results/
+experiments/cached_results/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
