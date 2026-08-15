@@ -638,6 +638,202 @@ def simulate_matrix_ucb(
         best_name, true_best_acc, true_best_obj, total_evals, total_cost,
         len(model_results), best_name == gt_name, 0.0, model_results,
     )
+
+
+def simulate_gittins(
+    models: List[str], datapoints: List[int], table: LookupTable,
+    lambda_cost: float = 0.0, lambda_latency: float = 0.0,
+    observation_budget_fraction: float = 1.0,
+    batch_size: int = 20,
+    prior_mean: float = 0.5,
+    prior_variance: float = 0.04,
+    obs_noise_variance: Optional[float] = None,
+    cost_per_transition: float = 1.0,
+    cost_scaling_factor: float = 1e-4,
+    allow_early_stop: bool = True,
+    seed: int = 42,
+) -> SimulationResult:
+    """Offline Gittins on combined-objective cell values."""
+    import torch
+    import numpy as np
+    import jax
+    import jax.numpy as jnp
+    from agentopt.model_selection.gittins_lookup import compute_roots_lookup_table
+    from agentopt.model_selection.gittins_policy import (
+        gittins_index_exploration,
+        gittins_post_pull_update,
+    )
+    from agentopt.model_selection.gittins_shrinking_posterior import (
+        transition_stds_shrinking_gaussian_posterior,
+    )
+
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    n_combos = len(models)
+    n_dp = len(datapoints)
+    bsz = max(int(batch_size), 1)
+    tau_sq = (
+        float(obs_noise_variance)
+        if obs_noise_variance is not None
+        else 1.0 / (4.0 * bsz)
+    )
+
+    available = np.zeros((n_combos, n_dp), dtype=bool)
+    for i, model_name in enumerate(models):
+        model_data = table.get(model_name, {})
+        for j, dp_id in enumerate(datapoints):
+            if dp_id in model_data:
+                available[i, j] = True
+    n_available = int(available.sum())
+    budget = (
+        max(1, int(math.ceil(observation_budget_fraction * n_available)))
+        if observation_budget_fraction < 1.0
+        else n_available
+    )
+
+    observed_np = np.full((n_combos, n_dp), np.nan, dtype=np.float64)
+    observed_t = torch.full((n_combos, n_dp), float("nan"), dtype=torch.float32)
+    for i in range(n_combos):
+        for j in range(n_dp):
+            if not available[i, j]:
+                observed_t[i, j] = float(prior_mean)
+
+    cell_costs: Dict[Tuple[int, int], float] = {}
+    total_evals = 0
+    total_cost = 0.0
+    cached_scores = torch.full((n_combos,), float("inf"), dtype=torch.float32)
+
+    transition_stds = transition_stds_shrinking_gaussian_posterior(
+        jnp.float32(prior_variance), jnp.float32(tau_sq), n_dp,
+    )
+    roots_all = compute_roots_lookup_table(
+        transition_stds=transition_stds,
+        costs_per_arm=jnp.float32(float(cost_per_transition) * float(cost_scaling_factor)),
+        n_points=2**10 + 1,
+    )
+    roots_lookup_table = torch.from_numpy(np.array(jax.device_get(roots_all), copy=True)).to(torch.float32)
+    if roots_lookup_table.ndim == 1:
+        roots_lookup_table = roots_lookup_table.unsqueeze(0)
+
+    last_pulled: Optional[List[int]] = None
+    natural_stop: List[Optional[int]] = [None]
+    rec_aware_stop: List[Optional[int]] = [None]
+
+    while True:
+        if total_evals >= budget:
+            break
+        step_bsz = min(bsz, budget - total_evals)
+        out = gittins_index_exploration(
+            observed_t,
+            prior_mean=prior_mean,
+            prior_variance=prior_variance,
+            obs_noise_variance=tau_sq,
+            cost_per_transition=cost_per_transition,
+            cost_scaling_factor=cost_scaling_factor,
+            batch_size=step_bsz,
+            cached_scores=cached_scores,
+            recompute_arms=None if last_pulled is None else last_pulled,
+            allow_early_stop=allow_early_stop,
+            roots_lookup_table=roots_lookup_table,
+        )
+        if out is None:
+            break
+
+        combo_idxs = out[0].tolist()
+        dp_idxs = out[1].tolist()
+        pulled = set()
+        for ci, di in zip(combo_idxs, dp_idxs):
+            if total_evals >= budget:
+                break
+            if not available[ci, di]:
+                continue
+            if not math.isnan(float(observed_t[ci, di])):
+                continue
+            model_name = models[ci]
+            dp_id = datapoints[di]
+            sr = table[model_name][dp_id]
+            val = compute_sample_objective(sr, lambda_cost, lambda_latency)
+            observed_t[ci, di] = float(val)
+            observed_np[ci, di] = float(val)
+            cell_costs[(ci, di)] = sr.cost
+            total_evals += 1
+            total_cost += sr.cost
+            pulled.add(int(ci))
+
+        if not pulled:
+            break
+        last_pulled = sorted(pulled)
+        _, cached_scores = gittins_post_pull_update(
+            observed_t,
+            cached_scores=cached_scores,
+            recompute_arms=last_pulled,
+            prior_mean=prior_mean,
+            prior_variance=prior_variance,
+            obs_noise_variance=tau_sq,
+            cost_per_transition=cost_per_transition,
+            cost_scaling_factor=cost_scaling_factor,
+            batch_size=step_bsz,
+            roots_lookup_table=roots_lookup_table,
+            sim_cum_eval=total_evals,
+            natural_stop_cum_eval_holder=natural_stop,
+            recommendation_aware_stop_cum_eval_holder=rec_aware_stop,
+        )
+        if allow_early_stop and natural_stop[0] is not None and observation_budget_fraction >= 1.0:
+            break
+
+    best_name = None
+    best_obj = float("-inf")
+    best_acc = 0.0
+    tol = 1e-9
+    model_results = []
+    for i, model_name in enumerate(models):
+        idxs = [
+            j for j in range(n_dp)
+            if available[i, j] and not math.isnan(float(observed_np[i, j]))
+        ]
+        if not idxs:
+            continue
+        obj_mean = float(np.mean([observed_np[i, j] for j in idxs]))
+        model_data_i = table.get(model_name, {})
+        scores = [model_data_i[datapoints[j]].score for j in idxs if datapoints[j] in model_data_i]
+        acc = sum(scores) / len(scores) if scores else 0.0
+        lats = [model_data_i[datapoints[j]].latency_seconds for j in idxs if datapoints[j] in model_data_i]
+        lat = sum(lats) / len(lats) if lats else 0.0
+        cost_i = sum(cell_costs.get((i, j), 0.0) for j in idxs)
+        model_results.append(ModelSummary(model_name, acc, obj_mean, lat, cost_i, len(idxs)))
+        if obj_mean > best_obj + tol:
+            best_name, best_obj, best_acc = model_name, obj_mean, acc
+
+    for mr in model_results:
+        mr.is_best = (mr.model_name == best_name)
+
+    if best_name is not None:
+        true_best_obj = compute_model_objective(
+            best_name, datapoints, table, lambda_cost, lambda_latency)
+        model_data_best = table.get(best_name, {})
+        all_scores = [model_data_best[dp].score for dp in datapoints if dp in model_data_best]
+        true_best_acc = sum(all_scores) / len(all_scores) if all_scores else 0.0
+    else:
+        true_best_obj = float("-inf")
+        true_best_acc = 0.0
+
+    gt_name, _, _ = compute_ground_truth(models, datapoints, table, lambda_cost, lambda_latency)
+    return SimulationResult(
+        "gittins", seed,
+        {
+            "observation_budget_fraction": observation_budget_fraction,
+            "batch_size": bsz,
+            "lambda_cost": lambda_cost,
+            "lambda_latency": lambda_latency,
+            "obs_noise_variance": tau_sq,
+            "allow_early_stop": allow_early_stop,
+        },
+        best_name, true_best_acc, true_best_obj, total_evals, total_cost,
+        len(model_results), best_name == gt_name, 0.0, model_results,
+    )
+
+
 def run_multi_seed(selector_fn, models, datapoints, table,
                    n_seeds, base_seed=0, **kwargs):
     results = []
@@ -738,7 +934,7 @@ def print_summary(summary):
 
 
 ALL_SELECTORS = [
-    "brute_force", "random_search", "matrix_ucb", "bayesian_optimization",
+    "brute_force", "random_search", "matrix_ucb", "gittins", "bayesian_optimization",
 ]
 
 
@@ -766,7 +962,11 @@ def main():
 
     # Matrix UCB params
     parser.add_argument("--ucb-budget", type=float, default=0.2,
-                        help="Matrix UCB observation budget fraction (default 0.2)")
+                        help="Matrix UCB / Gittins observation budget fraction (default 0.2)")
+    parser.add_argument("--gittins-batch", type=int, default=20,
+                        help="Gittins per-step example batch size (default 20)")
+    parser.add_argument("--gittins-no-early-stop", action="store_true",
+                        help="Disable Gittins natural early stop")
 
     args = parser.parse_args()
 
@@ -828,6 +1028,15 @@ def main():
             fn = simulate_matrix_ucb
             kwargs = {"observation_budget_fraction": args.ucb_budget,
                       "lambda_cost": lc, "lambda_latency": ll}
+        elif sel == "gittins":
+            fn = simulate_gittins
+            kwargs = {
+                "observation_budget_fraction": args.ucb_budget,
+                "batch_size": args.gittins_batch,
+                "allow_early_stop": not args.gittins_no_early_stop,
+                "lambda_cost": lc,
+                "lambda_latency": ll,
+            }
         else:
             print(f"\n  Unknown selector: {sel}")
             continue

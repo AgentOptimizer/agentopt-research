@@ -21,6 +21,11 @@ from .model_selection import (
 from .proxy import CallRecord, LLMTracker, SessionInfo
 
 try:
+    from .model_selection import GittinsModelSelector
+except ImportError:
+    GittinsModelSelector = None  # type: ignore[misc, assignment]
+
+try:
     from .model_selection import BayesianOptimizationModelSelector
 except ImportError:
     BayesianOptimizationModelSelector = None  # type: ignore[misc, assignment]
@@ -30,6 +35,7 @@ _METHODS = {
     "brute_force": BruteForceModelSelector,
     "random": RandomSearchModelSelector,
     "matrix_ucb": MatrixUCBModelSelector,
+    "gittins": GittinsModelSelector,
     "bayesian": BayesianOptimizationModelSelector,
 }
 
@@ -44,6 +50,10 @@ def ModelSelector(
             raise ImportError(
                 "Bayesian optimization requires optional deps: "
                 "numpy, torch, botorch, gpytorch"
+            )
+        if method == "gittins":
+            raise ImportError(
+                "Gittins requires optional deps: numpy, torch, jax, jaxtyping"
             )
         raise ValueError(
             f"Unknown method {method!r}. Choose from: {', '.join(_METHODS)}"
@@ -61,6 +71,7 @@ __all__ = [
     "BruteForceModelSelector",
     "RandomSearchModelSelector",
     "MatrixUCBModelSelector",
+    "GittinsModelSelector",
     "BayesianOptimizationModelSelector",
     "DatapointResult",
     "ModelResult",

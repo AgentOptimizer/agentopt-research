@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from offline_selector_sim_v3 import (
     load_pickle, set_norm_stats, compute_ground_truth,
     simulate_brute_force, simulate_random_search,
-    simulate_matrix_ucb, _require_data_path,
+    simulate_matrix_ucb, simulate_gittins, _require_data_path,
 )
 
 try:
@@ -30,6 +30,8 @@ SELECTORS = [
     ("Random Search", simulate_random_search, {"sample_fraction": 0.25}),
     ("Matrix UCB (β=0.2)", simulate_matrix_ucb, {"a": 1.0, "observation_budget_fraction": 0.2}),
     ("Matrix UCB (β=0.5)", simulate_matrix_ucb, {"a": 1.0, "observation_budget_fraction": 0.5}),
+    ("Gittins (β=0.2)", simulate_gittins, {"observation_budget_fraction": 0.2, "batch_size": 20}),
+    ("Gittins (β=0.5)", simulate_gittins, {"observation_budget_fraction": 0.5, "batch_size": 20}),
 ]
 
 if simulate_bayesian_optimization:

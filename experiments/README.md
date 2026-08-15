@@ -54,7 +54,9 @@ cd combined_objective && python run_all_selectors.py
 Scripts auto-add `../src` to `PYTHONPATH` so `agentopt.model_selection` imports work.
 If a pickle is missing, they exit with a pointer to the local data directory.
 
-Available selectors: `brute_force` (v3), `random_search`, `matrix_ucb`, `bayesian_optimization`.
+Available selectors: `brute_force` (v3), `random_search`, `matrix_ucb`, `gittins`, `bayesian_optimization`.
+
+Gittins needs `jax` / `jaxtyping` / `torch` (same stack as the Gittins index code).
 
 ## Benchmarks
 

@@ -6,7 +6,7 @@ Model-selection **algorithms** plus frozen benchmark results (**accuracy**, **co
 
 ```
 src/agentopt/
-├── model_selection/            # brute_force, random_search, matrix_ucb, bayesian
+├── model_selection/            # brute_force, random_search, matrix_ucb, gittins, bayesian
 ├── base_models.py              # Shared types
 └── model_price.py / .json      # Pricing table
 
