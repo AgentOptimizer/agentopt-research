@@ -1,6 +1,7 @@
 # Benchmark data (keep local for now)
 experiments/results/
 experiments/cached_results/
+/plot/
 
 # Python
 __pycache__/

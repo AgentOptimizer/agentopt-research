@@ -65,11 +65,25 @@ def _gittins_posterior_means(
     prior_mean: float,
     prior_variance: float,
     tau_sq_cell: float,
+    availability_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return (mus_posterior, counts, completely_sensed_mask) for the current mask."""
-    counts = (~observed_matrix.isnan()).sum(1)
-    completely_sensed_mask = counts == observed_matrix.shape[1]
-    obs_sum_per_arm = torch.nan_to_num(observed_matrix, nan=0.0).sum(dim=1).to(torch.float64)
+    if availability_mask is None:
+        availability_mask = torch.ones_like(observed_matrix, dtype=torch.bool)
+    else:
+        availability_mask = availability_mask.to(dtype=torch.bool, device=observed_matrix.device)
+        if availability_mask.shape != observed_matrix.shape:
+            raise ValueError(
+                "availability_mask must match observed_matrix shape; "
+                f"got {tuple(availability_mask.shape)} vs {tuple(observed_matrix.shape)}"
+            )
+    observed_mask = availability_mask & ~observed_matrix.isnan()
+    counts = observed_mask.sum(1)
+    available_counts = availability_mask.sum(1)
+    completely_sensed_mask = counts == available_counts
+    obs_sum_per_arm = torch.where(
+        observed_mask, observed_matrix, torch.zeros_like(observed_matrix)
+    ).sum(dim=1).to(torch.float64)
     t = counts.to(torch.float64)
     v0 = float(prior_variance)
     prec = (1.0 / v0) + (t / float(tau_sq_cell))
@@ -100,6 +114,7 @@ def _refresh_gittins_scores(
     force_per_observation_dp: bool,
     roots_lookup_table: torch.Tensor,
     n_examples: int,
+    available_counts: torch.Tensor | None = None,
 ) -> None:
     """Update ``scores[k]`` in place for listed arms; complete arms use posterior mean."""
     n_pts = int(n_gittins_grid_points)
@@ -115,7 +130,11 @@ def _refresh_gittins_scores(
         )
         c_k = float(arm_costs[k].item())
         if use_batch_mean_gittins_dp:
-            remaining = n_examples - t
+            arm_horizon = (
+                int(available_counts[k].item())
+                if available_counts is not None else n_examples
+            )
+            remaining = arm_horizon - t
             bsz_plan = int(batch_size)
             n_batch = (remaining + bsz_plan - 1) // bsz_plan
             transition_costs_bm = jnp.full((n_batch,), c_k, dtype=jnp.float32)
@@ -129,7 +148,11 @@ def _refresh_gittins_scores(
                 jnp.uint32(n_pts),
             )
         elif force_per_observation_dp:
-            transition_costs_per_cell = jnp.full((n_examples,), c_k, dtype=jnp.float32)
+            arm_horizon = (
+                int(available_counts[k].item())
+                if available_counts is not None else n_examples
+            )
+            transition_costs_per_cell = jnp.full((arm_horizon,), c_k, dtype=jnp.float32)
             g = compute_gittins_shrinking_posterior_walk_per_observation(
                 jnp.uint32(t),
                 jnp.float32(mu_kt),
@@ -197,6 +220,7 @@ def gittins_post_pull_update(
     force_per_observation_dp: bool = False,
     roots_lookup_table: torch.Tensor | None = None,
     batch_observation_model: bool = False,
+    availability_mask: torch.Tensor | None = None,
     sim_cum_eval: int,
     natural_stop_cum_eval_holder: list[int | None] | None = None,
     recommendation_aware_stop_cum_eval_holder: list[int | None] | None = None,
@@ -205,6 +229,8 @@ def gittins_post_pull_update(
     observed_matrix = observed_matrix.detach()
     if observed_matrix.device.type != "cpu":
         observed_matrix = observed_matrix.cpu()
+    if availability_mask is not None:
+        availability_mask = availability_mask.detach().to(device="cpu", dtype=torch.bool)
 
     m_methods, n_examples = observed_matrix.shape
     tau_sq = float(obs_noise_variance)
@@ -214,6 +240,12 @@ def gittins_post_pull_update(
         prior_mean=prior_mean,
         prior_variance=prior_variance,
         tau_sq_cell=tau_sq_cell,
+        availability_mask=availability_mask,
+    )
+    available_counts = (
+        availability_mask.sum(1)
+        if availability_mask is not None
+        else torch.full((m_methods,), n_examples, dtype=torch.long)
     )
 
     if cached_scores.shape != (m_methods,) or cached_scores.dtype != torch.float32:
@@ -267,6 +299,7 @@ def gittins_post_pull_update(
         force_per_observation_dp=force_per_observation_dp,
         roots_lookup_table=roots_lookup_table,
         n_examples=n_examples,
+        available_counts=available_counts,
     )
     evaluate_gittins_stopping_rules(
         scores,
@@ -300,6 +333,7 @@ def gittins_index_exploration(
     roots_lookup_table: torch.Tensor | None = None,
     force_per_observation_dp: bool = False,
     batch_observation_model: bool = False,
+    availability_mask: torch.Tensor | None = None,
 ):
     """
     One step of Gittins-index exploration on a masked observation matrix.
@@ -331,7 +365,8 @@ def gittins_index_exploration(
     the same simulator can call either policy.
 
     Args:
-        observed_matrix: (n_arms, n_examples) with NaN for unevaluated cells.
+        observed_matrix: (n_arms, n_examples) with NaN for unevaluated cells. Missing cells also
+            remain NaN and must be distinguished with ``availability_mask``.
         prior_mean: μ_0 in the Gaussian prior on each θ_k (default 0.5).
         prior_variance: v_0 in the Gaussian prior on each θ_k (default 0.01).
         obs_noise_variance: τ² in Y | θ_k ~ N(θ_k, τ²). With the 1/(4B) bound above, τ² is
@@ -370,6 +405,9 @@ def gittins_index_exploration(
             ``gittins_post_pull_update`` with post-pull ``sim_cum_eval`` for stop-time holders.
         natural_stop_cum_eval_holder: Ignored; use ``gittins_post_pull_update`` instead.
         recommendation_aware_stop_cum_eval_holder: Ignored; use ``gittins_post_pull_update`` instead.
+        availability_mask: Optional boolean matrix matching ``observed_matrix``. False cells do
+            not exist: they cannot be selected and do not enter posterior counts, sums, horizons,
+            or fully-observed status.
 
     Returns:
         ``batch`` with shape ``(2, b)``, ``b ≤ batch_size``, or ``None`` if every cell is observed.
@@ -386,6 +424,8 @@ def gittins_index_exploration(
     observed_matrix = observed_matrix.detach()
     if observed_matrix.device.type != "cpu":
         observed_matrix = observed_matrix.cpu()
+    if availability_mask is not None:
+        availability_mask = availability_mask.detach().to(device="cpu", dtype=torch.bool)
 
     m_methods, n_examples = observed_matrix.shape
     tau_sq = float(obs_noise_variance)
@@ -395,6 +435,12 @@ def gittins_index_exploration(
         prior_mean=prior_mean,
         prior_variance=prior_variance,
         tau_sq_cell=tau_sq_cell,
+        availability_mask=availability_mask,
+    )
+    available_counts = (
+        availability_mask.sum(1)
+        if availability_mask is not None
+        else torch.full((m_methods,), n_examples, dtype=torch.long)
     )
 
     if completely_sensed_mask.sum() == m_methods:
@@ -468,6 +514,7 @@ def gittins_index_exploration(
         force_per_observation_dp=force_per_observation_dp,
         roots_lookup_table=roots_lookup_table,
         n_examples=n_examples,
+        available_counts=available_counts,
     )
 
     best_method_index = int(torch.argmax(scores).item())
@@ -482,9 +529,10 @@ def gittins_index_exploration(
             return (None, mus_posterior) if return_mus else None
         best_method_index = int(torch.argmax(scores_eff).item())
 
-    unobserved_column_indices = (
-        observed_matrix[best_method_index].isnan().nonzero().flatten()
-    )
+    selectable = observed_matrix[best_method_index].isnan()
+    if availability_mask is not None:
+        selectable &= availability_mask[best_method_index]
+    unobserved_column_indices = selectable.nonzero().flatten()
     n_unobserved = int(unobserved_column_indices.size(0))
     bsz = min(int(batch_size), n_unobserved)
     perm = torch.randperm(n_unobserved)[:bsz]
