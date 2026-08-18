@@ -19,6 +19,7 @@ Usage:
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
@@ -27,12 +28,17 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 _EXPERIMENTS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _EXPERIMENTS_DIR.parent
 _SRC_DIR = _REPO_ROOT / "src"
 _DEFAULT_PICKLE_DIR = _EXPERIMENTS_DIR / "results" / "cache_db_results"
+_GITTINS_ROOTS_DISK_CACHE = _EXPERIMENTS_DIR / "results" / "cache_gittins_roots"
+
+# Reused across seeds in plotting sweeps. Building the JAX lookup is the
+# dominant fixed cost, while it is identical for a given matrix/configuration.
+_GITTINS_ROOTS_CACHE: Dict[Tuple[Any, ...], Any] = {}
 
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
@@ -488,6 +494,8 @@ def print_summary(summary):
 def simulate_matrix_ucb(
     models: List[str], datapoints: List[int], table: LookupTable,
     a: float = 1.0, observation_budget_fraction: float = 1.0,
+    max_original_cost: Optional[float] = None,
+    accounting_cost_per_arm: Optional[Sequence[float]] = None,
     seed: int = 42,
     history: Optional[List[Dict[str, Any]]] = None,
 ) -> SimulationResult:
@@ -523,7 +531,17 @@ def simulate_matrix_ucb(
     mu_star = float(np.nanmax(true_means))
 
     # Budget: stop after observing this many cells
-    budget = max(1, int(math.ceil(observation_budget_fraction * n_available))) if observation_budget_fraction < 1.0 else n_available
+    budget = (
+        n_available if max_original_cost is not None else
+        max(1, int(math.ceil(observation_budget_fraction * n_available)))
+        if observation_budget_fraction < 1.0 else n_available
+    )
+    accounting_costs = (
+        np.asarray(accounting_cost_per_arm, dtype=np.float64)
+        if accounting_cost_per_arm is not None else None
+    )
+    if accounting_costs is not None and accounting_costs.shape != (n_combos,):
+        raise ValueError(f"accounting_cost_per_arm must have shape ({n_combos},)")
 
     # observed tracks scores; unavailable cells use -inf sentinel (excluded from UCB)
     observed = np.full((n_combos, n_dp), np.nan, dtype=np.float64)
@@ -537,6 +555,8 @@ def simulate_matrix_ucb(
     while True:
         filled = int(np.sum(~np.isnan(observed)))
         if filled >= budget:
+            break
+        if max_original_cost is not None and total_cost >= float(max_original_cost):
             break
 
         # UCB selection (same as _ucb_plain_next_batch)
@@ -574,7 +594,10 @@ def simulate_matrix_ucb(
             observed[best_combo, dp_local_idx] = sr.score
             cell_costs[(best_combo, dp_local_idx)] = sr.cost
             total_evals += 1
-            total_cost += sr.cost
+            total_cost += (
+                float(accounting_costs[best_combo])
+                if accounting_costs is not None else sr.cost
+            )
 
         if history is not None:
             empirical_means = np.nanmean(observed, axis=1)
@@ -636,8 +659,10 @@ def simulate_gittins(
     prior_mean: float = 0.5,
     prior_variance: float = 0.04,
     obs_noise_variance: Optional[float] = None,
-    cost_per_transition: float = 1.0,
+    cost_per_transition: float | Sequence[float] = 1.0,
     cost_scaling_factor: float = 1e-4,
+    max_original_cost: Optional[float] = None,
+    accounting_cost_per_arm: Optional[Sequence[float]] = None,
     allow_early_stop: bool = False,
     seed: int = 42,
     history: Optional[List[Dict[str, Any]]] = None,
@@ -685,10 +710,22 @@ def simulate_gittins(
     ], dtype=np.float64)
     mu_star = float(np.nanmax(true_means))
     budget = (
+        n_available if max_original_cost is not None else
         max(1, int(math.ceil(observation_budget_fraction * n_available)))
-        if observation_budget_fraction < 1.0
-        else n_available
+        if observation_budget_fraction < 1.0 else n_available
     )
+    if isinstance(cost_per_transition, (int, float)):
+        decision_costs = np.full((n_combos,), float(cost_per_transition), dtype=np.float64)
+    else:
+        decision_costs = np.asarray(list(cost_per_transition), dtype=np.float64)
+        if decision_costs.shape != (n_combos,):
+            raise ValueError(f"cost_per_transition must have shape ({n_combos},)")
+    accounting_costs = (
+        np.asarray(accounting_cost_per_arm, dtype=np.float64)
+        if accounting_cost_per_arm is not None else None
+    )
+    if accounting_costs is not None and accounting_costs.shape != (n_combos,):
+        raise ValueError(f"accounting_cost_per_arm must have shape ({n_combos},)")
 
     # Missing and not-yet-observed cells both stay NaN.  ``available_t`` is the
     # sole authority for whether a cell exists, matching Matrix UCB semantics.
@@ -704,32 +741,57 @@ def simulate_gittins(
     # A ragged response matrix gives each arm a different finite horizon. Build
     # one lookup row per arm; padding is never indexed because counts cannot
     # exceed that arm's number of available cells.
-    roots_lookup_table = torch.zeros((n_combos, n_dp + 1), dtype=torch.float32)
-    roots_by_horizon: Dict[int, torch.Tensor] = {}
-    for i, horizon_np in enumerate(available.sum(axis=1)):
-        horizon = int(horizon_np)
-        if horizon not in roots_by_horizon:
+    horizons = available.sum(axis=1).astype(int)
+    cache_key = (
+        float(prior_variance), float(tau_sq_cell), int(n_dp),
+        tuple(int(x) for x in horizons),
+        tuple(float(x) for x in decision_costs), float(cost_scaling_factor),
+    )
+    cached_roots = _GITTINS_ROOTS_CACHE.get(cache_key)
+    cache_digest = hashlib.sha256(repr(cache_key).encode("utf-8")).hexdigest()
+    roots_cache_path = _GITTINS_ROOTS_DISK_CACHE / f"{cache_digest}.npy"
+    if cached_roots is None and roots_cache_path.exists():
+        cached_roots = torch.from_numpy(np.load(roots_cache_path)).to(torch.float32)
+        _GITTINS_ROOTS_CACHE[cache_key] = cached_roots.clone()
+    if cached_roots is not None:
+        roots_lookup_table = cached_roots.clone()
+    else:
+        roots_lookup_table = torch.zeros((n_combos, n_dp + 1), dtype=torch.float32)
+        for horizon_np in np.unique(horizons):
+            horizon = int(horizon_np)
+            arm_indices = np.flatnonzero(horizons == horizon)
             transition_stds = transition_stds_shrinking_gaussian_posterior(
                 jnp.float32(prior_variance), jnp.float32(tau_sq_cell), horizon,
             )
             roots = compute_roots_lookup_table(
                 transition_stds=transition_stds,
-                costs_per_arm=jnp.float32(
-                    float(cost_per_transition) * float(cost_scaling_factor)
+                costs_per_arm=jnp.asarray(
+                    decision_costs[arm_indices] * float(cost_scaling_factor),
+                    dtype=jnp.float32,
                 ),
                 n_points=2**10 + 1,
             )
-            roots_by_horizon[horizon] = torch.from_numpy(
+            roots_group = torch.from_numpy(
                 np.array(jax.device_get(roots), copy=True)
-            ).to(torch.float32).reshape(-1)
-        roots_lookup_table[i, :horizon + 1] = roots_by_horizon[horizon]
+            ).to(torch.float32)
+            if roots_group.ndim == 1:
+                roots_group = roots_group.unsqueeze(0)
+            for row, arm_idx in enumerate(arm_indices):
+                roots_lookup_table[int(arm_idx), :horizon + 1] = roots_group[row]
+        _GITTINS_ROOTS_CACHE[cache_key] = roots_lookup_table.clone()
+        _GITTINS_ROOTS_DISK_CACHE.mkdir(parents=True, exist_ok=True)
+        np.save(roots_cache_path, roots_lookup_table.cpu().numpy())
 
     last_pulled: Optional[List[int]] = None
     natural_stop: List[Optional[int]] = [None]
     rec_aware_stop: List[Optional[int]] = [None]
+    natural_stop_cost: Optional[float] = None
+    rec_aware_stop_cost: Optional[float] = None
 
     while True:
         if total_evals >= budget:
+            break
+        if max_original_cost is not None and total_cost >= float(max_original_cost):
             break
         step_bsz = min(bsz, budget - total_evals)
         out = gittins_index_exploration(
@@ -767,12 +829,17 @@ def simulate_gittins(
             observed_np[ci, di] = float(sr.score)
             cell_costs[(ci, di)] = sr.cost
             total_evals += 1
-            total_cost += sr.cost
+            total_cost += (
+                float(accounting_costs[ci])
+                if accounting_costs is not None else sr.cost
+            )
             pulled.add(int(ci))
 
         if not pulled:
             break
         last_pulled = sorted(pulled)
+        natural_before = natural_stop[0]
+        rec_before = rec_aware_stop[0]
         _, cached_scores = gittins_post_pull_update(
             observed_t,
             cached_scores=cached_scores,
@@ -790,6 +857,10 @@ def simulate_gittins(
             natural_stop_cum_eval_holder=natural_stop,
             recommendation_aware_stop_cum_eval_holder=rec_aware_stop,
         )
+        if natural_before is None and natural_stop[0] is not None:
+            natural_stop_cost = float(total_cost)
+        if rec_before is None and rec_aware_stop[0] is not None:
+            rec_aware_stop_cost = float(total_cost)
         if history is not None:
             observed_mask = available_t & ~observed_t.isnan()
             counts = observed_mask.sum(dim=1).to(torch.float64)
@@ -854,8 +925,11 @@ def simulate_gittins(
     if run_metadata is not None:
         run_metadata.update({
             "natural_stop_cum_eval": natural_stop[0],
+            "natural_stop_cum_cost": natural_stop_cost,
             "recommendation_aware_stop_cum_eval": rec_aware_stop[0],
+            "recommendation_aware_stop_cum_cost": rec_aware_stop_cost,
             "actual_final_cum_eval": total_evals,
+            "actual_final_cum_cost": total_cost,
             "total_wall_time_s": total_wall_time_s,
             "tau_sq_batch": tau_sq_batch,
             "tau_sq_cell": tau_sq_cell,
@@ -872,6 +946,8 @@ def simulate_gittins(
             "tau_sq_cell": tau_sq_cell,
             "batch_observation_model": True,
             "allow_early_stop": False,
+            "max_original_cost": max_original_cost,
+            "cost_per_transition": decision_costs.tolist(),
             "natural_stop_cum_eval": natural_stop[0],
             "recommendation_aware_stop_cum_eval": rec_aware_stop[0],
             "total_wall_time_s": total_wall_time_s,
