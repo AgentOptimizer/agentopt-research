@@ -1,0 +1,178 @@
+{
+  "benchmark": "mathqa",
+  "source": "experiments/results/cache_db_results/mathqa_lookup.pkl",
+  "shape": [
+    81,
+    200
+  ],
+  "observed_cells": 14961,
+  "missing_cells": 1239,
+  "orientation": "rows=model configurations; columns=question IDs",
+  "blank_cells": "missing lookup-table observations, not zero",
+  "input_token_definition": "sum of input tokens across workflow calls",
+  "output_token_definition": "sum of output tokens across workflow calls",
+  "total_token_definition": "input plus output tokens",
+  "source_note": "These matrices intentionally reflect the current research lookup pickle. They are not merged with or corrected from a separate JSONL run.",
+  "top_20_cost_cells": [
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Qwen3 Next 80B A3B",
+      "question_id": 37,
+      "cost_usd": 5.091896900000001,
+      "input_tokens": 4512518,
+      "output_tokens": 139565,
+      "total_tokens": 4652083
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=gpt-oss-120b",
+      "question_id": 144,
+      "cost_usd": 0.84929545,
+      "input_tokens": 802027,
+      "output_tokens": 14538,
+      "total_tokens": 816565
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=Claude Opus 4.6",
+      "question_id": 115,
+      "cost_usd": 0.6762387,
+      "input_tokens": 1373485,
+      "output_tokens": 29822,
+      "total_tokens": 1403307
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=Claude Opus 4.6",
+      "question_id": 13,
+      "cost_usd": 0.59949505,
+      "input_tokens": 1800408,
+      "output_tokens": 30082,
+      "total_tokens": 1830490
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=Claude Opus 4.6",
+      "question_id": 104,
+      "cost_usd": 0.42754050000000005,
+      "input_tokens": 1245213,
+      "output_tokens": 22750,
+      "total_tokens": 1267963
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Qwen3 32B",
+      "question_id": 144,
+      "cost_usd": 0.42505160000000003,
+      "input_tokens": 388484,
+      "output_tokens": 12781,
+      "total_tokens": 401265
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Kimi K2.5",
+      "question_id": 144,
+      "cost_usd": 0.4159564,
+      "input_tokens": 365103,
+      "output_tokens": 12697,
+      "total_tokens": 377800
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Ministral 3 8B",
+      "question_id": 144,
+      "cost_usd": 0.3882488,
+      "input_tokens": 357112,
+      "output_tokens": 11163,
+      "total_tokens": 368275
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Claude Opus 4.6",
+      "question_id": 144,
+      "cost_usd": 0.376168,
+      "input_tokens": 248354,
+      "output_tokens": 7966,
+      "total_tokens": 256320
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Qwen3 Next 80B A3B",
+      "question_id": 98,
+      "cost_usd": 0.3679073,
+      "input_tokens": 91371,
+      "output_tokens": 69567,
+      "total_tokens": 160938
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=Claude Haiku 4.5",
+      "question_id": 13,
+      "cost_usd": 0.3429312500000001,
+      "input_tokens": 1800383,
+      "output_tokens": 30374,
+      "total_tokens": 1830757
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=Kimi K2.5",
+      "question_id": 13,
+      "cost_usd": 0.31335465,
+      "input_tokens": 1793564,
+      "output_tokens": 30332,
+      "total_tokens": 1823896
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=Claude 3 Haiku",
+      "question_id": 13,
+      "cost_usd": 0.30677224999999997,
+      "input_tokens": 1862912,
+      "output_tokens": 29926,
+      "total_tokens": 1892838
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Claude Haiku 4.5",
+      "question_id": 144,
+      "cost_usd": 0.30153800000000003,
+      "input_tokens": 259193,
+      "output_tokens": 8469,
+      "total_tokens": 267662
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=Qwen3 32B",
+      "question_id": 13,
+      "cost_usd": 0.29802045,
+      "input_tokens": 1865219,
+      "output_tokens": 30396,
+      "total_tokens": 1895615
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=gpt-oss-120b",
+      "question_id": 13,
+      "cost_usd": 0.28808609999999996,
+      "input_tokens": 1792330,
+      "output_tokens": 32061,
+      "total_tokens": 1824391
+    },
+    {
+      "model_name": "answer=Qwen3 32B + critic=gpt-oss-20b",
+      "question_id": 13,
+      "cost_usd": 0.28279075000000004,
+      "input_tokens": 1792595,
+      "output_tokens": 30945,
+      "total_tokens": 1823540
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=gpt-oss-20b",
+      "question_id": 144,
+      "cost_usd": 0.27459105999999994,
+      "input_tokens": 249892,
+      "output_tokens": 11080,
+      "total_tokens": 260972
+    },
+    {
+      "model_name": "answer=Claude Haiku 4.5 + critic=Qwen3 Next 80B A3B",
+      "question_id": 144,
+      "cost_usd": 0.27398315,
+      "input_tokens": 251783,
+      "output_tokens": 8760,
+      "total_tokens": 260543
+    },
+    {
+      "model_name": "answer=Qwen3 Next 80B A3B + critic=Claude Opus 4.6",
+      "question_id": 31,
+      "cost_usd": 0.2704909,
+      "input_tokens": 73487,
+      "output_tokens": 16970,
+      "total_tokens": 90457
+    }
+  ]
+}

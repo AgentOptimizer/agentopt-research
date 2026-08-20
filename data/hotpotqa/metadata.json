@@ -1,0 +1,178 @@
+{
+  "benchmark": "hotpotqa",
+  "source": "experiments/results/cache_db_results/hotpotqa_lookup.pkl",
+  "shape": [
+    81,
+    200
+  ],
+  "observed_cells": 16168,
+  "missing_cells": 32,
+  "orientation": "rows=model configurations; columns=question IDs",
+  "blank_cells": "missing lookup-table observations, not zero",
+  "input_token_definition": "sum of input tokens across workflow calls",
+  "output_token_definition": "sum of output tokens across workflow calls",
+  "total_token_definition": "input plus output tokens",
+  "source_note": "These matrices intentionally reflect the current research lookup pickle. They are not merged with or corrected from a separate JSONL run.",
+  "top_20_cost_cells": [
+    {
+      "model_name": "planner=gpt-oss-120b + solver=Claude Opus 4.6",
+      "question_id": 13,
+      "cost_usd": 0.13698055,
+      "input_tokens": 18282,
+      "output_tokens": 2777,
+      "total_tokens": 21059
+    },
+    {
+      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
+      "question_id": 13,
+      "cost_usd": 0.087505,
+      "input_tokens": 9213,
+      "output_tokens": 2068,
+      "total_tokens": 11281
+    },
+    {
+      "model_name": "planner=Qwen3 Next 80B A3B + solver=Claude Opus 4.6",
+      "question_id": 163,
+      "cost_usd": 0.05153990000000001,
+      "input_tokens": 10863,
+      "output_tokens": 312,
+      "total_tokens": 11175
+    },
+    {
+      "model_name": "planner=gpt-oss-120b + solver=Claude Opus 4.6",
+      "question_id": 126,
+      "cost_usd": 0.05092265,
+      "input_tokens": 9282,
+      "output_tokens": 635,
+      "total_tokens": 9917
+    },
+    {
+      "model_name": "planner=Kimi K2.5 + solver=Claude Opus 4.6",
+      "question_id": 126,
+      "cost_usd": 0.050734800000000004,
+      "input_tokens": 9142,
+      "output_tokens": 462,
+      "total_tokens": 9604
+    },
+    {
+      "model_name": "planner=Qwen3 Next 80B A3B + solver=Claude Opus 4.6",
+      "question_id": 126,
+      "cost_usd": 0.05048175,
+      "input_tokens": 9242,
+      "output_tokens": 486,
+      "total_tokens": 9728
+    },
+    {
+      "model_name": "planner=Claude Haiku 4.5 + solver=Claude Opus 4.6",
+      "question_id": 151,
+      "cost_usd": 0.049117,
+      "input_tokens": 9001,
+      "output_tokens": 428,
+      "total_tokens": 9429
+    },
+    {
+      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
+      "question_id": 199,
+      "cost_usd": 0.046038749999999996,
+      "input_tokens": 9420,
+      "output_tokens": 329,
+      "total_tokens": 9749
+    },
+    {
+      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
+      "question_id": 185,
+      "cost_usd": 0.04362875,
+      "input_tokens": 9190,
+      "output_tokens": 233,
+      "total_tokens": 9423
+    },
+    {
+      "model_name": "planner=Claude Haiku 4.5 + solver=Claude Opus 4.6",
+      "question_id": 126,
+      "cost_usd": 0.04314899999999999,
+      "input_tokens": 8955,
+      "output_tokens": 222,
+      "total_tokens": 9177
+    },
+    {
+      "model_name": "planner=gpt-oss-20b + solver=Claude Opus 4.6",
+      "question_id": 126,
+      "cost_usd": 0.042559889999999996,
+      "input_tokens": 8818,
+      "output_tokens": 1143,
+      "total_tokens": 9961
+    },
+    {
+      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
+      "question_id": 126,
+      "cost_usd": 0.042016000000000005,
+      "input_tokens": 8865,
+      "output_tokens": 220,
+      "total_tokens": 9085
+    },
+    {
+      "model_name": "planner=Ministral 3 8B + solver=Claude Opus 4.6",
+      "question_id": 163,
+      "cost_usd": 0.04124825,
+      "input_tokens": 8101,
+      "output_tokens": 473,
+      "total_tokens": 8574
+    },
+    {
+      "model_name": "planner=Qwen3 32B + solver=Claude Opus 4.6",
+      "question_id": 126,
+      "cost_usd": 0.041043750000000004,
+      "input_tokens": 8800,
+      "output_tokens": 182,
+      "total_tokens": 8982
+    },
+    {
+      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
+      "question_id": 163,
+      "cost_usd": 0.039213500000000005,
+      "input_tokens": 8143,
+      "output_tokens": 448,
+      "total_tokens": 8591
+    },
+    {
+      "model_name": "planner=Claude Haiku 4.5 + solver=Claude Opus 4.6",
+      "question_id": 163,
+      "cost_usd": 0.037579,
+      "input_tokens": 7994,
+      "output_tokens": 309,
+      "total_tokens": 8303
+    },
+    {
+      "model_name": "planner=gpt-oss-120b + solver=Claude Opus 4.6",
+      "question_id": 112,
+      "cost_usd": 0.03716555,
+      "input_tokens": 6807,
+      "output_tokens": 966,
+      "total_tokens": 7773
+    },
+    {
+      "model_name": "planner=Claude Haiku 4.5 + solver=Claude Opus 4.6",
+      "question_id": 160,
+      "cost_usd": 0.036887,
+      "input_tokens": 6952,
+      "output_tokens": 427,
+      "total_tokens": 7379
+    },
+    {
+      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
+      "question_id": 134,
+      "cost_usd": 0.03626575,
+      "input_tokens": 7291,
+      "output_tokens": 392,
+      "total_tokens": 7683
+    },
+    {
+      "model_name": "planner=Kimi K2.5 + solver=Claude Opus 4.6",
+      "question_id": 163,
+      "cost_usd": 0.03598760000000001,
+      "input_tokens": 7960,
+      "output_tokens": 322,
+      "total_tokens": 8282
+    }
+  ]
+}
