@@ -250,6 +250,37 @@ def compute_ground_truth(models: List[str], datapoints: List[int],
             best_name, best_acc, best_lat, best_cost = model, acc, lat, cost
 
     return best_name, best_acc
+
+
+def compute_cost_aware_config(models: List[str], datapoints: List[int],
+                              table: LookupTable,
+                              budget_fraction: float) -> Tuple[List[float], List[float], float]:
+    """Build Gittins decision costs and a dollar budget from frozen samples.
+
+    Decision costs are normalized to mean 1 so the existing Gittins cost scale
+    remains meaningful. Accounting costs and the stopping budget stay in USD.
+    """
+    mean_costs: List[float] = []
+    full_cost = 0.0
+    for model in models:
+        samples = table.get(model, {})
+        costs = [samples[dp].cost for dp in datapoints if dp in samples]
+        mean_costs.append(sum(costs) / len(costs) if costs else 0.0)
+        full_cost += sum(costs)
+
+    positive_costs = [cost for cost in mean_costs if cost > 0.0]
+    if not positive_costs or full_cost <= 0.0:
+        raise ValueError(
+            "cost-aware mode requires non-zero sample costs; check token data and pricing"
+        )
+
+    reference_cost = sum(positive_costs) / len(positive_costs)
+    # A zero-cost arm is genuinely cheaper, but the DP requires positive costs.
+    decision_costs = [max(cost / reference_cost, 1e-12) for cost in mean_costs]
+    max_cost = max(0.0, min(1.0, budget_fraction)) * full_cost
+    return decision_costs, mean_costs, max_cost
+
+
 def _evaluate_model_full(idx: int, models: List[str], datapoints: List[int],
                          table: LookupTable) -> Tuple[float, float, float, int, float]:
     """Evaluate a model on all datapoints. Returns (acc, lat, cost, n_eval, compute_time)."""
@@ -977,8 +1008,12 @@ def main():
     # Selector-specific params
     parser.add_argument("--rs-fraction", type=float, default=0.25)
 
+    parser.add_argument("--cost-mode", choices=("unit", "cost-aware"), default="unit",
+                        help="Budget/cost mode for Matrix UCB and Gittins (default: unit)")
+
     parser.add_argument("--ucb-budget", type=float, default=0.2,
-                        help="Matrix UCB / Gittins observation budget fraction (default 0.2)")
+                        help="Matrix UCB / Gittins budget fraction; evaluations in unit mode,"
+                             " full-dataset USD cost in cost-aware mode (default 0.2)")
     parser.add_argument("--gittins-batch", type=int, default=20,
                         help="Gittins per-step example batch size (default 20)")
     parser.add_argument("--gittins-no-early-stop", action="store_true",
@@ -1000,6 +1035,19 @@ def main():
     print(f"  Models: {len(models)}")
     print(f"  Samples: {len(datapoints)}")
     print(f"  Total entries: {sum(len(v) for v in table.values())}")
+
+    cost_aware_kwargs: Dict[str, Any] = {}
+    if args.cost_mode == "cost-aware":
+        decision_costs, accounting_costs, max_cost = compute_cost_aware_config(
+            models, datapoints, table, args.ucb_budget)
+        cost_aware_kwargs = {
+            "max_original_cost": max_cost,
+            "accounting_cost_per_arm": accounting_costs,
+        }
+        print(f"  Cost mode: cost-aware (budget=${max_cost:.6f})")
+    else:
+        decision_costs = None
+        print("  Cost mode: unit")
 
     gt_name, gt_acc = compute_ground_truth(models, datapoints, table)
     print(f"\n  Ground truth best: {gt_name}  ({gt_acc:.4f})")
@@ -1031,14 +1079,18 @@ def main():
             kwargs = {}
         elif sel == "matrix_ucb":
             fn = simulate_matrix_ucb
-            kwargs = {"observation_budget_fraction": args.ucb_budget}
+            kwargs = {"observation_budget_fraction": args.ucb_budget,
+                      **cost_aware_kwargs}
         elif sel == "gittins":
             fn = simulate_gittins
             kwargs = {
                 "observation_budget_fraction": args.ucb_budget,
                 "batch_size": args.gittins_batch,
                 "allow_early_stop": False,
+                **cost_aware_kwargs,
             }
+            if decision_costs is not None:
+                kwargs["cost_per_transition"] = decision_costs
         else:
             print(f"\n  Unknown selector: {sel}")
             continue

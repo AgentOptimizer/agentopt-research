@@ -2,6 +2,7 @@
 experiments/results/
 experiments/cached_results/
 /plot/
+/analysis/
 
 # Python
 __pycache__/
