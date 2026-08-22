@@ -81,9 +81,9 @@ The incomplete HotpotQA and MathQA rows are truncated suffixes, so the main
 protocol defaults to the complete question intersection (190 and 135 questions,
 respectively). This gives every configuration the same benchmark universe and
 horizon. `--ragged-diagnostic` enables the arm-specific-tail behavior only as a
-diagnostic. The exact-noise implementation uses full adaptive batches and
-reports the excluded final tail (at most `batch_size - 1` cells per arm).
-`--horizon-bin-width 1` uses exact per-configuration horizons; larger values
+diagnostic. Adaptive replay uses full batches, then a smaller final batch when
+fewer than `batch_size` questions remain; Gittins tables still plan every stage
+as a full batch. `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
 
 `plot_radial_gittins_trajectories.py` writes a raw-archive comparison for each

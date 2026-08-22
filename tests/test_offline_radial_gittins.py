@@ -234,8 +234,8 @@ class OfflineRoundRobinTests(unittest.TestCase):
             index_provider=_target_provider,
         )
 
-        # Eight warm cells plus one full two-question batch; the selector does
-        # not silently turn the one-cell remainder into a different DP action.
+        # Eight warm cells plus one full two-question batch. Remaining budget
+        # of one cell is not turned into a different DP action.
         self.assertEqual(result.stop_reason, "question_budget")
         self.assertEqual(result.total_evaluations, 10)
         self.assertAlmostEqual(result.total_cost, 0.11)
@@ -287,8 +287,9 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(result.params["question_universe"], "common")
         self.assertEqual(result.params["common_question_count"], 5)
         self.assertEqual(result.params["available_cells_in_universe"], 15)
-        self.assertEqual(result.params["actual_horizons"], [1, 1, 1])
-        self.assertEqual(result.params["ragged_tail_cells_excluded"], 3)
+        self.assertEqual(result.params["actual_horizons"], [2, 2, 2])
+        self.assertEqual(result.params["ragged_tail_cells_excluded"], 0)
+        self.assertEqual(result.params["planned_partial_tail_cells"], 3)
 
     def test_per_arm_question_universe_is_explicit_ragged_diagnostic(self):
         models = ["A", "B", "C"]
@@ -315,8 +316,41 @@ class OfflineRoundRobinTests(unittest.TestCase):
 
         self.assertEqual(result.params["question_universe"], "per_arm")
         self.assertEqual(result.params["available_cells_in_universe"], 18)
-        self.assertEqual(result.params["actual_horizons"], [2, 2, 1])
-        self.assertEqual(result.params["ragged_tail_cells_excluded"], 2)
+        self.assertEqual(result.params["actual_horizons"], [3, 2, 2])
+        self.assertEqual(result.params["ragged_tail_cells_excluded"], 0)
+        self.assertEqual(result.params["planned_partial_tail_cells"], 2)
+
+    def test_last_partial_batch_consumes_remaining_questions(self):
+        models = ["A"]
+        datapoints = list(range(5))
+        table = {"A": {question_id: _sample(0.6, 0.1) for question_id in datapoints}}
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=2,
+            directions=((0.5, 0.5),),
+            seed=1,
+            index_provider=lambda context, arm_index: 10.0,
+        )
+
+        self.assertEqual(result.stop_reason, "all_arms_completed")
+        self.assertEqual(result.total_evaluations, 5)
+        self.assertEqual(result.params["actual_horizons"], [2])
+        self.assertEqual(result.params["planned_partial_tail_cells"], 1)
+        self.assertEqual(result.params["ragged_tail_cells_excluded"], 0)
+        self.assertEqual(result.params["unobserved_cells_at_stop"], 0)
+        self.assertEqual(result.model_results[0].n_samples_evaluated, 5)
+        self.assertEqual(result.model_results[0].n_batches, 3)
+        self.assertEqual(result.online_raw_archive_models, ["A"])
+        self.assertEqual(result.oracle_raw_winner_archive_models, ["A"])
+        pulls = [
+            event
+            for event in result.trace
+            if event["event"] == "direction_visit" and event["selected_arm"] is not None
+        ]
+        self.assertEqual([len(event["question_ids"]) for event in pulls], [2, 1])
+        self.assertEqual(pulls[-1]["planned_batch_size"], 1)
 
     def test_expected_cost_vector_and_mapping_are_resolved_per_arm(self):
         models = ["A", "B"]
