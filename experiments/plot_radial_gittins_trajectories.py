@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Plot radial-Gittins HV regret curves and Pareto snapshots.
+"""Plot radial-Gittins HV regret curves and raw-archive Pareto comparisons.
 
 Runs HotpotQA / MathQA offline replay at budget fraction 1.0, continues past
 the endogenous Gittins stop so the trajectory covers later budgets, and writes:
 
 * HV regret vs observed budget fraction (with a stop marker)
-* legacy posterior-desirability snapshots in raw coordinates
 * online-estimated vs offline-oracle raw winner archives at Gittins stop,
   50%, and the actual end fraction
 """
@@ -173,92 +172,6 @@ def plot_hv_curves(
         ax.legend(loc="upper right", fontsize=8)
     fig.suptitle(
         "Online raw-archive quality vs search budget",
-        fontsize=12,
-    )
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    print(f"wrote {output_path}")
-
-
-def plot_pareto_snapshots(
-    *,
-    name: str,
-    result: RadialSimulationResult,
-    raw_vectors: np.ndarray,
-    output_path: Path,
-) -> None:
-    snapshots = _select_snapshots(result)
-    labels = list(snapshots.keys())
-    fig, axes = plt.subplots(1, len(labels), figsize=(4.2 * len(labels), 4.2), sharey=True)
-    if len(labels) == 1:
-        axes = [axes]
-    true_front_idx = _pareto_min_cost_indices(raw_vectors)
-    true_front = raw_vectors[true_front_idx]
-    true_front = true_front[np.argsort(true_front[:, 1])]
-
-    for ax, label in zip(axes, labels):
-        checkpoint = snapshots[label]
-        ax.scatter(
-            raw_vectors[:, 1],
-            raw_vectors[:, 0],
-            s=14,
-            c="#b8c0cc",
-            alpha=0.55,
-            label="all configs",
-            zorder=1,
-        )
-        ax.plot(
-            true_front[:, 1],
-            true_front[:, 0],
-            color="#6b7280",
-            linewidth=1.2,
-            marker="o",
-            markersize=3.5,
-            label="true Pareto front",
-            zorder=2,
-        )
-        posterior_arms = checkpoint.posterior_archive_arm_indices
-        if posterior_arms:
-            selected = raw_vectors[list(posterior_arms)]
-            order = np.argsort(selected[:, 1])
-            selected = selected[order]
-            ax.plot(
-                selected[:, 1],
-                selected[:, 0],
-                color="#1f4e79",
-                linewidth=1.8,
-                marker="s",
-                markersize=6,
-                label="posterior-desirability archive",
-                zorder=3,
-            )
-            for arm_index in posterior_arms:
-                ax.annotate(
-                    _short_model(
-                        result.model_results[arm_index].model_name
-                        if arm_index < len(result.model_results)
-                        else str(arm_index)
-                    ),
-                    (
-                        raw_vectors[arm_index, 1],
-                        raw_vectors[arm_index, 0],
-                    ),
-                    textcoords="offset points",
-                    xytext=(4, 4),
-                    fontsize=6,
-                    color="#1f4e79",
-                )
-        ax.set_title(
-            f"{label} ({checkpoint.budget_fraction:.1%})\n"
-            f"posterior archive size={len(posterior_arms)}"
-        )
-        ax.set_xlabel("Mean deployment cost (USD)")
-        ax.set_ylabel("Accuracy")
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="best", fontsize=7)
-    fig.suptitle(
-        f"{name}: legacy posterior-desirability archive in raw coordinates",
         fontsize=12,
     )
     fig.tight_layout()
@@ -509,12 +422,6 @@ def main() -> None:
             ),
             "final_posterior_archive_models": result.posterior_archive_models,
         }
-        plot_pareto_snapshots(
-            name=display,
-            result=result,
-            raw_vectors=raw_vectors,
-            output_path=outdir / f"{bench}_posterior_archive_snapshots.png",
-        )
         plot_raw_archive_comparison(
             name=display,
             result=result,
