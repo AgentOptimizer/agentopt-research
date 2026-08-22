@@ -5,7 +5,9 @@ Runs HotpotQA / MathQA offline replay at budget fraction 1.0, continues past
 the endogenous Gittins stop so the trajectory covers later budgets, and writes:
 
 * HV regret vs observed budget fraction (with a stop marker)
-* 2-D Pareto snapshots at Gittins stop, 50%, and end
+* legacy posterior-desirability snapshots in raw coordinates
+* online-estimated vs offline-oracle raw winner archives at Gittins stop,
+  50%, and the actual end fraction
 """
 
 from __future__ import annotations
@@ -33,12 +35,12 @@ from offline_radial_gittins import (  # noqa: E402
     _full_raw_objective_vectors,
     _require_data_path,
     load_pickle,
-    nondominated_indices,
+    raw_nondominated_indices,
     simulate_radial_gittins,
 )
 
 
-SNAPSHOT_FRACTIONS = (0.5, 1.0)
+SNAPSHOT_FRACTIONS = (0.5,)
 
 
 def _short_model(name: str) -> str:
@@ -76,13 +78,13 @@ def _select_snapshots(
     for fraction in SNAPSHOT_FRACTIONS:
         label = f"{fraction:.0%}"
         snapshots[label] = _checkpoint_at_or_after(trajectory, fraction)
+    snapshots["End"] = trajectory[-1]
     return snapshots
 
 
 def _pareto_min_cost_indices(points: np.ndarray) -> List[int]:
     """Nondominated under maximize accuracy / minimize cost."""
-    flipped = np.column_stack([points[:, 0], -points[:, 1]])
-    return nondominated_indices(flipped)
+    return raw_nondominated_indices(points)
 
 
 def run_benchmark(
@@ -140,8 +142,14 @@ def plot_hv_curves(
     results: Dict[str, RadialSimulationResult],
     output_path: Path,
 ) -> None:
-    fig, axes = plt.subplots(1, 2, figsize=(10.5, 4.0), sharey=False)
-    for ax, (name, result) in zip(axes, results.items()):
+    fig, axes = plt.subplots(
+        1,
+        len(results),
+        figsize=(5.25 * len(results), 4.0),
+        sharey=False,
+        squeeze=False,
+    )
+    for ax, (name, result) in zip(axes[0], results.items()):
         traj = result.recommendation_trajectory
         xs = [p.budget_fraction for p in traj]
         ys = [p.hypervolume_regret for p in traj]
@@ -159,12 +167,12 @@ def plot_hv_curves(
             )
         ax.set_title(name)
         ax.set_xlabel("Observed budget fraction")
-        ax.set_ylabel("Hypervolume regret")
+        ax.set_ylabel("Normalized-desirability hypervolume regret")
         ax.set_xlim(0.0, 1.02)
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right", fontsize=8)
     fig.suptitle(
-        "Radial-Gittins recommendation quality vs search budget",
+        "Online raw-archive quality vs search budget",
         fontsize=12,
     )
     fig.tight_layout()
@@ -210,8 +218,9 @@ def plot_pareto_snapshots(
             label="true Pareto front",
             zorder=2,
         )
-        if checkpoint.selected_arm_indices:
-            selected = raw_vectors[list(checkpoint.selected_arm_indices)]
+        posterior_arms = checkpoint.posterior_archive_arm_indices
+        if posterior_arms:
+            selected = raw_vectors[list(posterior_arms)]
             order = np.argsort(selected[:, 1])
             selected = selected[order]
             ax.plot(
@@ -221,10 +230,10 @@ def plot_pareto_snapshots(
                 linewidth=1.8,
                 marker="s",
                 markersize=6,
-                label="recommended set",
+                label="posterior-desirability archive",
                 zorder=3,
             )
-            for arm_index in checkpoint.selected_arm_indices:
+            for arm_index in posterior_arms:
                 ax.annotate(
                     _short_model(
                         result.model_results[arm_index].model_name
@@ -241,17 +250,198 @@ def plot_pareto_snapshots(
                     color="#1f4e79",
                 )
         ax.set_title(
-            f"{label}\n"
-            f"budget={checkpoint.budget_fraction:.1%}, "
-            f"HV regret={checkpoint.hypervolume_regret:.4f}"
+            f"{label} ({checkpoint.budget_fraction:.1%})\n"
+            f"posterior archive size={len(posterior_arms)}"
         )
         ax.set_xlabel("Mean deployment cost (USD)")
         ax.set_ylabel("Accuracy")
         ax.grid(True, alpha=0.3)
         ax.legend(loc="best", fontsize=7)
-    fig.suptitle(f"{name}: recommended Pareto snapshots", fontsize=12)
+    fig.suptitle(
+        f"{name}: legacy posterior-desirability archive in raw coordinates",
+        fontsize=12,
+    )
     fig.tight_layout()
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {output_path}")
+
+
+def plot_raw_archive_comparison(
+    *,
+    name: str,
+    result: RadialSimulationResult,
+    raw_vectors: np.ndarray,
+    output_path: Path,
+) -> None:
+    """Compare online-estimated and full-data-oracle raw winner archives."""
+    snapshots = _select_snapshots(result)
+    labels = list(snapshots.keys())
+    fig, axes = plt.subplots(
+        2,
+        len(labels),
+        figsize=(4.5 * len(labels), 7.8),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+
+    global_front_idx = _pareto_min_cost_indices(raw_vectors)
+    global_front = raw_vectors[global_front_idx]
+    global_front = global_front[np.argsort(global_front[:, 1])]
+    estimated_vectors = [
+        np.asarray(
+            checkpoint.estimated_raw_winner_vectors,
+            dtype=np.float64,
+        ).reshape((-1, 2))
+        for checkpoint in snapshots.values()
+    ]
+    all_costs = np.concatenate(
+        [raw_vectors[:, 1]]
+        + [points[:, 1] for points in estimated_vectors if len(points)]
+    )
+    positive_costs = all_costs[all_costs > 0.0]
+    use_log_cost = (
+        len(positive_costs) == len(all_costs)
+        and float(np.max(positive_costs) / np.min(positive_costs)) >= 20.0
+    )
+
+    for panel_index, label in enumerate(labels):
+        checkpoint = snapshots[label]
+        online_ax = axes[0, panel_index]
+        truth_ax = axes[1, panel_index]
+        candidate_arms = list(checkpoint.direction_winner_arm_indices)
+        estimated_points = estimated_vectors[panel_index]
+        online = set(checkpoint.online_raw_archive_arm_indices)
+        oracle = set(checkpoint.oracle_raw_winner_archive_arm_indices)
+        overlap = sorted(online & oracle)
+        online_only = sorted(online - oracle)
+        oracle_only = sorted(oracle - online)
+
+        online_ax.scatter(
+            estimated_points[:, 1],
+            estimated_points[:, 0],
+            s=26,
+            c="#b8c8db",
+            alpha=0.75,
+            label="direction winners at online estimates",
+            zorder=1,
+        )
+        online_positions = [
+            position
+            for position, arm_index in enumerate(candidate_arms)
+            if arm_index in online
+        ]
+        if online_positions:
+            online_points = estimated_points[online_positions]
+            order = np.argsort(online_points[:, 1])
+            online_points = online_points[order]
+            online_ax.plot(
+                online_points[:, 1],
+                online_points[:, 0],
+                color="#1f4e79",
+                linewidth=1.5,
+                marker="s",
+                markersize=6,
+                label="online empirical raw archive",
+                zorder=3,
+            )
+
+        truth_ax.scatter(
+            raw_vectors[:, 1],
+            raw_vectors[:, 0],
+            s=16,
+            c="#cbd2dc",
+            alpha=0.55,
+            label="all configurations at full-data values",
+            zorder=1,
+        )
+        truth_ax.plot(
+            global_front[:, 1],
+            global_front[:, 0],
+            color="#687386",
+            linewidth=1.3,
+            marker="o",
+            markersize=3.5,
+            label="global full-data raw front",
+            zorder=2,
+        )
+
+        groups = (
+            (overlap, "#2f855a", "*", 105, "in both archives"),
+            (online_only, "#1f4e79", "s", 62, "online estimated only"),
+            (oracle_only, "#c45c26", "D", 58, "offline oracle only"),
+        )
+        for arm_indices, color, marker, size, legend_label in groups:
+            if not arm_indices:
+                continue
+            points = raw_vectors[arm_indices]
+            truth_ax.scatter(
+                points[:, 1],
+                points[:, 0],
+                s=size,
+                c=color,
+                marker=marker,
+                edgecolors="white",
+                linewidths=0.7,
+                label=legend_label,
+                zorder=4,
+            )
+
+        # Label only disagreements; shared labels add clutter without helping
+        # explain the difference between the two filters.
+        for arm_index in online_only + oracle_only:
+            truth_ax.annotate(
+                _short_model(result.model_results[arm_index].model_name),
+                (raw_vectors[arm_index, 1], raw_vectors[arm_index, 0]),
+                textcoords="offset points",
+                xytext=(4, 4),
+                fontsize=6,
+                color="#263445",
+            )
+
+        if use_log_cost:
+            online_ax.set_xscale("log")
+            truth_ax.set_xscale("log")
+        online_ax.set_title(
+            f"{label} ({checkpoint.budget_fraction:.1%})\n"
+            f"online archive={len(online)}"
+        )
+        truth_ax.set_title(
+            f"Full-data evaluation: oracle={len(oracle)}, "
+            f"overlap={len(overlap)}"
+        )
+        truth_ax.set_xlabel(
+            "Mean deployment cost (USD, log scale)"
+            if use_log_cost
+            else "Mean deployment cost (USD)"
+        )
+        online_ax.set_ylabel("Accuracy (online estimate)")
+        truth_ax.set_ylabel("Accuracy (full data)")
+        online_ax.grid(True, alpha=0.25)
+        truth_ax.grid(True, alpha=0.25)
+
+    legend_entries: Dict[str, object] = {}
+    for ax in axes.flat:
+        handles, labels_for_axis = ax.get_legend_handles_labels()
+        for handle, legend_label in zip(handles, labels_for_axis):
+            legend_entries.setdefault(legend_label, handle)
+    fig.legend(
+        list(legend_entries.values()),
+        list(legend_entries),
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.01),
+        ncol=min(4, max(1, len(legend_entries))),
+        fontsize=8,
+        frameon=False,
+    )
+    fig.suptitle(
+        f"{name}: raw-space direction-winner archives\n"
+        "Top: values available online. Bottom: archive membership at full-data values.",
+        fontsize=12,
+    )
+    fig.tight_layout(rect=(0.0, 0.12, 1.0, 0.92))
+    fig.savefig(output_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {output_path}")
 
@@ -313,12 +503,23 @@ def main() -> None:
             "completed_arm_archive_hv_regret": result.hypervolume_regret,
             "trajectory_len": len(result.recommendation_trajectory),
             "policy_wall_time_seconds": result.policy_wall_time_seconds,
+            "final_online_raw_models": result.online_raw_archive_models,
+            "final_oracle_raw_winner_models": (
+                result.oracle_raw_winner_archive_models
+            ),
+            "final_posterior_archive_models": result.posterior_archive_models,
         }
         plot_pareto_snapshots(
             name=display,
             result=result,
             raw_vectors=raw_vectors,
-            output_path=outdir / f"{bench}_pareto_snapshots.png",
+            output_path=outdir / f"{bench}_posterior_archive_snapshots.png",
+        )
+        plot_raw_archive_comparison(
+            name=display,
+            result=result,
+            raw_vectors=raw_vectors,
+            output_path=outdir / f"{bench}_raw_archive_comparison.png",
         )
 
     plot_hv_curves(results, outdir / "hv_regret_curves.png")

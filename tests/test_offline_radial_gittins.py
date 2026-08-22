@@ -10,6 +10,8 @@ from experiments.offline_radial_gittins import (
     _jsonable_result,
     hypervolume_2d,
     nondominated_indices,
+    raw_archive_arm_indices,
+    raw_nondominated_indices,
     simulate_radial_gittins,
     summarize_radial_multi_seed,
 )
@@ -66,6 +68,22 @@ class ParetoMetricTests(unittest.TestCase):
         points = np.array([[0.5, 1.0], [1.0, 0.5]])
         self.assertAlmostEqual(hypervolume_2d(points), 0.75)
 
+    def test_raw_nondominance_maximizes_accuracy_and_minimizes_cost(self):
+        points = np.array(
+            [
+                [0.8, 2.0],
+                [0.9, 1.5],
+                [0.9, 2.0],
+                [0.7, 1.0],
+                [0.9, 1.5],
+            ]
+        )
+        self.assertEqual(raw_nondominated_indices(points), [1, 3, 4])
+        self.assertEqual(
+            raw_archive_arm_indices([8, 2, 5, 4, 9], points),
+            [2, 4, 9],
+        )
+
 
 class OfflineRoundRobinTests(unittest.TestCase):
     def test_scripted_round_robin_reuses_posteriors_and_returns_full_archive(self):
@@ -112,6 +130,96 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(summaries["D"].n_batches, 1)
         self.assertEqual(summaries["D"].n_samples_evaluated, 2)
         self.assertFalse(summaries["D"].completed)
+
+    def test_raw_filter_removes_transform_reversal_from_final_archive(self):
+        models = ["A", "B"]
+        datapoints = [0, 1]
+        table = {
+            "A": {0: _sample(0.8, 0.01), 1: _sample(0.8, 4.01)},
+            "B": {0: _sample(0.9, 1.5), 1: _sample(0.9, 1.5)},
+        }
+
+        def direction_target(context, arm_index):
+            return 100.0 if arm_index == context.direction_index else -100.0
+
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=1,
+            directions=((0.1, 0.9), (0.9, 0.1)),
+            cost_reference_usd=1.0,
+            prior_variance=0.001,
+            obs_noise_variance=1e-6,
+            seed=1,
+            index_provider=direction_target,
+        )
+
+        self.assertEqual(
+            [winner.model_name for winner in result.direction_winners],
+            ["A", "B"],
+        )
+        self.assertEqual(result.posterior_archive_models, ["A", "B"])
+        self.assertEqual(result.selected_models, ["B"])
+        self.assertEqual(result.online_raw_archive_models, ["B"])
+        self.assertEqual(result.oracle_raw_winner_archive_models, ["B"])
+
+    def test_oracle_tail_changes_do_not_leak_into_online_raw_archive(self):
+        models = ["A", "B"]
+        datapoints = [0, 1, 2]
+        common = {
+            "A": {0: _sample(0.8, 0.5), 1: _sample(0.8, 0.5)},
+            "B": {0: _sample(0.9, 1.0), 1: _sample(0.9, 1.0)},
+        }
+        tables = []
+        for a_tail, b_tail in (
+            ((0.0, 10.0), (1.0, 0.1)),
+            ((1.0, 0.1), (0.0, 10.0)),
+        ):
+            table = {model: dict(row) for model, row in common.items()}
+            table["A"][2] = _sample(*a_tail)
+            table["B"][2] = _sample(*b_tail)
+            tables.append(table)
+
+        results = [
+            simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                batch_size=2,
+                directions=((0.1, 0.9), (0.9, 0.1)),
+                cost_reference_usd=1.0,
+                prior_variance=0.001,
+                obs_noise_variance=1e-6,
+                max_total_question_evaluations=4,
+                seed=0,
+                index_provider=lambda context, arm_index: 1.0,
+                record_recommendation_trajectory=True,
+            )
+            for table in tables
+        ]
+        checkpoints = [result.recommendation_trajectory[0] for result in results]
+
+        self.assertEqual(results[0].observed_cells, results[1].observed_cells)
+        self.assertEqual(results[0].trace, results[1].trace)
+        self.assertEqual(
+            checkpoints[0].estimated_raw_winner_vectors,
+            checkpoints[1].estimated_raw_winner_vectors,
+        )
+        self.assertEqual(checkpoints[0].selected_models, ("A", "B"))
+        self.assertEqual(checkpoints[1].selected_models, ("A", "B"))
+        self.assertEqual(
+            checkpoints[0].selected_arm_indices,
+            checkpoints[0].online_raw_archive_arm_indices,
+        )
+        self.assertEqual(
+            checkpoints[0].oracle_raw_winner_archive_models,
+            ("B",),
+        )
+        self.assertEqual(
+            checkpoints[1].oracle_raw_winner_archive_models,
+            ("A",),
+        )
 
     def test_question_budget_counts_warm_start_and_stops_before_partial_batch(self):
         models, datapoints, table = _toy_frontier()

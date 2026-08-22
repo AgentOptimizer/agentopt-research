@@ -81,14 +81,19 @@ class RadialArmSummary:
     completed: bool
     is_direction_winner: bool = False
     is_nondominated: bool = False
+    is_posterior_nondominated: bool = False
+    is_oracle_raw_nondominated: bool = False
 
 
 @dataclass(frozen=True)
 class RecommendationCheckpoint:
-    """Posterior-mean recommendation snapshot for budget-curve evaluation.
+    """Recommendation snapshot for budget-curve evaluation.
 
     Unlike the final completed-arm archive, this uses every warm-started arm's
-    current posterior (paper-style fixed-budget recommendation).
+    current posterior to identify direction winners (paper-style fixed-budget
+    recommendation). ``selected_*`` is the leakage-free online raw archive.
+    The posterior-desirability and full-data oracle raw archives are retained
+    separately for comparison.
     """
 
     cumulative_evaluations: int
@@ -96,6 +101,14 @@ class RecommendationCheckpoint:
     budget_fraction: float
     selected_arm_indices: Tuple[int, ...]
     selected_models: Tuple[str, ...]
+    direction_winner_arm_indices: Tuple[int, ...]
+    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
+    posterior_archive_arm_indices: Tuple[int, ...]
+    posterior_archive_models: Tuple[str, ...]
+    online_raw_archive_arm_indices: Tuple[int, ...]
+    online_raw_archive_models: Tuple[str, ...]
+    oracle_raw_winner_archive_arm_indices: Tuple[int, ...]
+    oracle_raw_winner_archive_models: Tuple[str, ...]
     hypervolume: float
     hypervolume_regret: float
     event: str
@@ -134,6 +147,13 @@ class RadialSimulationResult:
     gittins_stop_cost_usd: Optional[float] = None
     gittins_stop_budget_fraction: Optional[float] = None
     truth_vectors: Optional[np.ndarray] = None
+    raw_truth_vectors: Optional[np.ndarray] = None
+    posterior_archive_arm_indices: Tuple[int, ...] = ()
+    posterior_archive_models: List[str] = field(default_factory=list)
+    online_raw_archive_arm_indices: Tuple[int, ...] = ()
+    online_raw_archive_models: List[str] = field(default_factory=list)
+    oracle_raw_winner_archive_arm_indices: Tuple[int, ...] = ()
+    oracle_raw_winner_archive_models: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -345,6 +365,35 @@ def nondominated_indices(points: np.ndarray) -> List[int]:
     return keep
 
 
+def raw_nondominated_indices(points: np.ndarray) -> List[int]:
+    """Return nondominated indices for maximize-accuracy/minimize-cost points."""
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 2:
+        raise ValueError("points must have shape (n, 2)")
+    if not np.all(np.isfinite(points)):
+        raise ValueError("points must be finite")
+    maximize_points = np.column_stack((points[:, 0], -points[:, 1]))
+    return nondominated_indices(maximize_points)
+
+
+def raw_archive_arm_indices(
+    candidate_arms: Sequence[int],
+    raw_points: np.ndarray,
+) -> List[int]:
+    """Filter candidate arms in raw ``(accuracy, mean USD cost)`` space.
+
+    ``raw_points`` is aligned with ``candidate_arms`` rather than indexed by
+    global arm id. Candidate order is preserved in the returned archive.
+    """
+    arms = list(candidate_arms)
+    points = np.asarray(raw_points, dtype=np.float64)
+    if points.shape != (len(arms), 2):
+        raise ValueError(
+            "raw_points must have shape (len(candidate_arms), 2)"
+        )
+    return [arms[position] for position in raw_nondominated_indices(points)]
+
+
 def hypervolume_2d(
     points: np.ndarray,
     reference: Sequence[float] = (0.0, 0.0),
@@ -371,7 +420,7 @@ def hypervolume_2d(
     return float(area)
 
 
-def provisional_archive_from_posteriors(
+def provisional_direction_winner_arms(
     *,
     posteriors: Mapping[int, GaussianVectorPosterior],
     directions: Sequence[Tuple[float, float]],
@@ -379,11 +428,10 @@ def provisional_archive_from_posteriors(
     stop_tolerance: float,
     candidate_arms: Optional[Sequence[int]] = None,
 ) -> List[int]:
-    """Paper-style recommendation: direction winners over current posteriors.
+    """Return deduplicated direction winners over current posteriors.
 
     Includes unfinished arms. Each direction picks the arm with the largest
-    terminal expected radial utility under the current posterior; winners are
-    then filtered to the nondominated set in posterior-mean space.
+    terminal expected radial utility under the current posterior.
     """
     arm_indices = (
         list(candidate_arms)
@@ -408,6 +456,27 @@ def provisional_archive_from_posteriors(
             winners.append(winner_arm)
     if not winners:
         return []
+    return winners
+
+
+def provisional_archive_from_posteriors(
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    directions: Sequence[Tuple[float, float]],
+    reference_point: Sequence[float],
+    stop_tolerance: float,
+    candidate_arms: Optional[Sequence[int]] = None,
+) -> List[int]:
+    """Return direction winners nondominated in posterior-mean space."""
+    winners = provisional_direction_winner_arms(
+        posteriors=posteriors,
+        directions=directions,
+        reference_point=reference_point,
+        stop_tolerance=stop_tolerance,
+        candidate_arms=candidate_arms,
+    )
+    if not winners:
+        return []
     winner_points = np.asarray(
         [posteriors[i].mean for i in winners],
         dtype=np.float64,
@@ -423,21 +492,50 @@ def _recommendation_checkpoint(
     reference_point: Sequence[float],
     stop_tolerance: float,
     truth_vectors: np.ndarray,
+    raw_truth_vectors: np.ndarray,
+    observed_scores: Mapping[int, Sequence[float]],
+    observed_costs: Mapping[int, Sequence[float]],
     ground_truth_hv: float,
     total_evaluations: int,
     total_cost: float,
     n_available: int,
     event: str,
 ) -> RecommendationCheckpoint:
-    archive_arms = provisional_archive_from_posteriors(
+    winner_arms = provisional_direction_winner_arms(
         posteriors=posteriors,
         directions=directions,
         reference_point=reference_point,
         stop_tolerance=stop_tolerance,
     )
+    posterior_points = np.asarray(
+        [posteriors[i].mean for i in winner_arms],
+        dtype=np.float64,
+    ).reshape((-1, 2))
+    posterior_archive_arms = [
+        winner_arms[position]
+        for position in nondominated_indices(posterior_points)
+    ]
+    estimated_raw_points = np.asarray(
+        [
+            (
+                float(np.mean(observed_scores[i])),
+                float(np.mean(observed_costs[i])),
+            )
+            for i in winner_arms
+        ],
+        dtype=np.float64,
+    ).reshape((-1, 2))
+    online_raw_archive_arms = raw_archive_arm_indices(
+        winner_arms,
+        estimated_raw_points,
+    )
+    oracle_raw_archive_arms = raw_archive_arm_indices(
+        winner_arms,
+        raw_truth_vectors[winner_arms],
+    )
     selected_truth = (
-        truth_vectors[archive_arms]
-        if archive_arms
+        truth_vectors[online_raw_archive_arms]
+        if online_raw_archive_arms
         else np.empty((0, 2), dtype=np.float64)
     )
     selected_hv = hypervolume_2d(selected_truth, reference_point)
@@ -445,8 +543,22 @@ def _recommendation_checkpoint(
         cumulative_evaluations=int(total_evaluations),
         cumulative_search_cost_usd=float(total_cost),
         budget_fraction=float(total_evaluations) / float(n_available),
-        selected_arm_indices=tuple(archive_arms),
-        selected_models=tuple(models[i] for i in archive_arms),
+        selected_arm_indices=tuple(online_raw_archive_arms),
+        selected_models=tuple(models[i] for i in online_raw_archive_arms),
+        direction_winner_arm_indices=tuple(winner_arms),
+        estimated_raw_winner_vectors=tuple(
+            (float(point[0]), float(point[1])) for point in estimated_raw_points
+        ),
+        posterior_archive_arm_indices=tuple(posterior_archive_arms),
+        posterior_archive_models=tuple(models[i] for i in posterior_archive_arms),
+        online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
+        online_raw_archive_models=tuple(
+            models[i] for i in online_raw_archive_arms
+        ),
+        oracle_raw_winner_archive_arm_indices=tuple(oracle_raw_archive_arms),
+        oracle_raw_winner_archive_models=tuple(
+            models[i] for i in oracle_raw_archive_arms
+        ),
         hypervolume=float(selected_hv),
         hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
         event=event,
@@ -865,6 +977,11 @@ def simulate_radial_gittins(
         table,
         calibration.normalizer,
     )
+    raw_truth_vectors = _full_raw_objective_vectors(
+        models,
+        evaluation_datapoints,
+        table,
+    )
     truth_front = truth_vectors[nondominated_indices(truth_vectors)]
     ground_truth_hv = hypervolume_2d(truth_front, resolved_reference)
     wall_start += time.perf_counter() - truth_metric_start
@@ -880,6 +997,9 @@ def simulate_radial_gittins(
                 reference_point=resolved_reference,
                 stop_tolerance=stop_tolerance,
                 truth_vectors=truth_vectors,
+                raw_truth_vectors=raw_truth_vectors,
+                observed_scores=observed_scores,
+                observed_costs=observed_costs,
                 ground_truth_hv=ground_truth_hv,
                 total_evaluations=total_evaluations,
                 total_cost=total_cost,
@@ -1180,15 +1300,43 @@ def simulate_radial_gittins(
             [posteriors[i].mean for i in unique_winner_arms],
             dtype=np.float64,
         )
-        archive_positions = nondominated_indices(winner_points)
-        archive_arms = [unique_winner_arms[position] for position in archive_positions]
+        posterior_archive_positions = nondominated_indices(winner_points)
+        posterior_archive_arms = [
+            unique_winner_arms[position]
+            for position in posterior_archive_positions
+        ]
+        estimated_raw_points = np.asarray(
+            [
+                (
+                    float(np.mean(observed_scores[i])),
+                    float(np.mean(observed_costs[i])),
+                )
+                for i in unique_winner_arms
+            ],
+            dtype=np.float64,
+        )
+        online_raw_archive_arms = raw_archive_arm_indices(
+            unique_winner_arms,
+            estimated_raw_points,
+        )
+        oracle_raw_archive_arms = raw_archive_arm_indices(
+            unique_winner_arms,
+            raw_truth_vectors[unique_winner_arms],
+        )
     else:
-        archive_arms = []
-    selected_models = [models[i] for i in archive_arms]
+        posterior_archive_arms = []
+        online_raw_archive_arms = []
+        oracle_raw_archive_arms = []
+    # The deployable recommendation is filtered only with observations that
+    # the selector actually acquired. The oracle archive is diagnostic-only.
+    archive_arms = online_raw_archive_arms
+    selected_models = [models[i] for i in online_raw_archive_arms]
 
     model_results: List[RadialArmSummary] = []
     winner_arm_set = set(unique_winner_arms)
-    archive_arm_set = set(archive_arms)
+    archive_arm_set = set(online_raw_archive_arms)
+    posterior_archive_arm_set = set(posterior_archive_arms)
+    oracle_raw_archive_arm_set = set(oracle_raw_archive_arms)
     for arm_index, model_name in enumerate(models):
         posterior = posteriors[arm_index]
         costs = observed_costs[arm_index]
@@ -1211,6 +1359,8 @@ def simulate_radial_gittins(
                 completed=arm_index in completed_final,
                 is_direction_winner=arm_index in winner_arm_set,
                 is_nondominated=arm_index in archive_arm_set,
+                is_posterior_nondominated=arm_index in posterior_archive_arm_set,
+                is_oracle_raw_nondominated=arm_index in oracle_raw_archive_arm_set,
             )
         )
 
@@ -1261,6 +1411,9 @@ def simulate_radial_gittins(
 
     params: Dict[str, Any] = {
         "batch_size": batch_size,
+        "recommendation_space": "observed_raw_accuracy_mean_cost_usd",
+        "posterior_archive_space": "normalized_posterior_mean_desirability",
+        "oracle_raw_winner_archive_is_diagnostic": True,
         "directions": [list(x) for x in resolved_directions],
         "prior_variance": calibration.prior_var.tolist(),
         "obs_noise_variance": calibration.warm_obs_noise_var.tolist(),
@@ -1345,6 +1498,15 @@ def simulate_radial_gittins(
         gittins_stop_cost_usd=gittins_stop_cost_usd,
         gittins_stop_budget_fraction=gittins_stop_budget_fraction,
         truth_vectors=truth_vectors,
+        raw_truth_vectors=raw_truth_vectors,
+        posterior_archive_arm_indices=tuple(posterior_archive_arms),
+        posterior_archive_models=[models[i] for i in posterior_archive_arms],
+        online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
+        online_raw_archive_models=list(selected_models),
+        oracle_raw_winner_archive_arm_indices=tuple(oracle_raw_archive_arms),
+        oracle_raw_winner_archive_models=[
+            models[i] for i in oracle_raw_archive_arms
+        ],
     )
     if run_metadata is not None:
         run_metadata.update(
@@ -1352,6 +1514,12 @@ def simulate_radial_gittins(
                 "stop_reason": stop_reason,
                 "stopped_by_gittins": stopped_by_gittins,
                 "selected_models": list(selected_models),
+                "posterior_archive_models": [
+                    models[i] for i in posterior_archive_arms
+                ],
+                "oracle_raw_winner_archive_models": [
+                    models[i] for i in oracle_raw_archive_arms
+                ],
                 "total_evaluations": total_evaluations,
                 "total_cost": total_cost,
                 "cost_budget_guard": cost_budget_guard,
@@ -1421,7 +1589,12 @@ def print_radial_result(result: RadialSimulationResult) -> None:
             f"  {winner.direction}: {winner.model_name} "
             f"(terminal={winner.terminal_utility:.6f})"
         )
-    print(f"nondominated recommendation: {result.selected_models}")
+    print(f"online raw-space recommendation: {result.selected_models}")
+    print(f"posterior-desirability archive: {result.posterior_archive_models}")
+    print(
+        "offline oracle raw winner archive: "
+        f"{result.oracle_raw_winner_archive_models}"
+    )
 
 
 def _jsonable_result(result: RadialSimulationResult) -> Dict[str, Any]:

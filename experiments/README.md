@@ -70,7 +70,12 @@ Available selectors: `brute_force` (v3), `random_search`, `matrix_ucb`, `gittins
 - freezes an arm-specific expected pull cost from each arm's warm batch and
   bins those costs for practical boundary-table reuse;
 - visits radial directions round-robin while sharing one posterior per configuration;
-- returns all nondominated direction winners rather than one accuracy-best model.
+- returns direction winners filtered in online empirical raw space: maximize
+  observed mean accuracy and minimize observed mean deployment cost in USD;
+- separately reports the legacy posterior-desirability archive and an offline
+  oracle raw winner archive for diagnostics. The oracle archive uses the full
+  cached matrix and never affects acquisition, stopping, or the deployable
+  recommendation.
 
 The incomplete HotpotQA and MathQA rows are truncated suffixes, so the main
 protocol defaults to the complete question intersection (190 and 135 questions,
@@ -80,6 +85,11 @@ diagnostic. The exact-noise implementation uses full adaptive batches and
 reports the excluded final tail (at most `batch_size - 1` cells per arm).
 `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
+
+`plot_radial_gittins_trajectories.py` writes a raw-archive comparison for each
+benchmark. Online and oracle membership are plotted at full-dataset raw
+coordinates against the global raw Pareto front, so disagreements expose
+estimation error without feeding hidden outcomes back into the selector.
 
 `--budget-fraction` is a fraction of question cells, not dollars. A
 `--max-search-cost` guard reserves the frozen warm-start expected batch cost and
