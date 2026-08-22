@@ -89,11 +89,17 @@ class RadialArmSummary:
 class RecommendationCheckpoint:
     """Recommendation snapshot for budget-curve evaluation.
 
-    Unlike the final completed-arm archive, this uses every warm-started arm's
-    current posterior to identify direction winners (paper-style fixed-budget
-    recommendation). ``selected_*`` is the leakage-free online raw archive.
-    The posterior-desirability and full-data oracle raw archives are retained
-    separately for comparison.
+    The legacy fields through ``hypervolume_regret`` describe an all-posterior
+    provisional archive: every warm-started arm is eligible even when it is
+    unfinished.  They are retained for fixed-budget diagnostics and backwards
+    compatibility.
+
+    The explicit ``deployable_*`` fields repeat the winner and archive
+    calculation with only ``completed_arm_indices`` eligible.  This matches
+    the required-completion Gittins stopping contract and the final
+    ``RadialSimulationResult`` recommendation.  Full-data oracle fields are
+    diagnostic only and never affect acquisition, stopping, or either online
+    archive.
     """
 
     cumulative_evaluations: int
@@ -112,6 +118,17 @@ class RecommendationCheckpoint:
     hypervolume: float
     hypervolume_regret: float
     event: str
+    completed_arm_indices: Tuple[int, ...] = ()
+    deployable_direction_winner_arm_indices: Tuple[int, ...] = ()
+    deployable_estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...] = ()
+    deployable_posterior_archive_arm_indices: Tuple[int, ...] = ()
+    deployable_posterior_archive_models: Tuple[str, ...] = ()
+    deployable_online_raw_archive_arm_indices: Tuple[int, ...] = ()
+    deployable_online_raw_archive_models: Tuple[str, ...] = ()
+    deployable_oracle_raw_winner_archive_arm_indices: Tuple[int, ...] = ()
+    deployable_oracle_raw_winner_archive_models: Tuple[str, ...] = ()
+    deployable_hypervolume: float = 0.0
+    deployable_hypervolume_regret: float = 0.0
 
 
 @dataclass
@@ -484,8 +501,23 @@ def provisional_archive_from_posteriors(
     return [winners[position] for position in nondominated_indices(winner_points)]
 
 
-def _recommendation_checkpoint(
+@dataclass(frozen=True)
+class _CheckpointArchive:
+    direction_winner_arm_indices: Tuple[int, ...]
+    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
+    posterior_archive_arm_indices: Tuple[int, ...]
+    posterior_archive_models: Tuple[str, ...]
+    online_raw_archive_arm_indices: Tuple[int, ...]
+    online_raw_archive_models: Tuple[str, ...]
+    oracle_raw_winner_archive_arm_indices: Tuple[int, ...]
+    oracle_raw_winner_archive_models: Tuple[str, ...]
+    hypervolume: float
+    hypervolume_regret: float
+
+
+def _checkpoint_archive(
     *,
+    eligible_arms: Sequence[int],
     posteriors: Mapping[int, GaussianVectorPosterior],
     directions: Sequence[Tuple[float, float]],
     models: Sequence[str],
@@ -496,16 +528,15 @@ def _recommendation_checkpoint(
     observed_scores: Mapping[int, Sequence[float]],
     observed_costs: Mapping[int, Sequence[float]],
     ground_truth_hv: float,
-    total_evaluations: int,
-    total_cost: float,
-    n_available: int,
-    event: str,
-) -> RecommendationCheckpoint:
+) -> _CheckpointArchive:
+    """Build one online archive for an explicit arm-eligibility scope."""
+    eligible = tuple(int(i) for i in eligible_arms)
     winner_arms = provisional_direction_winner_arms(
         posteriors=posteriors,
         directions=directions,
         reference_point=reference_point,
         stop_tolerance=stop_tolerance,
+        candidate_arms=eligible,
     )
     posterior_points = np.asarray(
         [posteriors[i].mean for i in winner_arms],
@@ -529,9 +560,14 @@ def _recommendation_checkpoint(
         winner_arms,
         estimated_raw_points,
     )
+    oracle_raw_points = (
+        raw_truth_vectors[winner_arms]
+        if winner_arms
+        else np.empty((0, 2), dtype=np.float64)
+    )
     oracle_raw_archive_arms = raw_archive_arm_indices(
         winner_arms,
-        raw_truth_vectors[winner_arms],
+        oracle_raw_points,
     )
     selected_truth = (
         truth_vectors[online_raw_archive_arms]
@@ -539,18 +575,15 @@ def _recommendation_checkpoint(
         else np.empty((0, 2), dtype=np.float64)
     )
     selected_hv = hypervolume_2d(selected_truth, reference_point)
-    return RecommendationCheckpoint(
-        cumulative_evaluations=int(total_evaluations),
-        cumulative_search_cost_usd=float(total_cost),
-        budget_fraction=float(total_evaluations) / float(n_available),
-        selected_arm_indices=tuple(online_raw_archive_arms),
-        selected_models=tuple(models[i] for i in online_raw_archive_arms),
+    return _CheckpointArchive(
         direction_winner_arm_indices=tuple(winner_arms),
         estimated_raw_winner_vectors=tuple(
             (float(point[0]), float(point[1])) for point in estimated_raw_points
         ),
         posterior_archive_arm_indices=tuple(posterior_archive_arms),
-        posterior_archive_models=tuple(models[i] for i in posterior_archive_arms),
+        posterior_archive_models=tuple(
+            models[i] for i in posterior_archive_arms
+        ),
         online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
         online_raw_archive_models=tuple(
             models[i] for i in online_raw_archive_arms
@@ -561,7 +594,104 @@ def _recommendation_checkpoint(
         ),
         hypervolume=float(selected_hv),
         hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
+    )
+
+
+def _recommendation_checkpoint(
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    directions: Sequence[Tuple[float, float]],
+    models: Sequence[str],
+    reference_point: Sequence[float],
+    stop_tolerance: float,
+    truth_vectors: np.ndarray,
+    raw_truth_vectors: np.ndarray,
+    observed_scores: Mapping[int, Sequence[float]],
+    observed_costs: Mapping[int, Sequence[float]],
+    ground_truth_hv: float,
+    total_evaluations: int,
+    total_cost: float,
+    n_available: int,
+    event: str,
+    completed_arms: Sequence[int] = (),
+) -> RecommendationCheckpoint:
+    provisional = _checkpoint_archive(
+        eligible_arms=tuple(sorted(posteriors)),
+        posteriors=posteriors,
+        directions=directions,
+        models=models,
+        reference_point=reference_point,
+        stop_tolerance=stop_tolerance,
+        truth_vectors=truth_vectors,
+        raw_truth_vectors=raw_truth_vectors,
+        observed_scores=observed_scores,
+        observed_costs=observed_costs,
+        ground_truth_hv=ground_truth_hv,
+    )
+    completed = tuple(int(i) for i in completed_arms)
+    deployable = _checkpoint_archive(
+        eligible_arms=completed,
+        posteriors=posteriors,
+        directions=directions,
+        models=models,
+        reference_point=reference_point,
+        stop_tolerance=stop_tolerance,
+        truth_vectors=truth_vectors,
+        raw_truth_vectors=raw_truth_vectors,
+        observed_scores=observed_scores,
+        observed_costs=observed_costs,
+        ground_truth_hv=ground_truth_hv,
+    )
+    return RecommendationCheckpoint(
+        cumulative_evaluations=int(total_evaluations),
+        cumulative_search_cost_usd=float(total_cost),
+        budget_fraction=float(total_evaluations) / float(n_available),
+        selected_arm_indices=provisional.online_raw_archive_arm_indices,
+        selected_models=provisional.online_raw_archive_models,
+        direction_winner_arm_indices=provisional.direction_winner_arm_indices,
+        estimated_raw_winner_vectors=provisional.estimated_raw_winner_vectors,
+        posterior_archive_arm_indices=provisional.posterior_archive_arm_indices,
+        posterior_archive_models=provisional.posterior_archive_models,
+        online_raw_archive_arm_indices=(
+            provisional.online_raw_archive_arm_indices
+        ),
+        online_raw_archive_models=provisional.online_raw_archive_models,
+        oracle_raw_winner_archive_arm_indices=(
+            provisional.oracle_raw_winner_archive_arm_indices
+        ),
+        oracle_raw_winner_archive_models=(
+            provisional.oracle_raw_winner_archive_models
+        ),
+        hypervolume=provisional.hypervolume,
+        hypervolume_regret=provisional.hypervolume_regret,
         event=event,
+        completed_arm_indices=completed,
+        deployable_direction_winner_arm_indices=(
+            deployable.direction_winner_arm_indices
+        ),
+        deployable_estimated_raw_winner_vectors=(
+            deployable.estimated_raw_winner_vectors
+        ),
+        deployable_posterior_archive_arm_indices=(
+            deployable.posterior_archive_arm_indices
+        ),
+        deployable_posterior_archive_models=(
+            deployable.posterior_archive_models
+        ),
+        deployable_online_raw_archive_arm_indices=(
+            deployable.online_raw_archive_arm_indices
+        ),
+        deployable_online_raw_archive_models=(
+            deployable.online_raw_archive_models
+        ),
+        deployable_oracle_raw_winner_archive_arm_indices=(
+            deployable.oracle_raw_winner_archive_arm_indices
+        ),
+        deployable_oracle_raw_winner_archive_models=(
+            deployable.oracle_raw_winner_archive_models
+        ),
+        deployable_hypervolume=deployable.hypervolume,
+        deployable_hypervolume_regret=deployable.hypervolume_regret,
     )
 
 
@@ -1020,6 +1150,11 @@ def simulate_radial_gittins(
     def _append_recommendation_checkpoint(event: str) -> None:
         if not record_recommendation_trajectory:
             return
+        completed_at_checkpoint = tuple(
+            i
+            for i in range(n_arms)
+            if adaptive_pulls[i] >= actual_horizons[i]
+        )
         recommendation_trajectory.append(
             _recommendation_checkpoint(
                 posteriors=posteriors,
@@ -1036,6 +1171,7 @@ def simulate_radial_gittins(
                 total_cost=total_cost,
                 n_available=n_available,
                 event=event,
+                completed_arms=completed_at_checkpoint,
             )
         )
 

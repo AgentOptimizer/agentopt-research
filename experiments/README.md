@@ -72,6 +72,11 @@ Available selectors: `brute_force` (v3), `random_search`, `matrix_ucb`, `gittins
 - visits radial directions round-robin while sharing one posterior per configuration;
 - returns direction winners filtered in online empirical raw space: maximize
   observed mean accuracy and minimize observed mean deployment cost in USD;
+- restricts the deployable recommendation to completed direction winners,
+  matching the required-completion Gittins stopping convention;
+- records a separate all-posterior provisional archive for fixed-budget
+  diagnostics; unfinished provisional winners are candidates, not terminal
+  recommendations;
 - separately reports the legacy posterior-desirability archive and an offline
   oracle raw winner archive for diagnostics. The oracle archive uses the full
   cached matrix and never affects acquisition, stopping, or the deployable
@@ -86,10 +91,15 @@ fewer than `batch_size` questions remain; Gittins tables still plan every stage
 as a full batch. `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
 
-`plot_radial_gittins_trajectories.py` writes a raw-archive comparison for each
-benchmark. Online and oracle membership are plotted at full-dataset raw
-coordinates against the global raw Pareto front, so disagreements expose
-estimation error without feeding hidden outcomes back into the selector.
+`plot_radial_gittins_trajectories.py` writes separate completed-only deployable
+and all-posterior provisional raw-archive comparisons for each benchmark. Its
+main hypervolume curve is the completed-only recommendation; a dashed curve
+retains the provisional fixed-budget diagnostic. Online and oracle membership
+are plotted at full-dataset raw coordinates against the global raw Pareto
+front, so disagreements expose estimation error without feeding hidden
+outcomes back into the selector. The replay after the marked endogenous stop
+is forced only to show counterfactual later-budget diagnostics; it is not the
+policy's terminal output.
 
 `--budget-fraction` is a fraction of question cells, not dollars. A
 `--max-search-cost` guard reserves the frozen warm-start expected batch cost and
