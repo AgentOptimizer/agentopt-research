@@ -89,11 +89,17 @@ class RadialArmSummary:
 class RecommendationCheckpoint:
     """Recommendation snapshot for budget-curve evaluation.
 
-    Unlike the final completed-arm archive, this uses every warm-started arm's
-    current posterior to identify direction winners (paper-style fixed-budget
-    recommendation). ``selected_*`` is the leakage-free online raw archive.
-    The posterior-desirability and full-data oracle raw archives are retained
-    separately for comparison.
+    The legacy fields through ``hypervolume_regret`` describe an all-posterior
+    provisional archive: every warm-started arm is eligible even when it is
+    unfinished.  They are retained for fixed-budget diagnostics and backwards
+    compatibility.
+
+    The explicit ``deployable_*`` fields repeat the winner and archive
+    calculation with only ``completed_arm_indices`` eligible.  This matches
+    the required-completion Gittins stopping contract and the final
+    ``RadialSimulationResult`` recommendation.  Full-data oracle fields are
+    diagnostic only and never affect acquisition, stopping, or either online
+    archive.
     """
 
     cumulative_evaluations: int
@@ -112,6 +118,17 @@ class RecommendationCheckpoint:
     hypervolume: float
     hypervolume_regret: float
     event: str
+    completed_arm_indices: Tuple[int, ...] = ()
+    deployable_direction_winner_arm_indices: Tuple[int, ...] = ()
+    deployable_estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...] = ()
+    deployable_posterior_archive_arm_indices: Tuple[int, ...] = ()
+    deployable_posterior_archive_models: Tuple[str, ...] = ()
+    deployable_online_raw_archive_arm_indices: Tuple[int, ...] = ()
+    deployable_online_raw_archive_models: Tuple[str, ...] = ()
+    deployable_oracle_raw_winner_archive_arm_indices: Tuple[int, ...] = ()
+    deployable_oracle_raw_winner_archive_models: Tuple[str, ...] = ()
+    deployable_hypervolume: float = 0.0
+    deployable_hypervolume_regret: float = 0.0
 
 
 @dataclass
@@ -484,8 +501,23 @@ def provisional_archive_from_posteriors(
     return [winners[position] for position in nondominated_indices(winner_points)]
 
 
-def _recommendation_checkpoint(
+@dataclass(frozen=True)
+class _CheckpointArchive:
+    direction_winner_arm_indices: Tuple[int, ...]
+    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
+    posterior_archive_arm_indices: Tuple[int, ...]
+    posterior_archive_models: Tuple[str, ...]
+    online_raw_archive_arm_indices: Tuple[int, ...]
+    online_raw_archive_models: Tuple[str, ...]
+    oracle_raw_winner_archive_arm_indices: Tuple[int, ...]
+    oracle_raw_winner_archive_models: Tuple[str, ...]
+    hypervolume: float
+    hypervolume_regret: float
+
+
+def _checkpoint_archive(
     *,
+    eligible_arms: Sequence[int],
     posteriors: Mapping[int, GaussianVectorPosterior],
     directions: Sequence[Tuple[float, float]],
     models: Sequence[str],
@@ -496,16 +528,15 @@ def _recommendation_checkpoint(
     observed_scores: Mapping[int, Sequence[float]],
     observed_costs: Mapping[int, Sequence[float]],
     ground_truth_hv: float,
-    total_evaluations: int,
-    total_cost: float,
-    n_available: int,
-    event: str,
-) -> RecommendationCheckpoint:
+) -> _CheckpointArchive:
+    """Build one online archive for an explicit arm-eligibility scope."""
+    eligible = tuple(int(i) for i in eligible_arms)
     winner_arms = provisional_direction_winner_arms(
         posteriors=posteriors,
         directions=directions,
         reference_point=reference_point,
         stop_tolerance=stop_tolerance,
+        candidate_arms=eligible,
     )
     posterior_points = np.asarray(
         [posteriors[i].mean for i in winner_arms],
@@ -529,9 +560,14 @@ def _recommendation_checkpoint(
         winner_arms,
         estimated_raw_points,
     )
+    oracle_raw_points = (
+        raw_truth_vectors[winner_arms]
+        if winner_arms
+        else np.empty((0, 2), dtype=np.float64)
+    )
     oracle_raw_archive_arms = raw_archive_arm_indices(
         winner_arms,
-        raw_truth_vectors[winner_arms],
+        oracle_raw_points,
     )
     selected_truth = (
         truth_vectors[online_raw_archive_arms]
@@ -539,18 +575,15 @@ def _recommendation_checkpoint(
         else np.empty((0, 2), dtype=np.float64)
     )
     selected_hv = hypervolume_2d(selected_truth, reference_point)
-    return RecommendationCheckpoint(
-        cumulative_evaluations=int(total_evaluations),
-        cumulative_search_cost_usd=float(total_cost),
-        budget_fraction=float(total_evaluations) / float(n_available),
-        selected_arm_indices=tuple(online_raw_archive_arms),
-        selected_models=tuple(models[i] for i in online_raw_archive_arms),
+    return _CheckpointArchive(
         direction_winner_arm_indices=tuple(winner_arms),
         estimated_raw_winner_vectors=tuple(
             (float(point[0]), float(point[1])) for point in estimated_raw_points
         ),
         posterior_archive_arm_indices=tuple(posterior_archive_arms),
-        posterior_archive_models=tuple(models[i] for i in posterior_archive_arms),
+        posterior_archive_models=tuple(
+            models[i] for i in posterior_archive_arms
+        ),
         online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
         online_raw_archive_models=tuple(
             models[i] for i in online_raw_archive_arms
@@ -561,7 +594,104 @@ def _recommendation_checkpoint(
         ),
         hypervolume=float(selected_hv),
         hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
+    )
+
+
+def _recommendation_checkpoint(
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    directions: Sequence[Tuple[float, float]],
+    models: Sequence[str],
+    reference_point: Sequence[float],
+    stop_tolerance: float,
+    truth_vectors: np.ndarray,
+    raw_truth_vectors: np.ndarray,
+    observed_scores: Mapping[int, Sequence[float]],
+    observed_costs: Mapping[int, Sequence[float]],
+    ground_truth_hv: float,
+    total_evaluations: int,
+    total_cost: float,
+    n_available: int,
+    event: str,
+    completed_arms: Sequence[int] = (),
+) -> RecommendationCheckpoint:
+    provisional = _checkpoint_archive(
+        eligible_arms=tuple(sorted(posteriors)),
+        posteriors=posteriors,
+        directions=directions,
+        models=models,
+        reference_point=reference_point,
+        stop_tolerance=stop_tolerance,
+        truth_vectors=truth_vectors,
+        raw_truth_vectors=raw_truth_vectors,
+        observed_scores=observed_scores,
+        observed_costs=observed_costs,
+        ground_truth_hv=ground_truth_hv,
+    )
+    completed = tuple(int(i) for i in completed_arms)
+    deployable = _checkpoint_archive(
+        eligible_arms=completed,
+        posteriors=posteriors,
+        directions=directions,
+        models=models,
+        reference_point=reference_point,
+        stop_tolerance=stop_tolerance,
+        truth_vectors=truth_vectors,
+        raw_truth_vectors=raw_truth_vectors,
+        observed_scores=observed_scores,
+        observed_costs=observed_costs,
+        ground_truth_hv=ground_truth_hv,
+    )
+    return RecommendationCheckpoint(
+        cumulative_evaluations=int(total_evaluations),
+        cumulative_search_cost_usd=float(total_cost),
+        budget_fraction=float(total_evaluations) / float(n_available),
+        selected_arm_indices=provisional.online_raw_archive_arm_indices,
+        selected_models=provisional.online_raw_archive_models,
+        direction_winner_arm_indices=provisional.direction_winner_arm_indices,
+        estimated_raw_winner_vectors=provisional.estimated_raw_winner_vectors,
+        posterior_archive_arm_indices=provisional.posterior_archive_arm_indices,
+        posterior_archive_models=provisional.posterior_archive_models,
+        online_raw_archive_arm_indices=(
+            provisional.online_raw_archive_arm_indices
+        ),
+        online_raw_archive_models=provisional.online_raw_archive_models,
+        oracle_raw_winner_archive_arm_indices=(
+            provisional.oracle_raw_winner_archive_arm_indices
+        ),
+        oracle_raw_winner_archive_models=(
+            provisional.oracle_raw_winner_archive_models
+        ),
+        hypervolume=provisional.hypervolume,
+        hypervolume_regret=provisional.hypervolume_regret,
         event=event,
+        completed_arm_indices=completed,
+        deployable_direction_winner_arm_indices=(
+            deployable.direction_winner_arm_indices
+        ),
+        deployable_estimated_raw_winner_vectors=(
+            deployable.estimated_raw_winner_vectors
+        ),
+        deployable_posterior_archive_arm_indices=(
+            deployable.posterior_archive_arm_indices
+        ),
+        deployable_posterior_archive_models=(
+            deployable.posterior_archive_models
+        ),
+        deployable_online_raw_archive_arm_indices=(
+            deployable.online_raw_archive_arm_indices
+        ),
+        deployable_online_raw_archive_models=(
+            deployable.online_raw_archive_models
+        ),
+        deployable_oracle_raw_winner_archive_arm_indices=(
+            deployable.oracle_raw_winner_archive_arm_indices
+        ),
+        deployable_oracle_raw_winner_archive_models=(
+            deployable.oracle_raw_winner_archive_models
+        ),
+        deployable_hypervolume=deployable.hypervolume,
+        deployable_hypervolume_regret=deployable.hypervolume_regret,
     )
 
 
@@ -569,6 +699,35 @@ def _planning_horizon(actual_horizon: int, bin_width: int) -> int:
     if actual_horizon <= 0:
         return 0
     return int(math.ceil(actual_horizon / bin_width) * bin_width)
+
+
+def _adaptive_horizon(remaining: int, batch_size: int) -> int:
+    """Return planned adaptive pulls, including a smaller final batch."""
+    if remaining <= 0:
+        return 0
+    return (int(remaining) + int(batch_size) - 1) // int(batch_size)
+
+
+def _next_batch_size(remaining: int, batch_size: int) -> int:
+    if remaining <= 0:
+        return 0
+    return min(int(batch_size), int(remaining))
+
+
+def _scaled_batch_noise(
+    full_batch_noise: np.ndarray,
+    *,
+    full_batch_size: int,
+    actual_batch_size: int,
+) -> np.ndarray:
+    """Scale batch-mean noise when the realized batch is smaller than planned."""
+    if actual_batch_size <= 0 or actual_batch_size > full_batch_size:
+        raise ValueError("actual_batch_size must lie in [1, full_batch_size]")
+    if actual_batch_size == full_batch_size:
+        return np.asarray(full_batch_noise, dtype=np.float64)
+    return np.asarray(full_batch_noise, dtype=np.float64) * (
+        float(full_batch_size) / float(actual_batch_size)
+    )
 
 
 def _equivalent_cost(cost_reference_usd: float, desirability: float) -> float:
@@ -665,9 +824,10 @@ def simulate_radial_gittins(
     every arm is judged on the same questions. ``question_universe='per_arm'``
     retains ragged arm-specific tails as an explicitly diagnostic mode.
 
-    Adaptive replay uses full batches only. At most ``batch_size - 1`` tail
-    cells per arm remain unused so every DP transition and posterior update has
-    the same declared observation noise.
+    Adaptive replay uses full batches, then one smaller final batch when the
+    remaining questions do not fill ``batch_size``. Gittins tables still plan
+    every stage as a full batch; only the realized last update uses the actual
+    batch size and scaled observation noise.
 
     The dollar-budget reservation is soft when it uses frozen warm-start
     expected costs: a realized batch can overshoot the cap. Supplying
@@ -900,12 +1060,13 @@ def simulate_radial_gittins(
         else "soft_expected_cost"
     )
 
+    remaining_after_warm = [schedule.remaining(i) for i in range(n_arms)]
     actual_horizons = np.asarray(
-        [schedule.remaining(i) // batch_size for i in range(n_arms)],
+        [_adaptive_horizon(remaining, batch_size) for remaining in remaining_after_warm],
         dtype=np.int64,
     )
-    ragged_tail_cells_excluded = int(
-        sum(schedule.remaining(i) % batch_size for i in range(n_arms))
+    planned_partial_tail_cells = int(
+        sum(remaining % batch_size for remaining in remaining_after_warm)
     )
     planning_horizons = np.asarray(
         [
@@ -989,6 +1150,11 @@ def simulate_radial_gittins(
     def _append_recommendation_checkpoint(event: str) -> None:
         if not record_recommendation_trajectory:
             return
+        completed_at_checkpoint = tuple(
+            i
+            for i in range(n_arms)
+            if adaptive_pulls[i] >= actual_horizons[i]
+        )
         recommendation_trajectory.append(
             _recommendation_checkpoint(
                 posteriors=posteriors,
@@ -1005,6 +1171,7 @@ def simulate_radial_gittins(
                 total_cost=total_cost,
                 n_available=n_available,
                 event=event,
+                completed_arms=completed_at_checkpoint,
             )
         )
 
@@ -1022,7 +1189,7 @@ def simulate_radial_gittins(
         # These checks happen before constructing any DP tables or indices.
         # An arm-specific dollar reservation still happens after an arm is
         # proposed, because different arms have different frozen pull costs.
-        if total_evaluations + batch_size > question_cap:
+        if total_evaluations >= question_cap:
             trace.append(
                 {
                     "event": "budget_stop",
@@ -1157,14 +1324,26 @@ def simulate_radial_gittins(
             trace.append(visit_event)
             stop_reason = "all_arms_completed"
             break
-        reservation_cost = float(reservation_costs[selected_arm])
+        planned_batch_size = _next_batch_size(
+            schedule.remaining(selected_arm),
+            batch_size,
+        )
+        if planned_batch_size <= 0:
+            raise RuntimeError("unfinished arm has no remaining questions")
+        if total_evaluations + planned_batch_size > question_cap:
+            trace.append(visit_event)
+            stop_reason = "question_budget"
+            break
+        batch_scale = float(planned_batch_size) / float(batch_size)
+        reservation_cost = float(reservation_costs[selected_arm]) * batch_scale
         visit_event.update(
             {
                 "candidate_arm": selected_arm,
                 "candidate_model": models[selected_arm],
                 "expected_batch_search_cost_usd": float(
                     expected_batch_costs[selected_arm]
-                ),
+                )
+                * batch_scale,
                 "budget_reservation_cost_usd": reservation_cost,
                 "cost_budget_guard": cost_budget_guard,
                 "raw_effective_pull_cost": float(
@@ -1174,6 +1353,7 @@ def simulate_radial_gittins(
                     effective_pull_costs[selected_arm]
                 ),
                 "forced_after_gittins_stop": past_gittins_stop,
+                "planned_batch_size": planned_batch_size,
             }
         )
         if max_search_cost_usd is not None and (
@@ -1182,12 +1362,10 @@ def simulate_radial_gittins(
             trace.append(visit_event)
             stop_reason = "search_cost_budget"
             break
-        if schedule.remaining(selected_arm) < batch_size:
-            raise RuntimeError("unfinished arm cannot supply one full planned batch")
 
-        question_ids = schedule.next_batch(selected_arm, batch_size)
-        if len(question_ids) != batch_size:
-            raise RuntimeError("adaptive replay produced a partial batch")
+        question_ids = schedule.next_batch(selected_arm, planned_batch_size)
+        if len(question_ids) != planned_batch_size:
+            raise RuntimeError("adaptive replay produced an unexpected batch size")
         batch_scores: List[float] = []
         batch_costs: List[float] = []
         batch_latencies: List[float] = []
@@ -1202,16 +1380,20 @@ def simulate_radial_gittins(
             batch_latencies.append(latency)
 
         realized_batch_cost = float(sum(batch_costs))
+        guaranteed_bound = (
+            None
+            if guaranteed_batch_costs is None
+            else float(guaranteed_batch_costs[selected_arm]) * batch_scale
+        )
         if (
-            guaranteed_batch_costs is not None
-            and realized_batch_cost
-            > guaranteed_batch_costs[selected_arm]
+            guaranteed_bound is not None
+            and realized_batch_cost > guaranteed_bound
         ):
             raise ValueError(
                 "guaranteed_batch_cost_usd is violated by an adaptive batch for "
                 f"model {models[selected_arm]!r}: observed "
                 f"${realized_batch_cost:.6f}, bound "
-                f"${guaranteed_batch_costs[selected_arm]:.6f}"
+                f"${guaranteed_bound:.6f}"
             )
         for question_id in question_ids:
             observed_cells.add((selected_arm, question_id))
@@ -1225,15 +1407,19 @@ def simulate_radial_gittins(
         var_before = posterior.var.copy()
         posterior.update(
             normalized_observation,
-            noise_var,
-            batch_size=batch_size,
+            _scaled_batch_noise(
+                noise_var,
+                full_batch_size=batch_size,
+                actual_batch_size=planned_batch_size,
+            ),
+            batch_size=planned_batch_size,
         )
         adaptive_pulls[selected_arm] += 1
         observed_scores[selected_arm].extend(batch_scores)
         observed_costs[selected_arm].extend(batch_costs)
         observed_latencies[selected_arm].extend(batch_latencies)
         total_cost += realized_batch_cost
-        total_evaluations += batch_size
+        total_evaluations += planned_batch_size
 
         visit_event.update(
             {
@@ -1449,7 +1635,8 @@ def simulate_radial_gittins(
             else None
         ),
         "available_cells_in_universe": n_available,
-        "ragged_tail_cells_excluded": ragged_tail_cells_excluded,
+        "planned_partial_tail_cells": planned_partial_tail_cells,
+        "ragged_tail_cells_excluded": 0,
         "unobserved_cells_at_stop": int(
             sum(schedule.remaining(i) for i in range(n_arms))
         ),

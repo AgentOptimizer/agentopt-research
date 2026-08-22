@@ -220,6 +220,128 @@ class OfflineRoundRobinTests(unittest.TestCase):
             checkpoints[1].oracle_raw_winner_archive_models,
             ("A",),
         )
+        for checkpoint, result in zip(checkpoints, results):
+            self.assertEqual(checkpoint.completed_arm_indices, ())
+            self.assertEqual(
+                checkpoint.deployable_direction_winner_arm_indices,
+                (),
+            )
+            self.assertEqual(
+                checkpoint.deployable_online_raw_archive_models,
+                (),
+            )
+            self.assertEqual(checkpoint.deployable_hypervolume, 0.0)
+            self.assertEqual(
+                checkpoint.deployable_hypervolume_regret,
+                result.ground_truth_hypervolume,
+            )
+
+    def test_gittins_stop_checkpoint_excludes_unfinished_provisional_winner(self):
+        models = ["A", "B"]
+        datapoints = [0, 1, 2]
+        table = {
+            "A": {
+                question_id: _sample(0.8, 0.1)
+                for question_id in datapoints
+            },
+            # With seed=1, question 1 is the shared warm-start question.  B
+            # initially looks attractive, but its full-data vector is truly
+            # dominated by A and it remains unfinished at the Gittins stop.
+            "B": {
+                0: _sample(0.0, 10.0),
+                1: _sample(1.0, 1.0),
+                2: _sample(0.0, 10.0),
+            },
+        }
+
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=1,
+            directions=((0.1, 0.9), (0.9, 0.1)),
+            cost_reference_usd=1.0,
+            prior_variance=0.001,
+            obs_noise_variance=1e-6,
+            seed=1,
+            index_provider=lambda context, arm_index: (
+                100.0 if arm_index == 0 else -100.0
+            ),
+            halt_on_gittins_stop=False,
+            record_recommendation_trajectory=True,
+        )
+        stop = next(
+            checkpoint
+            for checkpoint in result.recommendation_trajectory
+            if checkpoint.event == "gittins_stop"
+        )
+
+        self.assertEqual(stop.cumulative_evaluations, 4)
+        self.assertEqual(stop.completed_arm_indices, (0,))
+        self.assertEqual(stop.direction_winner_arm_indices, (0, 1))
+        self.assertEqual(stop.online_raw_archive_models, ("A", "B"))
+        self.assertEqual(stop.oracle_raw_winner_archive_models, ("A",))
+        self.assertEqual(
+            stop.deployable_direction_winner_arm_indices,
+            (0,),
+        )
+        self.assertEqual(
+            stop.deployable_online_raw_archive_models,
+            ("A",),
+        )
+        self.assertEqual(
+            stop.deployable_oracle_raw_winner_archive_models,
+            ("A",),
+        )
+        self.assertLessEqual(
+            set(stop.deployable_online_raw_archive_arm_indices),
+            set(stop.completed_arm_indices),
+        )
+
+        final = result.recommendation_trajectory[-1]
+        self.assertEqual(final.event, "final")
+        self.assertEqual(final.completed_arm_indices, (0, 1))
+        self.assertEqual(
+            final.direction_winner_arm_indices,
+            final.deployable_direction_winner_arm_indices,
+        )
+        self.assertEqual(
+            final.online_raw_archive_arm_indices,
+            final.deployable_online_raw_archive_arm_indices,
+        )
+        self.assertEqual(result.selected_models, ["A"])
+        # The saved stop snapshot remains the completed-only A recommendation
+        # after the diagnostic replay continues and finishes both arms.
+        self.assertEqual(stop.completed_arm_indices, (0,))
+        self.assertEqual(stop.deployable_online_raw_archive_models, ("A",))
+
+        terminal_result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=1,
+            directions=((0.1, 0.9), (0.9, 0.1)),
+            cost_reference_usd=1.0,
+            prior_variance=0.001,
+            obs_noise_variance=1e-6,
+            seed=1,
+            index_provider=lambda context, arm_index: (
+                100.0 if arm_index == 0 else -100.0
+            ),
+            halt_on_gittins_stop=True,
+            record_recommendation_trajectory=True,
+        )
+        terminal_stop = next(
+            checkpoint
+            for checkpoint in terminal_result.recommendation_trajectory
+            if checkpoint.event == "gittins_stop"
+        )
+        self.assertEqual(
+            terminal_result.selected_models,
+            list(terminal_stop.deployable_online_raw_archive_models),
+        )
+        self.assertEqual(terminal_result.selected_models, ["A"])
+        self.assertEqual(terminal_result.total_evaluations, 4)
 
     def test_question_budget_counts_warm_start_and_stops_before_partial_batch(self):
         models, datapoints, table = _toy_frontier()
@@ -234,8 +356,8 @@ class OfflineRoundRobinTests(unittest.TestCase):
             index_provider=_target_provider,
         )
 
-        # Eight warm cells plus one full two-question batch; the selector does
-        # not silently turn the one-cell remainder into a different DP action.
+        # Eight warm cells plus one full two-question batch. Remaining budget
+        # of one cell is not turned into a different DP action.
         self.assertEqual(result.stop_reason, "question_budget")
         self.assertEqual(result.total_evaluations, 10)
         self.assertAlmostEqual(result.total_cost, 0.11)
@@ -287,8 +409,9 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(result.params["question_universe"], "common")
         self.assertEqual(result.params["common_question_count"], 5)
         self.assertEqual(result.params["available_cells_in_universe"], 15)
-        self.assertEqual(result.params["actual_horizons"], [1, 1, 1])
-        self.assertEqual(result.params["ragged_tail_cells_excluded"], 3)
+        self.assertEqual(result.params["actual_horizons"], [2, 2, 2])
+        self.assertEqual(result.params["ragged_tail_cells_excluded"], 0)
+        self.assertEqual(result.params["planned_partial_tail_cells"], 3)
 
     def test_per_arm_question_universe_is_explicit_ragged_diagnostic(self):
         models = ["A", "B", "C"]
@@ -315,8 +438,41 @@ class OfflineRoundRobinTests(unittest.TestCase):
 
         self.assertEqual(result.params["question_universe"], "per_arm")
         self.assertEqual(result.params["available_cells_in_universe"], 18)
-        self.assertEqual(result.params["actual_horizons"], [2, 2, 1])
-        self.assertEqual(result.params["ragged_tail_cells_excluded"], 2)
+        self.assertEqual(result.params["actual_horizons"], [3, 2, 2])
+        self.assertEqual(result.params["ragged_tail_cells_excluded"], 0)
+        self.assertEqual(result.params["planned_partial_tail_cells"], 2)
+
+    def test_last_partial_batch_consumes_remaining_questions(self):
+        models = ["A"]
+        datapoints = list(range(5))
+        table = {"A": {question_id: _sample(0.6, 0.1) for question_id in datapoints}}
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=2,
+            directions=((0.5, 0.5),),
+            seed=1,
+            index_provider=lambda context, arm_index: 10.0,
+        )
+
+        self.assertEqual(result.stop_reason, "all_arms_completed")
+        self.assertEqual(result.total_evaluations, 5)
+        self.assertEqual(result.params["actual_horizons"], [2])
+        self.assertEqual(result.params["planned_partial_tail_cells"], 1)
+        self.assertEqual(result.params["ragged_tail_cells_excluded"], 0)
+        self.assertEqual(result.params["unobserved_cells_at_stop"], 0)
+        self.assertEqual(result.model_results[0].n_samples_evaluated, 5)
+        self.assertEqual(result.model_results[0].n_batches, 3)
+        self.assertEqual(result.online_raw_archive_models, ["A"])
+        self.assertEqual(result.oracle_raw_winner_archive_models, ["A"])
+        pulls = [
+            event
+            for event in result.trace
+            if event["event"] == "direction_visit" and event["selected_arm"] is not None
+        ]
+        self.assertEqual([len(event["question_ids"]) for event in pulls], [2, 1])
+        self.assertEqual(pulls[-1]["planned_batch_size"], 1)
 
     def test_expected_cost_vector_and_mapping_are_resolved_per_arm(self):
         models = ["A", "B"]

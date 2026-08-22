@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""Plot radial-Gittins HV regret curves and raw-archive Pareto comparisons.
+"""Plot radial-Gittins recommendation and provisional-archive diagnostics.
 
 Runs HotpotQA / MathQA offline replay at budget fraction 1.0, continues past
 the endogenous Gittins stop so the trajectory covers later budgets, and writes:
 
-* HV regret vs observed budget fraction (with a stop marker)
-* online-estimated vs offline-oracle raw winner archives at Gittins stop,
-  50%, and the actual end fraction
+* completed-only deployable and all-posterior provisional HV regret curves;
+* separate deployable and provisional raw-archive comparisons at Gittins
+  stop, 50%, and the actual end fraction.
+
+The replay continues after the endogenous stop only to show counterfactual
+fixed-budget diagnostics.  The deployable archive is the terminal
+recommendation contract; unfinished provisional winners are never promoted to
+that archive.
 """
 
 from __future__ import annotations
@@ -86,6 +91,33 @@ def _pareto_min_cost_indices(points: np.ndarray) -> List[int]:
     return raw_nondominated_indices(points)
 
 
+def _checkpoint_archive_view(
+    checkpoint: RecommendationCheckpoint,
+    archive_kind: str,
+) -> Tuple[
+    Tuple[int, ...],
+    Tuple[Tuple[float, float], ...],
+    Tuple[int, ...],
+    Tuple[int, ...],
+]:
+    """Return aligned winners, estimates, online archive, and oracle archive."""
+    if archive_kind == "deployable":
+        return (
+            checkpoint.deployable_direction_winner_arm_indices,
+            checkpoint.deployable_estimated_raw_winner_vectors,
+            checkpoint.deployable_online_raw_archive_arm_indices,
+            checkpoint.deployable_oracle_raw_winner_archive_arm_indices,
+        )
+    if archive_kind == "provisional":
+        return (
+            checkpoint.direction_winner_arm_indices,
+            checkpoint.estimated_raw_winner_vectors,
+            checkpoint.online_raw_archive_arm_indices,
+            checkpoint.oracle_raw_winner_archive_arm_indices,
+        )
+    raise ValueError("archive_kind must be 'deployable' or 'provisional'")
+
+
 def run_benchmark(
     *,
     pickle_path: Path,
@@ -151,9 +183,31 @@ def plot_hv_curves(
     for ax, (name, result) in zip(axes[0], results.items()):
         traj = result.recommendation_trajectory
         xs = [p.budget_fraction for p in traj]
-        ys = [p.hypervolume_regret for p in traj]
-        ax.plot(xs, ys, color="#1f4e79", linewidth=1.8, label="HV regret")
+        deployable_ys = [p.deployable_hypervolume_regret for p in traj]
+        provisional_ys = [p.hypervolume_regret for p in traj]
+        ax.plot(
+            xs,
+            deployable_ys,
+            color="#1f4e79",
+            linewidth=1.9,
+            label="deployable completed-only",
+        )
+        ax.plot(
+            xs,
+            provisional_ys,
+            color="#7a8ca5",
+            linewidth=1.3,
+            linestyle="--",
+            label="provisional all-posterior",
+        )
         if result.gittins_stop_budget_fraction is not None:
+            ax.axvspan(
+                result.gittins_stop_budget_fraction,
+                1.02,
+                color="#687386",
+                alpha=0.08,
+                label="forced post-stop diagnostic",
+            )
             ax.axvline(
                 result.gittins_stop_budget_fraction,
                 color="#c45c26",
@@ -171,7 +225,7 @@ def plot_hv_curves(
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right", fontsize=8)
     fig.suptitle(
-        "Online raw-archive quality vs search budget",
+        "Completed-only recommendation vs all-posterior diagnostic",
         fontsize=12,
     )
     fig.tight_layout()
@@ -185,9 +239,16 @@ def plot_raw_archive_comparison(
     name: str,
     result: RadialSimulationResult,
     raw_vectors: np.ndarray,
+    archive_kind: str,
     output_path: Path,
 ) -> None:
-    """Compare online-estimated and full-data-oracle raw winner archives."""
+    """Compare one explicitly scoped online and full-data raw archive."""
+    if archive_kind not in {"deployable", "provisional"}:
+        raise ValueError("archive_kind must be 'deployable' or 'provisional'")
+    is_deployable = archive_kind == "deployable"
+    scope_label = (
+        "completed-only deployable" if is_deployable else "all-posterior provisional"
+    )
     snapshots = _select_snapshots(result)
     labels = list(snapshots.keys())
     fig, axes = plt.subplots(
@@ -202,12 +263,13 @@ def plot_raw_archive_comparison(
     global_front_idx = _pareto_min_cost_indices(raw_vectors)
     global_front = raw_vectors[global_front_idx]
     global_front = global_front[np.argsort(global_front[:, 1])]
-    estimated_vectors = [
-        np.asarray(
-            checkpoint.estimated_raw_winner_vectors,
-            dtype=np.float64,
-        ).reshape((-1, 2))
+    archive_views = [
+        _checkpoint_archive_view(checkpoint, archive_kind)
         for checkpoint in snapshots.values()
+    ]
+    estimated_vectors = [
+        np.asarray(view[1], dtype=np.float64).reshape((-1, 2))
+        for view in archive_views
     ]
     all_costs = np.concatenate(
         [raw_vectors[:, 1]]
@@ -223,10 +285,11 @@ def plot_raw_archive_comparison(
         checkpoint = snapshots[label]
         online_ax = axes[0, panel_index]
         truth_ax = axes[1, panel_index]
-        candidate_arms = list(checkpoint.direction_winner_arm_indices)
+        archive_view = archive_views[panel_index]
+        candidate_arms = list(archive_view[0])
         estimated_points = estimated_vectors[panel_index]
-        online = set(checkpoint.online_raw_archive_arm_indices)
-        oracle = set(checkpoint.oracle_raw_winner_archive_arm_indices)
+        online = set(archive_view[2])
+        oracle = set(archive_view[3])
         overlap = sorted(online & oracle)
         online_only = sorted(online - oracle)
         oracle_only = sorted(oracle - online)
@@ -237,7 +300,7 @@ def plot_raw_archive_comparison(
             s=26,
             c="#b8c8db",
             alpha=0.75,
-            label="direction winners at online estimates",
+            label=f"{scope_label} direction winners",
             zorder=1,
         )
         online_positions = [
@@ -256,7 +319,7 @@ def plot_raw_archive_comparison(
                 linewidth=1.5,
                 marker="s",
                 markersize=6,
-                label="online empirical raw archive",
+                label=f"{scope_label} online archive",
                 zorder=3,
             )
 
@@ -318,7 +381,7 @@ def plot_raw_archive_comparison(
             truth_ax.set_xscale("log")
         online_ax.set_title(
             f"{label} ({checkpoint.budget_fraction:.1%})\n"
-            f"online archive={len(online)}"
+            f"{scope_label} archive={len(online)}"
         )
         truth_ax.set_title(
             f"Full-data evaluation: oracle={len(oracle)}, "
@@ -349,8 +412,8 @@ def plot_raw_archive_comparison(
         frameon=False,
     )
     fig.suptitle(
-        f"{name}: raw-space direction-winner archives\n"
-        "Top: values available online. Bottom: archive membership at full-data values.",
+        f"{name}: {scope_label} raw-space archives\n"
+        "Top: values available online. Bottom: membership at full-data values.",
         fontsize=12,
     )
     fig.tight_layout(rect=(0.0, 0.12, 1.0, 0.92))
@@ -404,15 +467,58 @@ def main() -> None:
         )
         results[display] = result
         raw_by_name[display] = raw_vectors
+        stop_checkpoints = [
+            checkpoint
+            for checkpoint in result.recommendation_trajectory
+            if checkpoint.event == "gittins_stop"
+        ]
+        stop_checkpoint = stop_checkpoints[0] if stop_checkpoints else None
+        final_checkpoint = (
+            result.recommendation_trajectory[-1]
+            if result.recommendation_trajectory
+            else None
+        )
         summary[display] = {
             "stop_reason": result.stop_reason,
             "gittins_stop_budget_fraction": result.gittins_stop_budget_fraction,
             "gittins_stop_evaluations": result.gittins_stop_evaluations,
             "final_evaluations": result.total_evaluations,
             "available_cells": result.params["available_cells_in_universe"],
-            "final_hv_regret": result.recommendation_trajectory[-1].hypervolume_regret
-            if result.recommendation_trajectory
-            else result.hypervolume_regret,
+            "final_hv_regret": (
+                final_checkpoint.deployable_hypervolume_regret
+                if final_checkpoint is not None
+                else result.hypervolume_regret
+            ),
+            "final_deployable_hv_regret": (
+                final_checkpoint.deployable_hypervolume_regret
+                if final_checkpoint is not None
+                else result.hypervolume_regret
+            ),
+            "final_provisional_hv_regret": (
+                final_checkpoint.hypervolume_regret
+                if final_checkpoint is not None
+                else None
+            ),
+            "gittins_stop_deployable_hv_regret": (
+                stop_checkpoint.deployable_hypervolume_regret
+                if stop_checkpoint is not None
+                else None
+            ),
+            "gittins_stop_provisional_hv_regret": (
+                stop_checkpoint.hypervolume_regret
+                if stop_checkpoint is not None
+                else None
+            ),
+            "gittins_stop_deployable_models": (
+                list(stop_checkpoint.deployable_online_raw_archive_models)
+                if stop_checkpoint is not None
+                else None
+            ),
+            "gittins_stop_provisional_models": (
+                list(stop_checkpoint.online_raw_archive_models)
+                if stop_checkpoint is not None
+                else None
+            ),
             "completed_arm_archive_hv_regret": result.hypervolume_regret,
             "trajectory_len": len(result.recommendation_trajectory),
             "policy_wall_time_seconds": result.policy_wall_time_seconds,
@@ -426,7 +532,17 @@ def main() -> None:
             name=display,
             result=result,
             raw_vectors=raw_vectors,
+            archive_kind="deployable",
             output_path=outdir / f"{bench}_raw_archive_comparison.png",
+        )
+        plot_raw_archive_comparison(
+            name=display,
+            result=result,
+            raw_vectors=raw_vectors,
+            archive_kind="provisional",
+            output_path=(
+                outdir / f"{bench}_provisional_raw_archive_comparison.png"
+            ),
         )
 
     plot_hv_curves(results, outdir / "hv_regret_curves.png")
