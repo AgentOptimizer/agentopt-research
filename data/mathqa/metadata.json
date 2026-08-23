@@ -1,6 +1,6 @@
 {
   "benchmark": "mathqa",
-  "source": "experiments/results/cache_db_results/mathqa_lookup.pkl",
+  "source": "experiments/data/lookup/mathqa_lookup.pkl",
   "shape": [
     81,
     200

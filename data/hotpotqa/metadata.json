@@ -1,6 +1,6 @@
 {
   "benchmark": "hotpotqa",
-  "source": "experiments/results/cache_db_results/hotpotqa_lookup.pkl",
+  "source": "experiments/data/lookup/hotpotqa_lookup.pkl",
   "shape": [
     81,
     200

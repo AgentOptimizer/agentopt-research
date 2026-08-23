@@ -14,9 +14,10 @@ mean zero. Each benchmark also has `metadata.json` with missingness and the 20
 highest-cost cells.
 
 The source is intentionally the current research lookup pickle under
-`experiments/results/cache_db_results/`. It is not silently mixed with the
-separate aggregated JSONL run. Regenerate with:
+`experiments/data/lookup/`. It is not silently mixed with the separate
+aggregated JSONL run. That directory is gitignored, so regeneration needs the
+pickles present locally:
 
 ```bash
-PYTHONPATH=src:experiments .venv/bin/python data/extract_response_matrices.py
+PYTHONPATH=. .venv/bin/python data/extract_response_matrices.py
 ```

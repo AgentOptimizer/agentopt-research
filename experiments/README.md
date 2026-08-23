@@ -10,6 +10,10 @@ This repo is multi-objective. The main replay is `combined_objective/offline_rad
 
 Shared inputs live in `data/` (gitignored — keep them locally). Selector outputs live with the scripts that produce them.
 
+This is `experiments/data/`, not the repo-root `data/`. The latter holds the
+committed accuracy / cost / token matrices extracted from these pickles; see
+`../data/README.md`.
+
 ### Aggregated (per model combination)
 
 `data/brute_force/{gpqa,bfcl,hotpotqa,mathqa}.csv`
@@ -65,6 +69,11 @@ cd combined_objective && python run_all_selectors.py
 python single_objective/offline_selector_sim.py \
     --pickle data/lookup/gpqa_lookup.pkl \
     --selectors all --seeds 50
+
+# Multi-objective random-search baselines (equal cell budget)
+python combined_objective/offline_multiobjective_random_search.py \
+    --pickle data/lookup/hotpotqa_lookup.pkl \
+    --output combined_objective/results/multiobjective/hotpotqa_random_search.csv
 ```
 
 Scripts auto-add `../src` to `PYTHONPATH` so `agentopt.model_selection` imports work.
@@ -111,6 +120,12 @@ front, so disagreements expose estimation error without feeding hidden
 outcomes back into the selector. The replay after the marked endogenous stop
 is forced only to show counterfactual later-budget diagnostics; it is not the
 policy's terminal output.
+
+`combined_objective/plot_multiobjective_random_search.py` plots the random-search
+budget sweep and `combined_objective/plot_multiobjective_method_comparison.py`
+plots radial-Gittins against it. `combined_objective/audit_multiobjective_results.py`
+re-checks dominance, distance to the front and hypervolume against the
+brute-force frontier.
 
 `--budget-fraction` is a fraction of question cells, not dollars. A
 `--max-search-cost` guard reserves the frozen warm-start expected batch cost and

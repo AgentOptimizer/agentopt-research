@@ -331,7 +331,7 @@ def main() -> None:
 
 def load_table_from_pickle(pickle_path: Path):
     """Load only the lookup table while keeping the plotting loop readable."""
-    from offline_selector_sim_v2 import load_pickle
+    from experiments.single_objective.offline_selector_sim import load_pickle
 
     _, _, table = load_pickle(str(pickle_path))
     return table
