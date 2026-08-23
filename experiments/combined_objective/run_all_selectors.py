@@ -9,14 +9,14 @@ sys.path.insert(0, str(_REPO_ROOT / "src"))
 sys.path.insert(0, str(_EXPERIMENTS_DIR))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from offline_selector_sim_v3 import (
+from offline_selector_sim import (
     load_pickle, set_norm_stats, compute_ground_truth,
     simulate_brute_force, simulate_random_search,
     simulate_matrix_ucb, simulate_gittins, _require_data_path,
 )
 
 try:
-    from offline_selector_sim_v3 import simulate_bayesian_optimization
+    from offline_selector_sim import simulate_bayesian_optimization
 except Exception:
     simulate_bayesian_optimization = None
 

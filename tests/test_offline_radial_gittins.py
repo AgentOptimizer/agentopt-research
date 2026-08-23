@@ -5,8 +5,8 @@ from unittest import mock
 import numpy as np
 
 from agentopt.model_selection.radial_gittins_dp import RadialGittinsGrid
-from experiments import offline_radial_gittins as radial_replay
-from experiments.offline_radial_gittins import (
+from experiments.combined_objective import offline_radial_gittins as radial_replay
+from experiments.combined_objective.offline_radial_gittins import (
     _jsonable_result,
     hypervolume_2d,
     nondominated_indices,
@@ -15,7 +15,7 @@ from experiments.offline_radial_gittins import (
     simulate_radial_gittins,
     summarize_radial_multi_seed,
 )
-from experiments.offline_selector_sim_v2 import SampleResult
+from experiments.single_objective.offline_selector_sim import SampleResult
 
 
 def _sample(score, cost):

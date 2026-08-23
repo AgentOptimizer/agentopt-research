@@ -20,20 +20,28 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 import numpy as np
 
-try:
-    from . import offline_selector_sim_v2 as _offline_v2
-except ImportError:  # Direct ``python experiments/offline_radial_gittins.py``.
-    import offline_selector_sim_v2 as _offline_v2  # type: ignore[no-redef]
+_EXPERIMENTS_DIR = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _EXPERIMENTS_DIR.parent
+_SRC_DIR = _REPO_ROOT / "src"
+if str(_SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(_SRC_DIR))
+if str(_EXPERIMENTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_EXPERIMENTS_DIR))
 
-# Older local pickles record ``offline_selector_sim_v2.SampleResult`` because
-# the loader was historically executed as a script. Preserve that import name
-# when this module is imported through the ``experiments`` namespace package.
-sys.modules.setdefault("offline_selector_sim_v2", _offline_v2)
-LookupTable = _offline_v2.LookupTable
-SampleResult = _offline_v2.SampleResult
-_require_data_path = _offline_v2._require_data_path
-load_jsonl = _offline_v2.load_jsonl
-load_pickle = _offline_v2.load_pickle
+try:
+    from experiments.single_objective import offline_selector_sim as _offline_sim
+except ImportError:  # Direct ``python combined_objective/offline_radial_gittins.py``.
+    from single_objective import offline_selector_sim as _offline_sim  # type: ignore[no-redef]
+
+# Older local pickles record ``offline_selector_sim_v2.SampleResult``.
+# The single-objective loader registers that alias; keep it here too when
+# this module is imported through the ``experiments`` namespace package.
+sys.modules.setdefault("offline_selector_sim_v2", _offline_sim)
+LookupTable = _offline_sim.LookupTable
+SampleResult = _offline_sim.SampleResult
+_require_data_path = _offline_sim._require_data_path
+load_jsonl = _offline_sim.load_jsonl
+load_pickle = _offline_sim.load_pickle
 
 from agentopt.model_selection.radial_gittins import (
     DEFAULT_DIRECTIONS,

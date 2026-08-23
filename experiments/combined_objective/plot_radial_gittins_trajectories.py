@@ -26,14 +26,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments")]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
     RadialGittinsBoundaryCache,
     RadialGittinsGrid,
 )
-from offline_radial_gittins import (  # noqa: E402
+from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
     RadialSimulationResult,
     RecommendationCheckpoint,
     _full_raw_objective_vectors,
@@ -427,7 +427,7 @@ def main() -> None:
     parser.add_argument(
         "--outdir",
         type=Path,
-        default=Path("experiments/results/radial_gittins_plots"),
+        default=Path("experiments/combined_objective/results/radial_gittins_plots"),
     )
     parser.add_argument("--batch-size", type=int, default=4, choices=(4, 8))
     parser.add_argument("--seed", type=int, default=42)
@@ -454,7 +454,7 @@ def main() -> None:
 
     for bench in args.benchmarks:
         pickle_path = _require_data_path(
-            f"experiments/results/cache_db_results/{bench}_lookup.pkl"
+            str(ROOT / "experiments/results/cache_db_results" / f"{bench}_lookup.pkl")
         )
         display = "HotpotQA" if bench == "hotpotqa" else "MathQA"
         result, raw_vectors, _ = run_benchmark(
