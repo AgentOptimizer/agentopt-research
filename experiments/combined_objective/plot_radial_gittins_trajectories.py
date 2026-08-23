@@ -454,7 +454,7 @@ def main() -> None:
 
     for bench in args.benchmarks:
         pickle_path = _require_data_path(
-            str(ROOT / "experiments/results/cache_db_results" / f"{bench}_lookup.pkl")
+            str(ROOT / "experiments/data/lookup" / f"{bench}_lookup.pkl")
         )
         display = "HotpotQA" if bench == "hotpotqa" else "MathQA"
         result, raw_vectors, _ = run_benchmark(

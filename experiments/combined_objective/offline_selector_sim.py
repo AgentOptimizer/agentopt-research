@@ -6,12 +6,12 @@ Scalarized multi-objective replay:
 
     objective = accuracy - lambda_cost * cost - lambda_latency * latency
 
-Preferred input: pickle lookup tables under ``../results/cache_db_results/``
+Preferred input: pickle lookup tables under ``../data/lookup/``
 (gitignored — keep them locally).
 
 Usage:
     python combined_objective/offline_selector_sim.py \\
-        --pickle results/cache_db_results/gpqa_lookup.pkl \\
+        --pickle data/lookup/gpqa_lookup.pkl \\
         --selectors all --seeds 50 \\
         --lambda-cost 0.1 --lambda-latency 0.05
 """
@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 _EXPERIMENTS_DIR = Path(__file__).resolve().parent.parent
 _REPO_ROOT = _EXPERIMENTS_DIR.parent
 _SRC_DIR = _REPO_ROOT / "src"
-_DEFAULT_PICKLE_DIR = _EXPERIMENTS_DIR / "results" / "cache_db_results"
+_DEFAULT_PICKLE_DIR = _EXPERIMENTS_DIR / "data" / "lookup"
 
 # Expose src/agentopt; pickle alias is registered after SampleResult.
 sys.path.insert(0, str(_EXPERIMENTS_DIR))
@@ -132,7 +132,7 @@ def load_jsonl(path: str) -> Tuple[List[str], List[int], LookupTable]:
 
 
 def load_pickle(path: str) -> Tuple[List[str], List[int], LookupTable]:
-    """Load from pickle lookup table under ``results/cache_db_results/``.
+    """Load from pickle lookup table under ``data/lookup/``.
 
     Historical pickles store ``offline_selector_sim_v2.SampleResult``;
     fields match this module's ``SampleResult``.

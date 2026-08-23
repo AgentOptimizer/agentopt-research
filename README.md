@@ -11,8 +11,7 @@ src/agentopt/
 └── model_price.py / .json      # Pricing table
 
 experiments/
-├── results/cache_db_results/   # Shared per-sample lookup tables (*.pkl)
-├── cached_results/             # Shared per-combo accuracy/cost/latency CSVs
+├── data/                       # Shared lookup pickles + brute-force CSVs
 ├── combined_objective/         # Multi-objective replays + their results/
 └── single_objective/           # Accuracy-only baseline + its results/
 ```
@@ -25,17 +24,17 @@ Use the brute-force CSVs (no dependencies):
 
 | Benchmark | File | Combos |
 |-----------|------|--------|
-| GPQA | `experiments/cached_results/gpqa/brute_force_results.csv` | 9 |
-| BFCL | `experiments/cached_results/bfcl/brute_force_results.csv` | 9 |
-| HotpotQA | `experiments/cached_results/hotpotqa/brute_force_results.csv` | 81 (planner+solver) |
-| MathQA | `experiments/cached_results/mathqa/brute_force_results.csv` | 81 (answer+critic) |
+| GPQA | `experiments/data/brute_force/gpqa.csv` | 9 |
+| BFCL | `experiments/data/brute_force/bfcl.csv` | 9 |
+| HotpotQA | `experiments/data/brute_force/hotpotqa.csv` | 81 (planner+solver) |
+| MathQA | `experiments/data/brute_force/mathqa.csv` | 81 (answer+critic) |
 
 Columns: `Rank`, `Model`, `Accuracy`, `Server Latency (s)`, `Wall Latency (s)`, `Cost ($)`.
 
 ## Per-sample matrices (for selector algorithms)
 
 ```text
-experiments/results/cache_db_results/{gpqa,bfcl,hotpotqa,mathqa}_lookup.pkl
+experiments/data/lookup/{gpqa,bfcl,hotpotqa,mathqa}_lookup.pkl
 ```
 
 Each pickle: `{model_names, datapoints, table[combo][idx] → SampleResult(score, latency_seconds, cost, …)}`.

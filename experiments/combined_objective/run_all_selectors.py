@@ -20,7 +20,7 @@ try:
 except Exception:
     simulate_bayesian_optimization = None
 
-PICKLE_DIR = _EXPERIMENTS_DIR / "results" / "cache_db_results"
+PICKLE_DIR = _EXPERIMENTS_DIR / "data" / "lookup"
 BENCHMARKS = ["gpqa", "bfcl", "hotpotqa", "mathqa"]
 LAMBDA_COST = 0.1
 LAMBDA_LATENCY = 0.1

@@ -1,6 +1,5 @@
-# Benchmark data and local experiment outputs (keep local for now)
-experiments/results/
-experiments/cached_results/
+# Shared inputs and local experiment outputs (keep local for now)
+experiments/data/
 experiments/combined_objective/results/
 experiments/single_objective/results/
 /plot/

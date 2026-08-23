@@ -15,7 +15,7 @@ from offline_selector_sim import (
     _require_data_path,
 )
 
-PICKLE_DIR = _EXPERIMENTS_DIR / "results" / "cache_db_results"
+PICKLE_DIR = _EXPERIMENTS_DIR / "data" / "lookup"
 BENCHMARKS = [
     ("gpqa", "GPQA"),
     ("bfcl", "BFCL"),

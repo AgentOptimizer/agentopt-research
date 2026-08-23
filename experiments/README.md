@@ -8,9 +8,11 @@ This repo is multi-objective. The main replay is `combined_objective/offline_rad
 
 ## Data
 
+Shared inputs live in `data/` (gitignored — keep them locally). Selector outputs live with the scripts that produce them.
+
 ### Aggregated (per model combination)
 
-`cached_results/{gpqa,bfcl,hotpotqa,mathqa}/brute_force_results.csv`
+`data/brute_force/{gpqa,bfcl,hotpotqa,mathqa}.csv`
 
 | Column | Meaning |
 |--------|---------|
@@ -19,9 +21,9 @@ This repo is multi-objective. The main replay is `combined_objective/offline_rad
 | Wall Latency (s) | Mean wall-clock latency |
 | Cost ($) | Total / mean cost for the combo |
 
-Shared ablation: `cached_results/gpqa_thinking_ablation.csv`.
+Shared ablation: `data/gpqa_thinking_ablation.csv`.
 
-Selector outputs live with the scripts that produce them:
+Selector outputs:
 
 - `combined_objective/results/radial_gittins_plots/`
 - `combined_objective/results/multiobjective/`
@@ -30,7 +32,7 @@ Selector outputs live with the scripts that produce them:
 
 ### Per-sample lookup tables
 
-`results/cache_db_results/*_lookup.pkl`
+`data/lookup/*_lookup.pkl`
 
 | File | Combos × samples |
 |------|------------------|
@@ -43,17 +45,17 @@ Schema: `model_names`, `datapoints`, `table[combo][dp_idx] → SampleResult(scor
 
 ## Offline selector simulation
 
-Pickles under `results/cache_db_results/` are **gitignored** — keep them locally.
+Pickles under `data/lookup/` are **gitignored** — keep them locally.
 
 ```bash
 # Accuracy + deployment-cost Pareto search (empirical-Bayes warm start)
 python combined_objective/offline_radial_gittins.py \
-    --pickle results/cache_db_results/hotpotqa_lookup.pkl \
+    --pickle data/lookup/hotpotqa_lookup.pkl \
     --batch-size 4 --budget-fraction 0.2 --eta 1.0
 
 # Combined objective: J = acc − λ_cost·NormCost − λ_latency·NormLatency
 python combined_objective/offline_selector_sim.py \
-    --pickle results/cache_db_results/gpqa_lookup.pkl \
+    --pickle data/lookup/gpqa_lookup.pkl \
     --selectors all --seeds 50 \
     --lambda-cost 0.1 --lambda-latency 0.1
 
@@ -61,7 +63,7 @@ cd combined_objective && python run_all_selectors.py
 
 # Accuracy-only baseline (not the main protocol)
 python single_objective/offline_selector_sim.py \
-    --pickle results/cache_db_results/gpqa_lookup.pkl \
+    --pickle data/lookup/gpqa_lookup.pkl \
     --selectors all --seeds 50
 ```
 
