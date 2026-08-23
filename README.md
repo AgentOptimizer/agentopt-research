@@ -11,10 +11,10 @@ src/agentopt/
 └── model_price.py / .json      # Pricing table
 
 experiments/
-├── results/cache_db_results/   # Per-sample lookup tables (*.pkl)
-├── cached_results/             # Aggregated CSVs (per combo accuracy/cost/latency)
-├── offline_selector_sim_v2.py  # Offline accuracy-only selector replay
-└── combined_objective/         # Offline J = acc − λ·cost − λ·lat sims
+├── results/cache_db_results/   # Shared per-sample lookup tables (*.pkl)
+├── cached_results/             # Shared per-combo accuracy/cost/latency CSVs
+├── combined_objective/         # Multi-objective replays + their results/
+└── single_objective/           # Accuracy-only baseline + its results/
 ```
 
 Proxy / daemon / live eval harness are stubbed or omitted; use the main `agentopt` package for online runs.

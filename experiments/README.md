@@ -4,6 +4,8 @@ Frozen results for 9 LLM configurations across 4 benchmarks. No API calls requir
 
 Selector **algorithm implementations** live in `../src/agentopt/model_selection/`. The offline sims below re-implement the same decision logic against pickle lookup tables.
 
+This repo is multi-objective. The main replay is `combined_objective/offline_radial_gittins.py` (accuracy vs deployment cost). Scalarized multi-objective also lives in `combined_objective/`. Accuracy-only baseline replay is under `single_objective/`.
+
 ## Data
 
 ### Aggregated (per model combination)
@@ -17,7 +19,14 @@ Selector **algorithm implementations** live in `../src/agentopt/model_selection/
 | Wall Latency (s) | Mean wall-clock latency |
 | Cost ($) | Total / mean cost for the combo |
 
-Also: `selector_results.csv`, multiobjective LaTeX tables, ablation/sweep CSVs.
+Shared ablation: `cached_results/gpqa_thinking_ablation.csv`.
+
+Selector outputs live with the scripts that produce them:
+
+- `combined_objective/results/radial_gittins_plots/`
+- `combined_objective/results/multiobjective/`
+- `single_objective/results/{gpqa,bfcl,hotpotqa,mathqa}/selector_results.csv`
+- `single_objective/results/matrix_ucb_budget_sweep.csv`
 
 ### Per-sample lookup tables
 
@@ -37,31 +46,31 @@ Schema: `model_names`, `datapoints`, `table[combo][dp_idx] → SampleResult(scor
 Pickles under `results/cache_db_results/` are **gitignored** — keep them locally.
 
 ```bash
-# Pure accuracy (v2)
-python offline_selector_sim_v2.py \
-    --pickle results/cache_db_results/gpqa_lookup.pkl \
-    --selectors all --seeds 50
+# Accuracy + deployment-cost Pareto search (empirical-Bayes warm start)
+python combined_objective/offline_radial_gittins.py \
+    --pickle results/cache_db_results/hotpotqa_lookup.pkl \
+    --batch-size 4 --budget-fraction 0.2 --eta 1.0
 
-# Combined objective (v3): J = acc − λ_cost·NormCost − λ_latency·NormLatency
-python combined_objective/offline_selector_sim_v3.py \
+# Combined objective: J = acc − λ_cost·NormCost − λ_latency·NormLatency
+python combined_objective/offline_selector_sim.py \
     --pickle results/cache_db_results/gpqa_lookup.pkl \
     --selectors all --seeds 50 \
     --lambda-cost 0.1 --lambda-latency 0.1
 
 cd combined_objective && python run_all_selectors.py
 
-# Accuracy + deployment-cost Pareto search (empirical-Bayes warm start)
-python offline_radial_gittins.py \
-    --pickle results/cache_db_results/hotpotqa_lookup.pkl \
-    --batch-size 4 --budget-fraction 0.2 --eta 1.0
+# Accuracy-only baseline (not the main protocol)
+python single_objective/offline_selector_sim.py \
+    --pickle results/cache_db_results/gpqa_lookup.pkl \
+    --selectors all --seeds 50
 ```
 
 Scripts auto-add `../src` to `PYTHONPATH` so `agentopt.model_selection` imports work.
 If a pickle is missing, they exit with a pointer to the local data directory.
 
-Available selectors: `brute_force` (v3), `random_search`, `matrix_ucb`, `gittins`, `bayesian_optimization`.
+Available selectors: `brute_force` (combined objective), `random_search`, `matrix_ucb`, `gittins`, `bayesian_optimization`.
 
-`offline_radial_gittins.py` has a separate set-valued result contract. It:
+`combined_objective/offline_radial_gittins.py` has a separate set-valued result contract. It:
 
 - uses one common seeded warm batch for every configuration;
 - learns `C_ref` as the median configuration warm-batch mean cost;
@@ -91,7 +100,7 @@ fewer than `batch_size` questions remain; Gittins tables still plan every stage
 as a full batch. `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
 
-`plot_radial_gittins_trajectories.py` writes separate completed-only deployable
+`combined_objective/plot_radial_gittins_trajectories.py` writes separate completed-only deployable
 and all-posterior provisional raw-archive comparisons for each benchmark. Its
 main hypervolume curve is the completed-only recommendation; a dashed curve
 retains the provisional fixed-budget diagnostic. Online and oracle membership

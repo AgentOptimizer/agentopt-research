@@ -1,6 +1,8 @@
-# Benchmark data (keep local for now)
+# Benchmark data and local experiment outputs (keep local for now)
 experiments/results/
 experiments/cached_results/
+experiments/combined_objective/results/
+experiments/single_objective/results/
 /plot/
 
 # Python
