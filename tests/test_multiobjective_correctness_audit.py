@@ -2,9 +2,14 @@ import unittest
 
 import numpy as np
 
-from experiments.audit_multiobjective_results import dominates, nearest_front_distance
-from experiments.offline_multiobjective_random_search import pareto_min_cost_indices
-from experiments.offline_radial_gittins import hypervolume_2d
+from experiments.combined_objective.audit_multiobjective_results import (
+    dominates,
+    nearest_front_distance,
+)
+from experiments.combined_objective.offline_multiobjective_random_search import (
+    pareto_min_cost_indices,
+)
+from experiments.combined_objective.offline_radial_gittins import hypervolume_2d
 
 
 class MultiObjectiveCorrectnessAuditTests(unittest.TestCase):

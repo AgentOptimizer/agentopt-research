@@ -15,20 +15,22 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments")]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
-from offline_radial_gittins import hypervolume_2d  # noqa: E402
-from offline_multiobjective_random_search import (  # noqa: E402
+from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
+    hypervolume_2d,
+)
+from experiments.combined_objective.offline_multiobjective_random_search import (  # noqa: E402
     normalized_truth_vectors,
     pareto_min_cost_indices,
 )
-from offline_selector_sim_v2 import load_pickle  # noqa: E402
+from experiments.single_objective.offline_selector_sim import load_pickle  # noqa: E402
 
 
 DATASETS = {
-    "hotpotqa": ROOT / "experiments/results/cache_db_results/hotpotqa_lookup.pkl",
-    "mathqa": ROOT / "experiments/results/cache_db_results/mathqa_lookup.pkl",
+    "hotpotqa": ROOT / "experiments/data/lookup/hotpotqa_lookup.pkl",
+    "mathqa": ROOT / "experiments/data/lookup/mathqa_lookup.pkl",
 }
 KEY_BUDGETS = {0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.9, 1.0}
 

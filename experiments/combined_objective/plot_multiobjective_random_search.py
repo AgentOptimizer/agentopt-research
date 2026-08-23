@@ -13,10 +13,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments")]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
-from offline_multiobjective_random_search import (  # noqa: E402
+from experiments.combined_objective.offline_multiobjective_random_search import (  # noqa: E402
     DEFAULT_BUDGET_FRACTIONS,
     VERSIONS,
     MultiObjectiveRandomSearchResult,
@@ -24,12 +24,12 @@ from offline_multiobjective_random_search import (  # noqa: E402
     run_budget_sweep,
     write_results_csv,
 )
-from offline_selector_sim_v2 import load_pickle  # noqa: E402
+from experiments.single_objective.offline_selector_sim import load_pickle  # noqa: E402
 
 
 BENCHMARK_PICKLES = {
-    "hotpotqa": ROOT / "experiments/results/cache_db_results/hotpotqa_lookup.pkl",
-    "mathqa": ROOT / "experiments/results/cache_db_results/mathqa_lookup.pkl",
+    "hotpotqa": ROOT / "experiments/data/lookup/hotpotqa_lookup.pkl",
+    "mathqa": ROOT / "experiments/data/lookup/mathqa_lookup.pkl",
 }
 
 

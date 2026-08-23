@@ -30,11 +30,17 @@ from typing import Iterable, List, Sequence, Tuple
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments")]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
-from offline_selector_sim_v2 import LookupTable, load_pickle  # noqa: E402
-from offline_radial_gittins import hypervolume_2d, nondominated_indices  # noqa: E402
+from experiments.single_objective.offline_selector_sim import (  # noqa: E402
+    LookupTable,
+    load_pickle,
+)
+from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
+    hypervolume_2d,
+    nondominated_indices,
+)
 
 
 VERSIONS = ("random_configurations", "random_questions")

@@ -2,14 +2,14 @@ import unittest
 
 import numpy as np
 
-from experiments.offline_multiobjective_random_search import (
+from experiments.combined_objective.offline_multiobjective_random_search import (
     common_question_ids,
     mean_raw_vectors,
     pareto_min_cost_indices,
     run_budget_sweep,
     simulate_multiobjective_random_search,
 )
-from experiments.offline_selector_sim_v2 import SampleResult
+from experiments.single_objective.offline_selector_sim import SampleResult
 
 
 def _sample(score, cost):

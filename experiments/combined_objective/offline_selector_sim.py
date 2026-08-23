@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Offline Selector Simulator v3 — Combined Objective
-====================================================
-Fork of v2 that changes the selector objective from pure accuracy to:
+Offline Selector Simulator — Combined Objective
+================================================
+Scalarized multi-objective replay:
 
     objective = accuracy - lambda_cost * cost - lambda_latency * latency
 
-Preferred input: pickle lookup tables under ``../results/cache_db_results/``
+Preferred input: pickle lookup tables under ``../data/lookup/``
 (gitignored — keep them locally).
 
 Usage:
-    python combined_objective/offline_selector_sim_v3.py \\
-        --pickle results/cache_db_results/gpqa_lookup.pkl \\
+    python combined_objective/offline_selector_sim.py \\
+        --pickle data/lookup/gpqa_lookup.pkl \\
         --selectors all --seeds 50 \\
         --lambda-cost 0.1 --lambda-latency 0.05
 """
@@ -30,9 +30,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 _EXPERIMENTS_DIR = Path(__file__).resolve().parent.parent
 _REPO_ROOT = _EXPERIMENTS_DIR.parent
 _SRC_DIR = _REPO_ROOT / "src"
-_DEFAULT_PICKLE_DIR = _EXPERIMENTS_DIR / "results" / "cache_db_results"
+_DEFAULT_PICKLE_DIR = _EXPERIMENTS_DIR / "data" / "lookup"
 
-# Unpickle SampleResult serialized by v2; also expose src/agentopt
+# Expose src/agentopt; pickle alias is registered after SampleResult.
 sys.path.insert(0, str(_EXPERIMENTS_DIR))
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
@@ -89,6 +89,9 @@ class SampleResult:
     cost: float = 0.0
 
 
+# Historical pickles record this class as ``offline_selector_sim_v2.SampleResult``.
+sys.modules.setdefault("offline_selector_sim_v2", sys.modules[__name__])
+
 LookupTable = Dict[str, Dict[int, SampleResult]]
 
 
@@ -129,9 +132,10 @@ def load_jsonl(path: str) -> Tuple[List[str], List[int], LookupTable]:
 
 
 def load_pickle(path: str) -> Tuple[List[str], List[int], LookupTable]:
-    """Load from pickle lookup table (from cache_selector_sim.py).
+    """Load from pickle lookup table under ``data/lookup/``.
 
-    Pickle contains SampleResult objects from v2 — same fields as v3.
+    Historical pickles store ``offline_selector_sim_v2.SampleResult``;
+    fields match this module's ``SampleResult``.
     """
     import pickle
     with open(path, "rb") as f:
@@ -940,7 +944,7 @@ ALL_SELECTORS = [
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Offline selector simulator v3 — combined objective (accuracy - λ*cost - λ*latency)",
+        description="Offline selector simulator — combined objective (accuracy - λ*cost - λ*latency)",
     )
     parser.add_argument("--jsonl", default=None, help="Path to brute-force JSONL file")
     parser.add_argument("--pickle", default=None, help="Path to pickle lookup table (.pkl)")

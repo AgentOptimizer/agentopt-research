@@ -14,25 +14,29 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "experiments")]
+ROOT = Path(__file__).resolve().parents[2]
+sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
     RadialGittinsBoundaryCache,
 )
-from offline_multiobjective_random_search import (  # noqa: E402
+from experiments.combined_objective.offline_multiobjective_random_search import (  # noqa: E402
     MultiObjectiveRandomSearchResult,
     normalized_truth_vectors,
     pareto_min_cost_indices,
     run_budget_sweep,
 )
-from offline_radial_gittins import hypervolume_2d  # noqa: E402
-from plot_radial_gittins_trajectories import run_benchmark  # noqa: E402
+from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
+    hypervolume_2d,
+)
+from experiments.combined_objective.plot_radial_gittins_trajectories import (  # noqa: E402
+    run_benchmark,
+)
 
 
 PICKLES = {
-    "HotpotQA": ROOT / "experiments/results/cache_db_results/hotpotqa_lookup.pkl",
-    "MathQA": ROOT / "experiments/results/cache_db_results/mathqa_lookup.pkl",
+    "HotpotQA": ROOT / "experiments/data/lookup/hotpotqa_lookup.pkl",
+    "MathQA": ROOT / "experiments/data/lookup/mathqa_lookup.pkl",
 }
 
 
