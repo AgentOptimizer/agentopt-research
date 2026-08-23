@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """
-Offline Selector Simulator v2
-==============================
-Replays selector decision logic on frozen brute-force results (no API calls).
+Offline Selector Simulator — Single Objective
+==============================================
+Accuracy-only replay of selector decision logic on frozen brute-force
+results (no API calls). This is a baseline; the main protocol is
+multi-objective (see ``combined_objective/``).
 
-Preferred input: pickle lookup tables under ``results/cache_db_results/``
+Preferred input: pickle lookup tables under ``data/lookup/``
 (gitignored — keep them locally). JSONL is still supported.
 
 Usage:
-    python offline_selector_sim_v2.py \\
-        --pickle results/cache_db_results/gpqa_lookup.pkl \\
+    python single_objective/offline_selector_sim.py \\
+        --pickle data/lookup/gpqa_lookup.pkl \\
         --selectors all --seeds 50
 
-    python offline_selector_sim_v2.py \\
-        --pickle results/cache_db_results/mathqa_lookup.pkl \\
+    python single_objective/offline_selector_sim.py \\
+        --pickle data/lookup/mathqa_lookup.pkl \\
         --selectors random_search,matrix_ucb --seeds 20
 """
 
@@ -30,11 +32,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-_EXPERIMENTS_DIR = Path(__file__).resolve().parent
+_EXPERIMENTS_DIR = Path(__file__).resolve().parent.parent
 _REPO_ROOT = _EXPERIMENTS_DIR.parent
 _SRC_DIR = _REPO_ROOT / "src"
-_DEFAULT_PICKLE_DIR = _EXPERIMENTS_DIR / "results" / "cache_db_results"
-_GITTINS_ROOTS_DISK_CACHE = _EXPERIMENTS_DIR / "results" / "cache_gittins_roots"
+_DEFAULT_PICKLE_DIR = _EXPERIMENTS_DIR / "data" / "lookup"
+_GITTINS_ROOTS_DISK_CACHE = (
+    Path(__file__).resolve().parent / "results" / "cache_gittins_roots"
+)
 
 # Reused across seeds in plotting sweeps. Building the JAX lookup is the
 # dominant fixed cost, while it is identical for a given matrix/configuration.
@@ -46,7 +50,8 @@ if str(_SRC_DIR) not in sys.path:
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    load_dotenv(os.path.join(os.path.dirname(__file__), ".env"))
+    load_dotenv(_EXPERIMENTS_DIR / ".env")
+    load_dotenv(_REPO_ROOT / ".env")
 except ImportError:
     pass
 
@@ -98,6 +103,9 @@ class SampleResult:
     cost: float = 0.0
 
 
+# Historical pickles record this class as ``offline_selector_sim_v2.SampleResult``.
+sys.modules.setdefault("offline_selector_sim_v2", sys.modules[__name__])
+
 # Lookup: model_name -> {datapoint_index -> SampleResult}
 LookupTable = Dict[str, Dict[int, SampleResult]]
 
@@ -143,7 +151,7 @@ def load_jsonl(path: str) -> Tuple[List[str], List[int], LookupTable]:
 
 
 def load_pickle(path: str) -> Tuple[List[str], List[int], LookupTable]:
-    """Load from pickle lookup table under ``results/cache_db_results/``."""
+    """Load from pickle lookup table under ``data/lookup/``."""
     import pickle
 
     with open(path, "rb") as f:
@@ -964,7 +972,7 @@ ALL_SELECTORS = [
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Offline selector simulator v2 — replay selectors on frozen benchmark data",
+        description="Offline selector simulator — accuracy-only replay on frozen benchmark data",
     )
     parser.add_argument("--pickle", default=None, help="Path to pickle lookup table (.pkl)")
     parser.add_argument("--jsonl", default=None, help="Path to brute-force JSONL file")
