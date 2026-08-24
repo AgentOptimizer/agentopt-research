@@ -54,7 +54,7 @@ def main() -> None:
     parser.add_argument("--first-seed", type=int, default=42)
     parser.add_argument("--seeds", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=4, choices=(4, 8))
-    parser.add_argument("--boundary-z-padding-min", type=float, default=2.0)
+    parser.add_argument("--boundary-z-padding-min", type=float, default=1.0)
     parser.add_argument(
         "--grid-size",
         type=int,
