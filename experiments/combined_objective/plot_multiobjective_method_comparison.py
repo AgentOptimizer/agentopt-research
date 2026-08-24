@@ -91,8 +91,15 @@ def _random_regret_series(
     *,
     version: str,
     radial_by_seed: Dict[int, RadialSimulationResult],
+    x_axis: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     grouped: Dict[float, list[float]] = defaultdict(list)
+    grouped_x: Dict[float, list[float]] = defaultdict(list)
+    full_cost_by_seed = {
+        result.seed: result.total_search_cost_usd
+        for result in results
+        if result.version == version and abs(result.budget_fraction - 1.0) <= 1e-12
+    }
     for result in results:
         if result.version != version:
             continue
@@ -106,14 +113,20 @@ def _random_regret_series(
                 reference,
             )
         )
-    xs = np.asarray(sorted(grouped), dtype=np.float64)
-    means = np.asarray([np.mean(grouped[x]) for x in xs], dtype=np.float64)
+        grouped_x[result.budget_fraction].append(
+            result.total_search_cost_usd / full_cost_by_seed[result.seed]
+            if x_axis == "cost"
+            else result.budget_fraction
+        )
+    checkpoints = sorted(grouped)
+    xs = np.asarray([np.mean(grouped_x[x]) for x in checkpoints], dtype=np.float64)
+    means = np.asarray([np.mean(grouped[x]) for x in checkpoints], dtype=np.float64)
     ci95 = np.asarray(
         [
             1.96 * np.std(grouped[x], ddof=1) / np.sqrt(len(grouped[x]))
             if len(grouped[x]) > 1
             else 0.0
-            for x in xs
+            for x in checkpoints
         ]
     )
     return xs, means, ci95
@@ -206,6 +219,19 @@ def _plot_regret_line(
         )
 
 
+def _post_stop_series(
+    xs: np.ndarray,
+    ys: np.ndarray,
+    ci95: np.ndarray,
+    stop_fraction: float | None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Restrict a deployable series to its meaningful post-stop portion."""
+    if stop_fraction is None:
+        return xs, ys, ci95
+    keep = xs >= stop_fraction - 1e-12
+    return xs[keep], ys[keep], ci95[keep]
+
+
 def write_comparison_figure(
     *,
     out_path: Path,
@@ -214,6 +240,7 @@ def write_comparison_figure(
     seeds: int,
     seed: int,
     gittins_focus: str,
+    x_axis: str,
 ) -> None:
     if gittins_focus not in {"deployable", "provisional"}:
         raise ValueError("gittins_focus must be 'deployable' or 'provisional'")
@@ -223,6 +250,12 @@ def write_comparison_figure(
         deployable_x, deployable_y, deployable_ci95, _ = panel["deployable"]
         provisional_x, provisional_y, provisional_ci95, _ = panel["provisional"]
         if gittins_focus == "deployable":
+            deployable_x, deployable_y, deployable_ci95 = _post_stop_series(
+                deployable_x,
+                deployable_y,
+                deployable_ci95,
+                panel["stop_mean"],
+            )
             _plot_regret_line(
                 ax,
                 deployable_x,
@@ -230,12 +263,28 @@ def write_comparison_figure(
                 deployable_ci95,
                 color="#1f4e79",
                 label=(
-                    "deployable completed-only"
+                    "deployable completed-only (post-stop)"
                     if seeds == 1
-                    else f"deployable completed-only (mean, n={seeds})"
+                    else f"deployable completed-only post-stop (mean, n={seeds})"
                 ),
                 zorder=3,
             )
+            if len(deployable_x):
+                ax.scatter(
+                    [deployable_x[0]],
+                    [deployable_y[0]],
+                    s=90,
+                    color="#1f4e79",
+                    marker="o",
+                    edgecolors="white",
+                    linewidths=1.0,
+                    zorder=5,
+                    label=(
+                        f"deployable regret at stop ({deployable_y[0]:.4f})"
+                        if seeds == 1
+                        else f"mean deployable regret at stop ({deployable_y[0]:.4f})"
+                    ),
+                )
             _plot_regret_line(
                 ax,
                 provisional_x,
@@ -254,12 +303,13 @@ def write_comparison_figure(
                 provisional_x,
                 provisional_y,
                 provisional_ci95,
-                color="#1f4e79",
+                color="#7a8ca5",
                 label=(
-                    "provisional all-posterior"
+                    "provisional all-posterior diagnostic"
                     if seeds == 1
-                    else f"provisional all-posterior (mean, n={seeds})"
+                    else f"provisional all-posterior diagnostic (mean, n={seeds})"
                 ),
+                linestyle="--",
                 zorder=3,
             )
         for version, xs, means, ci95 in panel["random"]:
@@ -278,7 +328,11 @@ def write_comparison_figure(
                 linewidth=1.5,
             )
         ax.set_title(panel["name"])
-        ax.set_xlabel("Observed budget fraction")
+        ax.set_xlabel(
+            "Cumulative search cost fraction"
+            if x_axis == "cost"
+            else "Observed cell-budget fraction"
+        )
         ax.set_ylabel("Normalized-desirability hypervolume regret")
         ax.set_xlim(0.0, 1.02)
         ax.set_ylim(bottom=0.0)
@@ -294,16 +348,26 @@ def write_comparison_figure(
 def panels_from_csv(
     csv_path: Path,
     stop_by_benchmark: Dict[str, float | None],
+    x_axis: str,
 ) -> list[dict]:
     grouped: Dict[tuple[str, str], dict[str, list[float]]] = defaultdict(
         lambda: {"x": [], "y": [], "ci": [], "n": []}
     )
+    stored_stops: Dict[str, float] = {}
     for row in csv.DictReader(csv_path.open(encoding="utf-8")):
+        stored_axis = row.get("x_axis", "cells")
+        if stored_axis != x_axis:
+            raise ValueError(
+                f"{csv_path} stores x_axis={stored_axis!r}, requested {x_axis!r}; "
+                "rerun the comparison to generate the requested axis"
+            )
         key = (row["benchmark"], row["method"])
         grouped[key]["x"].append(float(row["budget_fraction"]))
         grouped[key]["y"].append(float(row["mean_hv_regret"]))
         grouped[key]["ci"].append(float(row["ci95_half_width"]))
         grouped[key]["n"].append(float(row["n_runs"]))
+        if row.get("stop_axis_fraction"):
+            stored_stops[row["benchmark"]] = float(row["stop_axis_fraction"])
 
     def _series(benchmark: str, method: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         data = grouped[(benchmark, method)]
@@ -323,7 +387,9 @@ def panels_from_csv(
         panels.append(
             {
                 "name": benchmark,
-                "stop_mean": stop_by_benchmark.get(benchmark),
+                "stop_mean": stored_stops.get(
+                    benchmark, stop_by_benchmark.get(benchmark)
+                ),
                 "deployable": _series(benchmark, "radial_gittins_deployable"),
                 "provisional": _series(benchmark, "radial_gittins_provisional"),
                 "random": random_curves,
@@ -338,22 +404,25 @@ def write_both_comparison_figures(
     panels: Sequence[dict],
     seeds: int,
     seed: int,
+    x_axis: str,
 ) -> None:
     write_comparison_figure(
         out_path=outdir / "radial_gittins_vs_random_search_hv_regret.png",
-        title="Completed-only Gittins recommendation vs random search",
+        title="Completed-only Gittins from stopping vs random search",
         panels=panels,
         seeds=seeds,
         seed=seed,
         gittins_focus="deployable",
+        x_axis=x_axis,
     )
     write_comparison_figure(
         out_path=outdir / "radial_gittins_provisional_vs_random_search_hv_regret.png",
-        title="Provisional Gittins recommendation vs random search",
+        title="Provisional Gittins diagnostic vs random search",
         panels=panels,
         seeds=seeds,
         seed=seed,
         gittins_focus="provisional",
+        x_axis=x_axis,
     )
 
 
@@ -371,6 +440,15 @@ def main() -> None:
     )
     parser.add_argument("--batch-size", type=int, default=4, choices=(4, 8))
     parser.add_argument("--grid-size", type=int, default=129)
+    parser.add_argument(
+        "--x-axis",
+        choices=("cost", "cells"),
+        default="cost",
+        help=(
+            "Horizontal budget axis. 'cost' (default) uses cumulative USD cost "
+            "divided by full-matrix cost; 'cells' uses observed matrix cells."
+        ),
+    )
     parser.add_argument(
         "--from-csv",
         type=Path,
@@ -407,9 +485,10 @@ def main() -> None:
         }
         write_both_comparison_figures(
             outdir=outdir,
-            panels=panels_from_csv(csv_path, stop_by_benchmark),
+            panels=panels_from_csv(csv_path, stop_by_benchmark, args.x_axis),
             seeds=args.seeds,
             seed=args.seed,
+            x_axis=args.x_axis,
         )
         return
 
@@ -444,9 +523,18 @@ def main() -> None:
         def _series_from_field(field: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
             trajectories = []
             for radial in radial_runs:
-                run_x = np.asarray(
-                    [point.budget_fraction for point in radial.recommendation_trajectory]
-                )
+                if args.x_axis == "cost":
+                    full_cost = radial.recommendation_trajectory[-1].cumulative_search_cost_usd
+                    run_x = np.asarray(
+                        [
+                            point.cumulative_search_cost_usd / full_cost
+                            for point in radial.recommendation_trajectory
+                        ]
+                    )
+                else:
+                    run_x = np.asarray(
+                        [point.budget_fraction for point in radial.recommendation_trajectory]
+                    )
                 run_y = np.asarray(
                     [getattr(point, field) for point in radial.recommendation_trajectory]
                 )
@@ -460,14 +548,17 @@ def main() -> None:
             _series_from_field("hypervolume_regret")
         )
 
-        stop_fractions = np.asarray(
-            [
-                run.gittins_stop_budget_fraction
-                for run in radial_runs
-                if run.gittins_stop_budget_fraction is not None
-            ],
-            dtype=np.float64,
-        )
+        stop_fractions = np.asarray([
+            (
+                run.gittins_stop_cost_usd
+                / run.recommendation_trajectory[-1].cumulative_search_cost_usd
+                if args.x_axis == "cost"
+                else run.gittins_stop_budget_fraction
+            )
+            for run in radial_runs
+            if run.gittins_stop_budget_fraction is not None
+            and (args.x_axis != "cost" or run.gittins_stop_cost_usd is not None)
+        ], dtype=np.float64)
         stop_mean = float(np.mean(stop_fractions)) if len(stop_fractions) else None
 
         for method, xs, ys, cis, counts in (
@@ -496,6 +587,8 @@ def main() -> None:
                         "ci95_half_width": ci,
                         "n_runs": int(count),
                         "cost_reference_usd": cost_reference,
+                        "x_axis": args.x_axis,
+                        "stop_axis_fraction": stop_mean,
                     }
                 )
 
@@ -511,6 +604,7 @@ def main() -> None:
                 random_results,
                 version=version,
                 radial_by_seed=radial_by_seed,
+                x_axis=args.x_axis,
             )
             random_curves.append((version, xs, means, ci95))
             for x, mean, ci in zip(xs, means, ci95):
@@ -523,6 +617,8 @@ def main() -> None:
                         "ci95_half_width": ci,
                         "n_runs": args.seeds,
                         "cost_reference_usd": cost_reference,
+                        "x_axis": args.x_axis,
+                        "stop_axis_fraction": stop_mean,
                     }
                 )
 
@@ -551,6 +647,7 @@ def main() -> None:
         panels=panels,
         seeds=args.seeds,
         seed=args.seed,
+        x_axis=args.x_axis,
     )
 
     csv_path = outdir / "method_hv_regret_summary.csv"
