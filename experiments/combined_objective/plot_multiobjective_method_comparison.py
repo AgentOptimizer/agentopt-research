@@ -5,11 +5,9 @@ Both figures use the Gittins normalized-desirability hypervolume: accuracy
 together with ``C_ref / (C_ref + cost)``, scored against the Gittins reference
 point. Random search is rescored in that same space.
 
-* ``radial_gittins_vs_random_search_hv_regret.png``: completed-only deployable
-  recommendation (solid) vs random. Dashed provisional is a diagnostic overlay.
-* ``radial_gittins_provisional_vs_random_search_hv_regret.png``: the same
-  comparison with the all-posterior provisional archive as the Gittins series,
-  so the axis is not stretched by the empty completed-only start.
+``radial_gittins_vs_random_search_hv_regret.png`` shows the completed-only
+deployable recommendation (solid) against random search, with provisional
+all-posterior regret retained as a dashed diagnostic overlay.
 """
 
 from __future__ import annotations
@@ -239,79 +237,60 @@ def write_comparison_figure(
     panels: Sequence[dict],
     seeds: int,
     seed: int,
-    gittins_focus: str,
     x_axis: str,
 ) -> None:
-    if gittins_focus not in {"deployable", "provisional"}:
-        raise ValueError("gittins_focus must be 'deployable' or 'provisional'")
     figure, axes = plt.subplots(1, 2, figsize=(11.5, 4.2), sharey=False)
     for ax, panel in zip(axes, panels):
         _draw_stop_markers(ax, panel["stop_mean"], seeds)
         deployable_x, deployable_y, deployable_ci95, _ = panel["deployable"]
         provisional_x, provisional_y, provisional_ci95, _ = panel["provisional"]
-        if gittins_focus == "deployable":
-            deployable_x, deployable_y, deployable_ci95 = _post_stop_series(
-                deployable_x,
-                deployable_y,
-                deployable_ci95,
-                panel["stop_mean"],
-            )
-            _plot_regret_line(
-                ax,
-                deployable_x,
-                deployable_y,
-                deployable_ci95,
+        deployable_x, deployable_y, deployable_ci95 = _post_stop_series(
+            deployable_x,
+            deployable_y,
+            deployable_ci95,
+            panel["stop_mean"],
+        )
+        _plot_regret_line(
+            ax,
+            deployable_x,
+            deployable_y,
+            deployable_ci95,
+            color="#1f4e79",
+            label=(
+                "deployable completed-only (post-stop)"
+                if seeds == 1
+                else f"deployable completed-only post-stop (mean, n={seeds})"
+            ),
+            zorder=3,
+        )
+        if len(deployable_x):
+            ax.scatter(
+                [deployable_x[0]],
+                [deployable_y[0]],
+                s=90,
                 color="#1f4e79",
+                marker="o",
+                edgecolors="white",
+                linewidths=1.0,
+                zorder=5,
                 label=(
-                    "deployable completed-only (post-stop)"
+                    f"deployable regret at stop ({deployable_y[0]:.4f})"
                     if seeds == 1
-                    else f"deployable completed-only post-stop (mean, n={seeds})"
+                    else f"mean deployable regret at stop ({deployable_y[0]:.4f})"
                 ),
-                zorder=3,
             )
-            if len(deployable_x):
-                ax.scatter(
-                    [deployable_x[0]],
-                    [deployable_y[0]],
-                    s=90,
-                    color="#1f4e79",
-                    marker="o",
-                    edgecolors="white",
-                    linewidths=1.0,
-                    zorder=5,
-                    label=(
-                        f"deployable regret at stop ({deployable_y[0]:.4f})"
-                        if seeds == 1
-                        else f"mean deployable regret at stop ({deployable_y[0]:.4f})"
-                    ),
-                )
-            _plot_regret_line(
-                ax,
-                provisional_x,
-                provisional_y,
-                provisional_ci95,
-                color="#7a8ca5",
-                label="provisional all-posterior",
-                linestyle="--",
-                fill=False,
-                zorder=2,
-                linewidth=1.3,
-            )
-        else:
-            _plot_regret_line(
-                ax,
-                provisional_x,
-                provisional_y,
-                provisional_ci95,
-                color="#7a8ca5",
-                label=(
-                    "provisional all-posterior diagnostic"
-                    if seeds == 1
-                    else f"provisional all-posterior diagnostic (mean, n={seeds})"
-                ),
-                linestyle="--",
-                zorder=3,
-            )
+        _plot_regret_line(
+            ax,
+            provisional_x,
+            provisional_y,
+            provisional_ci95,
+            color="#7a8ca5",
+            label="provisional all-posterior diagnostic",
+            linestyle="--",
+            fill=False,
+            zorder=2,
+            linewidth=1.3,
+        )
         for version, xs, means, ci95 in panel["random"]:
             color, base_label = RANDOM_STYLES[version]
             plot_label = (
@@ -398,7 +377,7 @@ def panels_from_csv(
     return panels
 
 
-def write_both_comparison_figures(
+def write_comparison_output(
     *,
     outdir: Path,
     panels: Sequence[dict],
@@ -412,16 +391,6 @@ def write_both_comparison_figures(
         panels=panels,
         seeds=seeds,
         seed=seed,
-        gittins_focus="deployable",
-        x_axis=x_axis,
-    )
-    write_comparison_figure(
-        out_path=outdir / "radial_gittins_provisional_vs_random_search_hv_regret.png",
-        title="Provisional Gittins diagnostic vs random search",
-        panels=panels,
-        seeds=seeds,
-        seed=seed,
-        gittins_focus="provisional",
         x_axis=x_axis,
     )
 
@@ -453,7 +422,7 @@ def main() -> None:
         "--from-csv",
         type=Path,
         default=None,
-        help="Redraw both comparison figures from method_hv_regret_summary.csv.",
+        help="Redraw the comparison figure from method_hv_regret_summary.csv.",
     )
     parser.add_argument(
         "--stop-summary",
@@ -483,7 +452,7 @@ def main() -> None:
             )
             for name, payload in summary.items()
         }
-        write_both_comparison_figures(
+        write_comparison_output(
             outdir=outdir,
             panels=panels_from_csv(csv_path, stop_by_benchmark, args.x_axis),
             seeds=args.seeds,
@@ -642,7 +611,7 @@ def main() -> None:
             }
         )
 
-    write_both_comparison_figures(
+    write_comparison_output(
         outdir=outdir,
         panels=panels,
         seeds=args.seeds,
