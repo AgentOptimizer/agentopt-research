@@ -4,7 +4,8 @@
 Runs HotpotQA / MathQA offline replay at budget fraction 1.0, continues past
 the endogenous Gittins stop so the trajectory covers later budgets, and writes:
 
-* completed-only deployable and all-posterior provisional HV regret curves;
+* the completed-only deployable HV regret from the Gittins stop onward, marked
+  at the stop itself, alongside the all-posterior provisional HV regret curve;
 * separate deployable and provisional raw-archive comparisons at Gittins
   stop, 50%, and the actual end fraction.
 
@@ -62,6 +63,21 @@ def _checkpoint_at_or_after(
         if point.budget_fraction + 1e-12 >= fraction:
             return point
     return trajectory[-1]
+
+
+def _gittins_stop_index(result: RadialSimulationResult) -> Optional[int]:
+    """Index of the first checkpoint at or after the endogenous Gittins stop."""
+    trajectory = result.recommendation_trajectory
+    for index, point in enumerate(trajectory):
+        if point.event == "gittins_stop":
+            return index
+    fraction = result.gittins_stop_budget_fraction
+    if fraction is None:
+        return None
+    for index, point in enumerate(trajectory):
+        if point.budget_fraction + 1e-12 >= fraction:
+            return index
+    return None
 
 
 def _select_snapshots(
@@ -183,15 +199,7 @@ def plot_hv_curves(
     for ax, (name, result) in zip(axes[0], results.items()):
         traj = result.recommendation_trajectory
         xs = [p.budget_fraction for p in traj]
-        deployable_ys = [p.deployable_hypervolume_regret for p in traj]
         provisional_ys = [p.hypervolume_regret for p in traj]
-        ax.plot(
-            xs,
-            deployable_ys,
-            color="#1f4e79",
-            linewidth=1.9,
-            label="deployable completed-only",
-        )
         ax.plot(
             xs,
             provisional_ys,
@@ -200,6 +208,42 @@ def plot_hv_curves(
             linestyle="--",
             label="provisional all-posterior",
         )
+        # The deployable archive is only a recommendation once the policy has
+        # stopped, so pre-stop values are not a regret anyone would incur.
+        stop_index = _gittins_stop_index(result)
+        if stop_index is None:
+            ax.plot(
+                xs,
+                [p.deployable_hypervolume_regret for p in traj],
+                color="#1f4e79",
+                linewidth=1.9,
+                label="deployable completed-only (no endogenous stop)",
+            )
+        else:
+            post_stop = traj[stop_index:]
+            stop_point = traj[stop_index]
+            if len(post_stop) > 1:
+                ax.plot(
+                    [p.budget_fraction for p in post_stop],
+                    [p.deployable_hypervolume_regret for p in post_stop],
+                    color="#1f4e79",
+                    linewidth=1.9,
+                    label="deployable completed-only (post-stop)",
+                )
+            ax.scatter(
+                [stop_point.budget_fraction],
+                [stop_point.deployable_hypervolume_regret],
+                s=95,
+                color="#1f4e79",
+                marker="o",
+                edgecolors="white",
+                linewidths=1.0,
+                zorder=5,
+                label=(
+                    "deployable regret at stop "
+                    f"({stop_point.deployable_hypervolume_regret:.4f})"
+                ),
+            )
         if result.gittins_stop_budget_fraction is not None:
             ax.axvspan(
                 result.gittins_stop_budget_fraction,
@@ -225,7 +269,8 @@ def plot_hv_curves(
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right", fontsize=8)
     fig.suptitle(
-        "Completed-only recommendation vs all-posterior diagnostic",
+        "Completed-only recommendation from the Gittins stop onward "
+        "vs all-posterior diagnostic",
         fontsize=12,
     )
     fig.tight_layout()

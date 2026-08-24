@@ -113,8 +113,11 @@ are an explicitly reported speed/accuracy approximation for larger sweeps.
 
 `combined_objective/plot_radial_gittins_trajectories.py` writes separate completed-only deployable
 and all-posterior provisional raw-archive comparisons for each benchmark. Its
-main hypervolume curve is the completed-only recommendation; a dashed curve
-retains the provisional fixed-budget diagnostic. Online and oracle membership
+main hypervolume series is the completed-only recommendation, drawn only from
+the endogenous Gittins stop onward and marked with the single stop-time point,
+because the deployable archive is not a recommendation before the policy stops;
+a dashed curve retains the provisional fixed-budget diagnostic across all
+budgets. Online and oracle membership
 are plotted at full-dataset raw coordinates against the global raw Pareto
 front, so disagreements expose estimation error without feeding hidden
 outcomes back into the selector. The replay after the marked endogenous stop
