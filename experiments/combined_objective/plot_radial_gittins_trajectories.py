@@ -17,6 +17,7 @@ that archive.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import sys
@@ -451,6 +452,7 @@ def main() -> None:
     results: Dict[str, RadialSimulationResult] = {}
     raw_by_name: Dict[str, np.ndarray] = {}
     summary = {}
+    cost_trajectory_rows = []
 
     for bench in args.benchmarks:
         pickle_path = _require_data_path(
@@ -482,6 +484,7 @@ def main() -> None:
             "stop_reason": result.stop_reason,
             "gittins_stop_budget_fraction": result.gittins_stop_budget_fraction,
             "gittins_stop_evaluations": result.gittins_stop_evaluations,
+            "gittins_stop_cost_usd": result.gittins_stop_cost_usd,
             "final_evaluations": result.total_evaluations,
             "available_cells": result.params["available_cells_in_universe"],
             "final_hv_regret": (
@@ -528,6 +531,18 @@ def main() -> None:
             ),
             "final_posterior_archive_models": result.posterior_archive_models,
         }
+        for checkpoint in result.recommendation_trajectory:
+            cost_trajectory_rows.append(
+                {
+                    "benchmark": display,
+                    "event": checkpoint.event,
+                    "budget_fraction": checkpoint.budget_fraction,
+                    "cumulative_evaluations": checkpoint.cumulative_evaluations,
+                    "cumulative_search_cost_usd": checkpoint.cumulative_search_cost_usd,
+                    "deployable_hv_regret": checkpoint.deployable_hypervolume_regret,
+                    "provisional_hv_regret": checkpoint.hypervolume_regret,
+                }
+            )
         plot_raw_archive_comparison(
             name=display,
             result=result,
@@ -549,6 +564,12 @@ def main() -> None:
     summary_path = outdir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print(f"wrote {summary_path}")
+    trajectory_path = outdir / "cost_trajectory.csv"
+    with trajectory_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(cost_trajectory_rows[0]))
+        writer.writeheader()
+        writer.writerows(cost_trajectory_rows)
+    print(f"wrote {trajectory_path}")
 
 
 if __name__ == "__main__":
