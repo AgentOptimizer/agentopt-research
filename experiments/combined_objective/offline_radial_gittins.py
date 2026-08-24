@@ -811,6 +811,7 @@ def simulate_radial_gittins(
     ] = None,
     effective_cost_bin_ratio: Optional[float] = 2.0,
     effective_cost_bin_anchor: float = 1e-4,
+    boundary_z_padding_min: float = 1.0,
     observation_budget_fraction: float = 1.0,
     max_total_question_evaluations: Optional[int] = None,
     max_search_cost_usd: Optional[float] = None,
@@ -861,6 +862,8 @@ def simulate_radial_gittins(
         or effective_cost_bin_anchor <= 0.0
     ):
         raise ValueError("effective_cost_bin_anchor must be finite and positive")
+    if not math.isfinite(boundary_z_padding_min) or boundary_z_padding_min <= 0.0:
+        raise ValueError("boundary_z_padding_min must be finite and positive")
     if question_universe not in {"common", "per_arm"}:
         raise ValueError("question_universe must be 'common' or 'per_arm'")
     reference_array = np.asarray(reference_point, dtype=np.float64)
@@ -1040,7 +1043,9 @@ def simulate_radial_gittins(
         existing = resolved_boundary_grids.get(key)
         if existing is not None:
             return existing
-        z_padding = max(1.0, horizon * effective_cost + 1.0)
+        z_padding = max(
+            float(boundary_z_padding_min), horizon * effective_cost + 1.0
+        )
         # The base grid supplies resolution and a normal safety envelope.  It
         # is expanded only when the mathematically required cumulative-cost
         # band would exceed that envelope.
@@ -1625,6 +1630,7 @@ def simulate_radial_gittins(
         "cost_budget_overshoot_usd": cost_budget_overshoot,
         "effective_cost_bin_ratio": effective_cost_bin_ratio,
         "effective_cost_bin_anchor": effective_cost_bin_anchor,
+        "boundary_z_padding_min": boundary_z_padding_min,
         "raw_effective_pull_costs": raw_effective_pull_costs.tolist(),
         "quantized_effective_pull_costs": effective_pull_costs.tolist(),
         "observation_budget_fraction": observation_budget_fraction,
