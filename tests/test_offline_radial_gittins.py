@@ -343,6 +343,52 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(terminal_result.selected_models, ["A"])
         self.assertEqual(terminal_result.total_evaluations, 4)
 
+    def test_budget_fraction_tracks_cumulative_search_cost_not_eval_count(self):
+        models = ["cheap", "expensive"]
+        datapoints = [0, 1, 2, 3]
+        table = {
+            "cheap": {
+                question_id: _sample(0.5, 1.0) for question_id in datapoints
+            },
+            "expensive": {
+                question_id: _sample(0.5, 9.0) for question_id in datapoints
+            },
+        }
+        # Force the post-warm adaptive pull onto the expensive arm so the
+        # cost-aware budget fraction diverges from evaluation-count fraction.
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=2,
+            directions=((0.5, 0.5),),
+            cost_reference_usd=1.0,
+            prior_variance=0.001,
+            obs_noise_variance=1e-6,
+            max_total_question_evaluations=6,
+            seed=0,
+            index_provider=lambda context, arm_index: (
+                100.0 if arm_index == 1 else -100.0
+            ),
+            record_recommendation_trajectory=True,
+        )
+        bruteforce = result.params["bruteforce_search_cost_usd"]
+        n_available = result.params["available_cells_in_universe"]
+        self.assertAlmostEqual(bruteforce, 40.0)
+        self.assertEqual(n_available, 8)
+
+        final = result.recommendation_trajectory[-1]
+        self.assertEqual(final.cumulative_evaluations, 6)
+        self.assertAlmostEqual(final.cumulative_search_cost_usd, 38.0)
+        self.assertAlmostEqual(final.budget_fraction, 38.0 / 40.0)
+        eval_fraction = final.cumulative_evaluations / n_available
+        self.assertNotAlmostEqual(final.budget_fraction, eval_fraction)
+        if result.gittins_stop_cost_usd is not None:
+            self.assertAlmostEqual(
+                result.gittins_stop_budget_fraction,
+                result.gittins_stop_cost_usd / bruteforce,
+            )
+
     def test_question_budget_counts_warm_start_and_stops_before_partial_batch(self):
         models, datapoints, table = _toy_frontier()
         result = simulate_radial_gittins(
@@ -811,6 +857,46 @@ class OfflineActualDPTests(unittest.TestCase):
             "direction_aware_custom_base",
         )
         self.assertEqual(result.params["boundary_grids"][0]["grid"]["z_size"], 65)
+
+    def test_near_endpoint_directions_expand_the_custom_grid_envelope(self):
+        models = ["A", "B"]
+        datapoints = [0, 1]
+        table = {
+            model: {
+                question_id: _sample(0.6, 0.001)
+                for question_id in datapoints
+            }
+            for model in models
+        }
+        grid = RadialGittinsGrid(
+            z_min=-3.0,
+            z_max=3.0,
+            z_size=65,
+            delta_min=-3.0,
+            delta_max=3.0,
+            delta_size=65,
+            state_size=65,
+            state_halo=4.0,
+            boundary_margin_cells=2,
+        )
+
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=1,
+            directions=((0.99, 0.01), (0.01, 0.99)),
+            search_cost_scale_eta=0.1,
+            boundary_z_padding_extra=5.0,
+            seed=1,
+            boundary_grid=grid,
+        )
+
+        self.assertEqual(result.stop_reason, "all_arms_completed")
+        self.assertEqual(result.params["boundary_z_padding_extra"], 5.0)
+        grids = [entry["grid"] for entry in result.params["boundary_grids"]]
+        self.assertTrue(any(entry["delta_min"] < -90.0 for entry in grids))
+        self.assertTrue(any(entry["delta_max"] > 90.0 for entry in grids))
 
 
 if __name__ == "__main__":

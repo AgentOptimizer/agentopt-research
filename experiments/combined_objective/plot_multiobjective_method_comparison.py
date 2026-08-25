@@ -307,7 +307,7 @@ def main() -> None:
                 )
 
         ax.set_title(benchmark)
-        ax.set_xlabel("Observed budget fraction")
+        ax.set_xlabel("Fraction of brute-force search cost")
         ax.set_ylabel("Hypervolume regret")
         ax.set_xlim(0.0, 1.02)
         ax.set_ylim(bottom=0.0)

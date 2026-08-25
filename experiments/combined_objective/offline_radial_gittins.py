@@ -108,6 +108,11 @@ class RecommendationCheckpoint:
     ``RadialSimulationResult`` recommendation.  Full-data oracle fields are
     diagnostic only and never affect acquisition, stopping, or either online
     archive.
+
+    ``budget_fraction`` is the cost-aware share of brute-force search spend
+    (``cumulative_search_cost_usd / bruteforce_search_cost_usd``), not the
+    evaluation-count fraction.  Use ``cumulative_evaluations`` when the
+    question-budget axis is needed.
     """
 
     cumulative_evaluations: int
@@ -314,6 +319,29 @@ def _sample_values(sample: SampleResult) -> Tuple[float, float, float]:
     if not math.isfinite(latency) or latency < 0.0:
         raise ValueError("lookup-table latencies must be finite and nonnegative")
     return score, cost, latency
+
+
+def _bruteforce_search_cost_usd(
+    models: Sequence[str],
+    available_by_arm: Mapping[int, Sequence[int]],
+    table: LookupTable,
+) -> float:
+    """Sum lookup-table deployment costs over every cell in the universe."""
+    total = 0.0
+    for arm_index, question_ids in available_by_arm.items():
+        model_data = table[models[arm_index]]
+        for question_id in question_ids:
+            sample = model_data.get(question_id)
+            if sample is None:
+                raise ValueError(
+                    f"missing lookup cell for model {models[arm_index]!r}, "
+                    f"question {question_id}"
+                )
+            _, cost, _ = _sample_values(sample)
+            total += cost
+    if not math.isfinite(total) or total <= 0.0:
+        raise ValueError("brute-force search cost must be finite and positive")
+    return float(total)
 
 
 def _best_index(indices: Mapping[int, float], tolerance: float) -> Tuple[Optional[int], float]:
@@ -619,7 +647,7 @@ def _recommendation_checkpoint(
     ground_truth_hv: float,
     total_evaluations: int,
     total_cost: float,
-    n_available: int,
+    bruteforce_search_cost_usd: float,
     event: str,
     completed_arms: Sequence[int] = (),
 ) -> RecommendationCheckpoint:
@@ -650,10 +678,15 @@ def _recommendation_checkpoint(
         observed_costs=observed_costs,
         ground_truth_hv=ground_truth_hv,
     )
+    if (
+        not math.isfinite(bruteforce_search_cost_usd)
+        or bruteforce_search_cost_usd <= 0.0
+    ):
+        raise ValueError("bruteforce_search_cost_usd must be finite and positive")
     return RecommendationCheckpoint(
         cumulative_evaluations=int(total_evaluations),
         cumulative_search_cost_usd=float(total_cost),
-        budget_fraction=float(total_evaluations) / float(n_available),
+        budget_fraction=float(total_cost) / float(bruteforce_search_cost_usd),
         selected_arm_indices=provisional.online_raw_archive_arm_indices,
         selected_models=provisional.online_raw_archive_models,
         direction_winner_arm_indices=provisional.direction_winner_arm_indices,
@@ -811,6 +844,7 @@ def simulate_radial_gittins(
     ] = None,
     effective_cost_bin_ratio: Optional[float] = 2.0,
     effective_cost_bin_anchor: float = 1e-4,
+    boundary_z_padding_extra: float = 0.0,
     observation_budget_fraction: float = 1.0,
     max_total_question_evaluations: Optional[int] = None,
     max_search_cost_usd: Optional[float] = None,
@@ -852,6 +886,11 @@ def simulate_radial_gittins(
         raise ValueError("datapoints must be nonempty and unique")
     if not math.isfinite(search_cost_scale_eta) or search_cost_scale_eta <= 0.0:
         raise ValueError("search_cost_scale_eta must be finite and positive")
+    if (
+        not math.isfinite(boundary_z_padding_extra)
+        or boundary_z_padding_extra < 0.0
+    ):
+        raise ValueError("boundary_z_padding_extra must be finite and nonnegative")
     if not 0.0 < observation_budget_fraction <= 1.0:
         raise ValueError("observation_budget_fraction must lie in (0, 1]")
     if not math.isfinite(stop_tolerance) or stop_tolerance < 0.0:
@@ -920,6 +959,11 @@ def simulate_radial_gittins(
                 )
         evaluation_datapoints = tuple(int(x) for x in datapoints)
     n_available = sum(len(ids) for ids in available_by_arm.values())
+    bruteforce_search_cost_usd = _bruteforce_search_cost_usd(
+        models,
+        available_by_arm,
+        table,
+    )
 
     schedule = PerArmQuestionSchedule.create_from_available(
         available_by_arm,
@@ -1040,14 +1084,41 @@ def simulate_radial_gittins(
         existing = resolved_boundary_grids.get(key)
         if existing is not None:
             return existing
-        z_padding = max(1.0, horizon * effective_cost + 1.0)
+        z_padding = (
+            max(1.0, horizon * effective_cost + 1.0)
+            + boundary_z_padding_extra
+        )
+        direction_array = np.asarray(direction, dtype=np.float64)
+        factors = float(np.max(direction_array)) / direction_array
+        scaled_lower = factors * (np.zeros(2) - reference_array)
+        scaled_upper = factors * (np.ones(2) - reference_array)
+        reachable_delta_min = float(scaled_lower[0] - scaled_upper[1])
+        reachable_delta_max = float(scaled_upper[0] - scaled_lower[1])
+        reachable_u_min = float(np.sum(scaled_lower) / 2.0)
+        reachable_u_max = float(np.sum(scaled_upper) / 2.0)
         # The base grid supplies resolution and a normal safety envelope.  It
-        # is expanded only when the mathematically required cumulative-cost
-        # band would exceed that envelope.
+        # is expanded when either the cumulative-cost band or an explicitly
+        # configured near-endpoint direction exceeds that envelope.
         expanded_base = replace(
             base_boundary_grid,
-            z_min=min(base_boundary_grid.z_min, -6.0 - z_padding),
-            z_max=max(base_boundary_grid.z_max, 6.0 + z_padding),
+            z_min=min(
+                base_boundary_grid.z_min,
+                -6.0 - z_padding,
+                reachable_u_min - z_padding,
+            ),
+            z_max=max(
+                base_boundary_grid.z_max,
+                6.0 + z_padding,
+                reachable_u_max + z_padding,
+            ),
+            delta_min=min(
+                base_boundary_grid.delta_min,
+                reachable_delta_min - 0.2,
+            ),
+            delta_max=max(
+                base_boundary_grid.delta_max,
+                reachable_delta_max + 0.2,
+            ),
         )
         resolved = direction_aware_grid(
             direction,
@@ -1177,7 +1248,7 @@ def simulate_radial_gittins(
                 ground_truth_hv=ground_truth_hv,
                 total_evaluations=total_evaluations,
                 total_cost=total_cost,
-                n_available=n_available,
+                bruteforce_search_cost_usd=bruteforce_search_cost_usd,
                 event=event,
                 completed_arms=completed_at_checkpoint,
             )
@@ -1580,8 +1651,8 @@ def simulate_radial_gittins(
         "all_arms_completed",
     }
     gittins_stop_budget_fraction = (
-        float(gittins_stop_evaluations) / float(n_available)
-        if gittins_stop_evaluations is not None
+        float(gittins_stop_cost_usd) / float(bruteforce_search_cost_usd)
+        if gittins_stop_cost_usd is not None
         else None
     )
     if record_recommendation_trajectory:
@@ -1614,6 +1685,7 @@ def simulate_radial_gittins(
         "cost_reference_usd": calibration.cost_reference_usd,
         "reference_point": list(resolved_reference),
         "search_cost_scale_eta": search_cost_scale_eta,
+        "boundary_z_padding_extra": boundary_z_padding_extra,
         "expected_batch_costs_usd": expected_batch_costs.tolist(),
         "guaranteed_batch_costs_usd": (
             guaranteed_batch_costs.tolist()
@@ -1643,6 +1715,7 @@ def simulate_radial_gittins(
             else None
         ),
         "available_cells_in_universe": n_available,
+        "bruteforce_search_cost_usd": bruteforce_search_cost_usd,
         "planned_partial_tail_cells": planned_partial_tail_cells,
         "ragged_tail_cells_excluded": 0,
         "unobserved_cells_at_stop": int(
