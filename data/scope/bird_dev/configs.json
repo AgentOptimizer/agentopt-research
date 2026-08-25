@@ -1,0 +1,372 @@
+[
+  {
+    "model_name": "bird_dev|config_id=2071",
+    "config_id": 2071,
+    "config": {
+      "classification": "gpt-4.1",
+      "debug": "gpt-4.1",
+      "execution": "gpt-4.1",
+      "schema_linking": "gpt-4.1"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2366",
+    "config_id": 2366,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1",
+      "execution": "gpt-4.1",
+      "debug": "gpt-4.1-mini"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2381",
+    "config_id": 2381,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-4.1-mini"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2391",
+    "config_id": 2391,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1-mini",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-4.1-mini"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2789",
+    "config_id": 2789,
+    "config": {
+      "schema_linking": "gemini-2.5-flash",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4.1-nano",
+      "debug": "gemini-2.0-flash-lite"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2791",
+    "config_id": 2791,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2962",
+    "config_id": 2962,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2964",
+    "config_id": 2964,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4.1",
+      "debug": "claude-3-haiku"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2965",
+    "config_id": 2965,
+    "config": {
+      "schema_linking": "gpt-4.1-mini",
+      "classification": "gemma-3-12b",
+      "execution": "claude-3-haiku",
+      "debug": "Mistral-Small-3-24B-Instruct-2501"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2966",
+    "config_id": 2966,
+    "config": {
+      "schema_linking": "Mistral-Small-3.2-24B-Instruct-2506",
+      "classification": "gemini-2.5-flash",
+      "execution": "gpt-5.2",
+      "debug": "gemma-3-27b"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2967",
+    "config_id": 2967,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gemma-3-27b"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2968",
+    "config_id": 2968,
+    "config": {
+      "schema_linking": "gpt-4.1-nano",
+      "classification": "gpt-4.1-nano",
+      "execution": "gpt-4.1-nano",
+      "debug": "gpt-4.1-nano"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=2972",
+    "config_id": 2972,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=3082",
+    "config_id": 3082,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10885",
+    "config_id": 10885,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemma-3-27b",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10886",
+    "config_id": 10886,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10887",
+    "config_id": 10887,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10893",
+    "config_id": 10893,
+    "config": {
+      "schema_linking": "gemini-3-flash",
+      "classification": "gemma-3-12b",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "Qwen3-235B-A22B"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10894",
+    "config_id": 10894,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-3-flash",
+      "debug": "gemini-2.5-flash-lite"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10900",
+    "config_id": 10900,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10902",
+    "config_id": 10902,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gpt-5-mini",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=10907",
+    "config_id": 10907,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gemma-3-12b",
+      "execution": "gemini-2.5-flash",
+      "debug": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13801",
+    "config_id": 13801,
+    "config": {
+      "schema_linking": "gemini-3-flash",
+      "classification": "gpt-4.1-mini",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13802",
+    "config_id": 13802,
+    "config": {
+      "schema_linking": "gemma-3-12b",
+      "classification": "gpt-5.2",
+      "execution": "gpt-4.1",
+      "debug": "deepseek-v3.1"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13803",
+    "config_id": 13803,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-4.1",
+      "execution": "gpt-5.2",
+      "debug": "claude-3-haiku"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13804",
+    "config_id": 13804,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13805",
+    "config_id": 13805,
+    "config": {
+      "schema_linking": "gemini-3-flash",
+      "classification": "Qwen3-Next-80B-A3B",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "claude-3-5-haiku"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13806",
+    "config_id": 13806,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "Mistral-Nemo-Instruct-2407",
+      "debug": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13807",
+    "config_id": 13807,
+    "config": {
+      "schema_linking": "Mistral-Small-3.2-24B-Instruct-2506",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13808",
+    "config_id": 13808,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13809",
+    "config_id": 13809,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "gemma-3-27b",
+      "execution": "gemma-3-12b",
+      "debug": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13810",
+    "config_id": 13810,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "Mistral-Nemo-Instruct-2407",
+      "debug": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13811",
+    "config_id": 13811,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "claude-3-haiku",
+      "debug": "Qwen3-235B-A22B"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13812",
+    "config_id": 13812,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13813",
+    "config_id": 13813,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-3-flash",
+      "debug": "gpt-4.1"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13814",
+    "config_id": 13814,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "bird_dev|config_id=13815",
+    "config_id": 13815,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "gemini-3-flash",
+      "debug": "gemini-2.5-flash-lite"
+    }
+  }
+]

@@ -1,0 +1,326 @@
+[
+  {
+    "model_name": "restaurant_test|config_id=6561",
+    "config_id": 6561,
+    "config": {
+      "data_parsing": "claude-sonnet-4.5",
+      "prompt_engineering": "deepseek-v3.1",
+      "imputation": "gpt-5-nano"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6562",
+    "config_id": 6562,
+    "config": {
+      "data_parsing": "Mistral-Small-3.2-24B-Instruct-2506",
+      "prompt_engineering": "gpt-4.1-nano",
+      "imputation": "deepseek-v3.2"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6563",
+    "config_id": 6563,
+    "config": {
+      "data_parsing": "Mistral-Small-3.2-24B-Instruct-2506",
+      "prompt_engineering": "gemini-3-flash",
+      "imputation": "deepseek-v3.2"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6564",
+    "config_id": 6564,
+    "config": {
+      "data_parsing": "gpt-4.1-nano",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "gpt-4.1"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6565",
+    "config_id": 6565,
+    "config": {
+      "data_parsing": "gpt-4.1",
+      "prompt_engineering": "gpt-4.1",
+      "imputation": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6566",
+    "config_id": 6566,
+    "config": {
+      "data_parsing": "gpt-5-mini",
+      "prompt_engineering": "gemini-3-flash",
+      "imputation": "gemma-3-4b"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6567",
+    "config_id": 6567,
+    "config": {
+      "data_parsing": "gpt-5-mini",
+      "prompt_engineering": "gemma-3-12b",
+      "imputation": "gpt-4.1-mini"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6568",
+    "config_id": 6568,
+    "config": {
+      "data_parsing": "Mistral-Nemo-Instruct-2407",
+      "prompt_engineering": "Mistral-Nemo-Instruct-2407",
+      "imputation": "deepseek-v3.1"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6569",
+    "config_id": 6569,
+    "config": {
+      "data_parsing": "Mistral-Nemo-Instruct-2407",
+      "prompt_engineering": "gemma-3-27b",
+      "imputation": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6570",
+    "config_id": 6570,
+    "config": {
+      "data_parsing": "Qwen3-Next-80B-A3B",
+      "prompt_engineering": "deepseek-v3.2",
+      "imputation": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6571",
+    "config_id": 6571,
+    "config": {
+      "data_parsing": "deepseek-v3.2",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "deepseek-v3.1"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6572",
+    "config_id": 6572,
+    "config": {
+      "data_parsing": "gpt-4.1",
+      "prompt_engineering": "gpt-4.1-nano",
+      "imputation": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6573",
+    "config_id": 6573,
+    "config": {
+      "data_parsing": "claude-3-haiku",
+      "prompt_engineering": "Mistral-Small-3-24B-Instruct-2501",
+      "imputation": "gemma-3-12b"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6574",
+    "config_id": 6574,
+    "config": {
+      "data_parsing": "Qwen3-Next-80B-A3B",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "deepseek-v3.2"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6575",
+    "config_id": 6575,
+    "config": {
+      "data_parsing": "gpt-4.1",
+      "prompt_engineering": "gemma-3-27b",
+      "imputation": "gemma-3-12b"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6576",
+    "config_id": 6576,
+    "config": {
+      "data_parsing": "deepseek-v3.1",
+      "prompt_engineering": "claude-sonnet-4.5",
+      "imputation": "claude-3-haiku"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6577",
+    "config_id": 6577,
+    "config": {
+      "data_parsing": "deepseek-v3.2",
+      "prompt_engineering": "deepseek-v3.1",
+      "imputation": "gpt-4.1-mini"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6578",
+    "config_id": 6578,
+    "config": {
+      "data_parsing": "gemini-2.5-flash-lite",
+      "prompt_engineering": "Mistral-Nemo-Instruct-2407",
+      "imputation": "Mistral-Small-3.2-24B-Instruct-2506"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6579",
+    "config_id": 6579,
+    "config": {
+      "data_parsing": "Mistral-Nemo-Instruct-2407",
+      "prompt_engineering": "Mistral-Nemo-Instruct-2407",
+      "imputation": "Mistral-Small-3.2-24B-Instruct-2506"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6580",
+    "config_id": 6580,
+    "config": {
+      "data_parsing": "Mistral-Small-3.2-24B-Instruct-2506",
+      "prompt_engineering": "gpt-5-mini",
+      "imputation": "deepseek-v3.2"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6581",
+    "config_id": 6581,
+    "config": {
+      "data_parsing": "gpt-4.1",
+      "prompt_engineering": "gemini-2.0-flash-lite",
+      "imputation": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6582",
+    "config_id": 6582,
+    "config": {
+      "data_parsing": "Mistral-Nemo-Instruct-2407",
+      "prompt_engineering": "gpt-4.1-nano",
+      "imputation": "claude-3-haiku"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6583",
+    "config_id": 6583,
+    "config": {
+      "data_parsing": "gemini-2.0-flash-lite",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "claude-3-haiku"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6584",
+    "config_id": 6584,
+    "config": {
+      "data_parsing": "gpt-5.2",
+      "prompt_engineering": "Qwen3-235B-A22B",
+      "imputation": "gpt-5-mini"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6585",
+    "config_id": 6585,
+    "config": {
+      "data_parsing": "Mistral-Small-3-24B-Instruct-2501",
+      "prompt_engineering": "gemini-2.5-flash",
+      "imputation": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6586",
+    "config_id": 6586,
+    "config": {
+      "data_parsing": "Mistral-Small-3.2-24B-Instruct-2506",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "deepseek-v3.2"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6587",
+    "config_id": 6587,
+    "config": {
+      "data_parsing": "gpt-5.2",
+      "prompt_engineering": "gpt-5.2",
+      "imputation": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6588",
+    "config_id": 6588,
+    "config": {
+      "data_parsing": "claude-sonnet-4.5",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6589",
+    "config_id": 6589,
+    "config": {
+      "data_parsing": "gpt-4.1-nano",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "gpt-4.1-mini"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6590",
+    "config_id": 6590,
+    "config": {
+      "data_parsing": "Mistral-Small-3.2-24B-Instruct-2506",
+      "prompt_engineering": "deepseek-v3.2",
+      "imputation": "gemini-3-flash"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6591",
+    "config_id": 6591,
+    "config": {
+      "data_parsing": "gemini-2.5-flash-lite",
+      "prompt_engineering": "gemini-2.5-flash-lite",
+      "imputation": "deepseek-v3.1"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6592",
+    "config_id": 6592,
+    "config": {
+      "data_parsing": "claude-3-haiku",
+      "prompt_engineering": "gemini-2.0-flash-lite",
+      "imputation": "deepseek-v3.1"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6593",
+    "config_id": 6593,
+    "config": {
+      "data_parsing": "gemini-2.0-flash-lite",
+      "prompt_engineering": "claude-sonnet-4.5",
+      "imputation": "Qwen3-235B-A22B"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6594",
+    "config_id": 6594,
+    "config": {
+      "data_parsing": "gemma-3-27b",
+      "prompt_engineering": "gpt-5-mini",
+      "imputation": "deepseek-v3.1"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6595",
+    "config_id": 6595,
+    "config": {
+      "data_parsing": "Mistral-Nemo-Instruct-2407",
+      "prompt_engineering": "gpt-4.1-nano",
+      "imputation": "Qwen3-235B-A22B"
+    }
+  },
+  {
+    "model_name": "restaurant_test|config_id=6596",
+    "config_id": 6596,
+    "config": {
+      "data_parsing": "gemini-2.0-flash-lite",
+      "prompt_engineering": "claude-sonnet-4.5",
+      "imputation": "deepseek-v3.1"
+    }
+  }
+]
