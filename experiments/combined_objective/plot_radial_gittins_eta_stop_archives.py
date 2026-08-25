@@ -39,6 +39,7 @@ def draw_panel(
     recommendation_key: str = "stop_recommended_arm_indices",
     cost_key: str = "stop_cost_fraction",
     checkpoint_label: str = "stop",
+    correctly_recommended_scale: float = 1.0,
 ) -> None:
     if not path.exists():
         ax.text(0.5, 0.5, "run unavailable", ha="center", va="center")
@@ -75,7 +76,8 @@ def draw_panel(
                    color="#22577A", edgecolor="white", linewidth=0.6, zorder=5)
     if true_positive:
         idx = sorted(true_positive)
-        ax.scatter(points[idx, 1], points[idx, 0], marker="*", s=150 * scale,
+        ax.scatter(points[idx, 1], points[idx, 0], marker="*",
+                   s=150 * scale * correctly_recommended_scale,
                    color="#279060", edgecolor="white", linewidth=0.6, zorder=6)
     ax.set_xscale("log")
     ax.set_xlabel("Mean deployment cost (USD, log scale)")
@@ -147,6 +149,30 @@ def main() -> None:
         combined.savefig(combined_output, dpi=220, bbox_inches="tight")
         plt.close(combined)
         print(combined_output.resolve())
+
+    # Presentation-ready seed-42/default-eta comparison requested for sharing.
+    presentation_dir = ROOT / "analysis/vs/give"
+    presentation_dir.mkdir(parents=True, exist_ok=True)
+    presentation, axes = plt.subplots(1, 2, figsize=(14.5, 6.8))
+    for ax, (benchmark, title) in zip(axes, BENCHMARKS):
+        path = indir / "raw" / f"{benchmark}_eta-1_seed-{args.seed}.npz"
+        draw_panel(
+            ax,
+            path,
+            title,
+            checkpoint_label="stop",
+            correctly_recommended_scale=1.65,
+        )
+    presentation.legend(
+        handles=legend_handles(), loc="lower center", ncol=5, frameon=False,
+        bbox_to_anchor=(0.5, -0.015),
+    )
+    presentation.suptitle("Radial-Gittins recommendations at stopping", fontsize=18)
+    presentation.tight_layout(rect=(0, 0.14, 1, 0.93))
+    presentation_output = presentation_dir / "radial_gittins_stop_recommendations.png"
+    presentation.savefig(presentation_output, dpi=240, bbox_inches="tight")
+    plt.close(presentation)
+    print(presentation_output.resolve())
 
 
 if __name__ == "__main__":

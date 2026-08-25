@@ -11,6 +11,8 @@ from typing import Dict, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -96,6 +98,7 @@ def plot_contact_sheet(
     *,
     benchmark: str,
     version: str,
+    full_search_cost_usd: float,
     output_path: Path,
 ) -> None:
     ordered = sorted(results, key=lambda result: result.budget_fraction)
@@ -103,7 +106,12 @@ def plot_contact_sheet(
     true_front_indices = set(pareto_min_cost_indices(truth))
     true_front = truth[sorted(true_front_indices)]
     true_front = true_front[np.argsort(true_front[:, 1])]
-    fig, axes = plt.subplots(2, 5, figsize=(20, 8), sharex=True, sharey=True)
+    ncols = min(5, len(ordered))
+    nrows = int(np.ceil(len(ordered) / ncols))
+    fig, axes = plt.subplots(
+        nrows, ncols, figsize=(4.0 * ncols, 4.0 * nrows),
+        sharex=True, sharey=True, squeeze=False,
+    )
     for ax, result in zip(axes.flat, ordered):
         selected_indices = set(result.selected_arm_indices)
         correct = sorted(selected_indices & true_front_indices)
@@ -112,7 +120,7 @@ def plot_contact_sheet(
         ax.scatter(truth[:, 1], truth[:, 0], s=8, color="#c5cad3", alpha=0.55)
         ax.plot(true_front[:, 1], true_front[:, 0], color="#626b78", linewidth=1.0)
         for indices, color, marker, size in (
-            (correct, "#2f855a", "*", 38),
+            (correct, "#2f855a", "*", 105),
             (false_positive, "#1f4e79", "s", 24),
             (missed, "#c45c26", "D", 22),
         ):
@@ -122,18 +130,118 @@ def plot_contact_sheet(
                            marker=marker, s=size, edgecolors="white",
                            linewidths=0.4, zorder=4)
         ax.set_title(
-            f"{result.budget_fraction:.0%}\n"
+            f"{result.budget_fraction:.0%} "
+            f"(cost={result.total_search_cost_usd / full_search_cost_usd:.1%})\n"
             f"regret={result.hypervolume_regret:.4f}, "
             f"FP={result.false_positive_count}",
             fontsize=9,
         )
         ax.grid(True, alpha=0.25)
+    for ax in axes.flat[len(ordered):]:
+        ax.set_visible(False)
     fig.supxlabel("Mean deployment cost (USD)")
-    fig.supylabel("Mean accuracy")
+    fig.supylabel("Mean accuracy", x=0.002)
     fig.suptitle(f"{benchmark} — {_version_title(version)}", fontsize=14)
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_combined_contact_sheet(
+    results_by_benchmark: Dict[str, Sequence[MultiObjectiveRandomSearchResult]],
+    *,
+    version: str,
+    full_search_costs_usd: Dict[str, float],
+    output_path: Path,
+) -> None:
+    """Plot budget checkpoints as rows and benchmarks as columns."""
+    benchmark_items = list(results_by_benchmark.items())
+    ordered_by_benchmark = {
+        benchmark: sorted(results, key=lambda result: result.budget_fraction)
+        for benchmark, results in benchmark_items
+    }
+    n_checkpoints = len(next(iter(ordered_by_benchmark.values())))
+    fig, axes = plt.subplots(
+        n_checkpoints, len(benchmark_items), figsize=(13, 4.6 * n_checkpoints),
+        sharex="col", sharey="col", squeeze=False,
+    )
+    for col, (benchmark, _) in enumerate(benchmark_items):
+        ordered = ordered_by_benchmark[benchmark]
+        truth = ordered[0].truth_vectors
+        true_front_indices = set(pareto_min_cost_indices(truth))
+        true_front = truth[sorted(true_front_indices)]
+        true_front = true_front[np.argsort(true_front[:, 1])]
+        for row, result in enumerate(ordered):
+            ax = axes[row, col]
+            selected_indices = set(result.selected_arm_indices)
+            correct = sorted(selected_indices & true_front_indices)
+            false_positive = sorted(selected_indices - true_front_indices)
+            missed = sorted(true_front_indices - selected_indices)
+            ax.scatter(truth[:, 1], truth[:, 0], s=18, color="#c5cad3", alpha=0.55)
+            ax.plot(
+                true_front[:, 1], true_front[:, 0], color="#626b78",
+                marker="o", markersize=5, linewidth=1.0,
+            )
+            for indices, color, marker, size in (
+                (correct, "#2f855a", "*", 155),
+                (false_positive, "#1f4e79", "s", 42),
+                (missed, "#c45c26", "D", 40),
+            ):
+                if indices:
+                    points = truth[indices]
+                    ax.scatter(
+                        points[:, 1], points[:, 0], color=color, marker=marker,
+                        s=size, edgecolors="white", linewidths=0.4, zorder=4,
+                    )
+            ax.set_title(
+                f"{result.budget_fraction:.0%} "
+                f"(cost={result.total_search_cost_usd / full_search_costs_usd[benchmark]:.1%})\n"
+                f"regret={result.hypervolume_regret:.4f}, "
+                f"FP={result.false_positive_count}",
+                fontsize=18,
+            )
+            ax.grid(True, alpha=0.25)
+            ax.tick_params(axis="both", labelsize=16)
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
+        display_name = {"hotpotqa": "HotpotQA", "mathqa": "MathQA"}.get(
+            benchmark, benchmark,
+        )
+        axes[0, col].annotate(
+            display_name, xy=(0.5, 1.28), xycoords="axes fraction",
+            ha="center", va="bottom", fontsize=24,
+        )
+    for row in range(n_checkpoints):
+        axes[row, 0].set_ylabel("Mean accuracy", labelpad=22, fontsize=19)
+    neutral_legend_handles = [
+        Line2D([], [], linestyle="", marker="o", markersize=6,
+               color="#c5cad3", label="all configurations"),
+        Line2D([], [], color="#626b78", marker="o", markersize=4,
+               label="true full-data Pareto front"),
+    ]
+    colored_legend_handles = [
+        Line2D([], [], linestyle="", marker="*", markersize=12,
+               color="#2f855a", label="correctly recommended"),
+        Line2D([], [], linestyle="", marker="D", markersize=7,
+               color="#c45c26", label="missed Pareto arm"),
+        Line2D([], [], linestyle="", marker="s", markersize=7,
+               color="#1f4e79", label="false-positive recommendation"),
+    ]
+    fig.supxlabel("Mean deployment cost (USD)", fontsize=21, y=0.072)
+    fig.suptitle(_version_title(version), fontsize=27, y=0.978)
+    fig.legend(
+        handles=colored_legend_handles, loc="lower center", ncol=3,
+        frameon=False, fontsize=17, bbox_to_anchor=(0.5, 0.028),
+        handletextpad=0.7, columnspacing=1.8,
+    )
+    fig.legend(
+        handles=neutral_legend_handles, loc="lower center", ncol=2,
+        frameon=False, fontsize=17, bbox_to_anchor=(0.5, 0.003),
+        handletextpad=0.7, columnspacing=2.2,
+    )
+    fig.tight_layout(rect=(0.065, 0.105, 0.935, 0.945), h_pad=2.4, w_pad=2.0)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=160)
     plt.close(fig)
 
 
@@ -224,36 +332,75 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--summary-seeds", type=int, default=50)
     parser.add_argument(
+        "--plot-budget-percentages", nargs="+", type=float,
+        default=[10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+        help="Cell-budget percentages to include in snapshots/contact sheets.",
+    )
+    parser.add_argument(
+        "--contact-sheets-only", action="store_true",
+        help="Skip individual snapshots and multi-seed regret summaries.",
+    )
+    parser.add_argument(
+        "--contact-sheet-suffix", default="",
+        help="Optional filename suffix for contact-sheet outputs.",
+    )
+    parser.add_argument(
         "--benchmarks", nargs="+", choices=tuple(BENCHMARK_PICKLES),
         default=list(BENCHMARK_PICKLES),
     )
     args = parser.parse_args()
     outdir = args.outdir if args.outdir.is_absolute() else ROOT / args.outdir
     summary_by_benchmark = {}
+    plot_results_by_benchmark = {}
+    full_search_costs_usd = {}
+    plot_budget_fractions = tuple(value / 100.0 for value in args.plot_budget_percentages)
 
     for benchmark in args.benchmarks:
         models, datapoints, table = load_pickle(str(BENCHMARK_PICKLES[benchmark]))
         plot_results = run_budget_sweep(
             models, datapoints, table, seeds=(args.seed,),
+            budget_fractions=plot_budget_fractions,
         )
         benchmark_dir = outdir / benchmark
-        for result in plot_results:
-            percent = int(round(100 * result.budget_fraction))
-            plot_snapshot(
-                result,
-                benchmark=benchmark,
-                output_path=(
-                    benchmark_dir / result.version / f"pareto_{percent:03d}pct.png"
-                ),
-            )
+        questions = tuple(
+            question_id for question_id in datapoints
+            if all(question_id in table.get(model, {}) for model in models)
+        )
+        full_search_cost_usd = sum(
+            table[model][question_id].cost
+            for model in models
+            for question_id in questions
+        )
+        plot_results_by_benchmark[benchmark] = plot_results
+        full_search_costs_usd[benchmark] = full_search_cost_usd
+        if not args.contact_sheets_only:
+            for result in plot_results:
+                percent = int(round(100 * result.budget_fraction))
+                plot_snapshot(
+                    result,
+                    benchmark=benchmark,
+                    output_path=(
+                        benchmark_dir / result.version / f"pareto_{percent:03d}pct.png"
+                    ),
+                )
         for version in VERSIONS:
             version_results = [r for r in plot_results if r.version == version]
+            contact_sheet_path = (
+                outdir / f"{benchmark}_{version}{args.contact_sheet_suffix}.png"
+                if args.contact_sheets_only
+                else benchmark_dir / f"{version}_contact_sheet.png"
+            )
             plot_contact_sheet(
                 version_results,
                 benchmark=benchmark,
                 version=version,
-                output_path=benchmark_dir / f"{version}_contact_sheet.png",
+                full_search_cost_usd=full_search_cost_usd,
+                output_path=contact_sheet_path,
             )
+
+        if args.contact_sheets_only:
+            print(f"wrote {outdir / f'{benchmark}_*.png'}")
+            continue
 
         summary_results = run_budget_sweep(
             models,
@@ -269,6 +416,24 @@ def main() -> None:
         )
         summary_by_benchmark[benchmark] = summary_results
         print(f"wrote {benchmark_dir}")
+
+    if args.contact_sheets_only:
+        for version in VERSIONS:
+            plot_combined_contact_sheet(
+                {
+                    benchmark: [
+                        result for result in plot_results_by_benchmark[benchmark]
+                        if result.version == version
+                    ]
+                    for benchmark in args.benchmarks
+                },
+                version=version,
+                full_search_costs_usd=full_search_costs_usd,
+                output_path=(
+                    outdir / f"combined_{version}{args.contact_sheet_suffix}.png"
+                ),
+            )
+        return
 
     plot_combined_regret_curves(
         summary_by_benchmark,
