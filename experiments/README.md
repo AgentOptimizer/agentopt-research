@@ -10,6 +10,21 @@ This repo is multi-objective. The main replay is `combined_objective/offline_rad
 
 Shared inputs live in `data/` (gitignored — keep them locally). Selector outputs live with the scripts that produce them.
 
+Repo-root SCOPE benchmark directories can be passed directly to Radial
+Gittins and both multi-objective random baselines:
+
+```bash
+python experiments/combined_objective/offline_radial_gittins.py \
+    --scope data/scope/bird_mini_dev --budget-fraction 0.1
+
+python experiments/combined_objective/offline_multiobjective_random_search.py \
+    --scope data/scope/bird_mini_dev --seeds 1 \
+    --output experiments/results/scope_bird_mini_dev_random.csv
+```
+
+The random command runs `random_configurations` (complete sampled rows) and
+`random_questions` (shared sampled columns) across the budget sweep.
+
 This is `experiments/data/`, not the repo-root `data/`. The latter holds the
 committed accuracy / cost / token matrices extracted from these pickles; see
 `../data/README.md`.

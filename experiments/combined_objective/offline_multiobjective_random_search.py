@@ -36,6 +36,7 @@ sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 from experiments.single_objective.offline_selector_sim import (  # noqa: E402
     LookupTable,
     load_pickle,
+    load_scope,
 )
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
     hypervolume_2d,
@@ -280,12 +281,20 @@ def write_results_csv(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pickle", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--pickle", help="Path to a cached lookup pickle")
+    source.add_argument(
+        "--scope",
+        help="Path to a SCOPE benchmark directory containing matrix CSVs",
+    )
     parser.add_argument("--seeds", type=int, default=50)
     parser.add_argument("--base-seed", type=int, default=42)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
-    models, datapoints, table = load_pickle(args.pickle)
+    if args.pickle:
+        models, datapoints, table = load_pickle(args.pickle)
+    else:
+        models, datapoints, table = load_scope(args.scope)
     results = run_budget_sweep(
         models,
         datapoints,

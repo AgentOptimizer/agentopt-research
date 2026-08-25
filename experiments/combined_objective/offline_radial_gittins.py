@@ -42,6 +42,7 @@ SampleResult = _offline_sim.SampleResult
 _require_data_path = _offline_sim._require_data_path
 load_jsonl = _offline_sim.load_jsonl
 load_pickle = _offline_sim.load_pickle
+load_scope = _offline_sim.load_scope
 
 from agentopt.model_selection.radial_gittins import (
     DEFAULT_DIRECTIONS,
@@ -1817,6 +1818,10 @@ def main() -> None:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--pickle", help="Path to a cached lookup pickle")
     source.add_argument("--jsonl", help="Path to a brute-force JSONL file")
+    source.add_argument(
+        "--scope",
+        help="Path to a SCOPE benchmark directory containing matrix CSVs",
+    )
     parser.add_argument("--seeds", type=int, default=1)
     parser.add_argument("--base-seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, choices=(4, 8), default=4)
@@ -1865,9 +1870,12 @@ def main() -> None:
     if args.pickle:
         path = _require_data_path(args.pickle)
         models, datapoints, table = load_pickle(path)
-    else:
+    elif args.jsonl:
         path = _require_data_path(args.jsonl)
         models, datapoints, table = load_jsonl(path)
+    else:
+        path = args.scope
+        models, datapoints, table = load_scope(path)
     print(
         f"Loaded {len(models)} models, {len(datapoints)} questions, "
         f"{sum(len(row) for row in table.values())} cells from {path}"
