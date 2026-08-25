@@ -25,6 +25,7 @@ from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
     _sample_values,
     load_pickle,
+    raw_nondominated_indices,
     simulate_radial_gittins,
 )
 
@@ -151,6 +152,20 @@ def main() -> None:
                 )
                 stop_points = [point for point in trajectory if point.event == "gittins_stop"]
                 stop_point = stop_points[0] if stop_points else trajectory[-1]
+                halfway_point = next(
+                    (point for point in trajectory if point.budget_fraction + 1e-12 >= 0.5),
+                    trajectory[-1],
+                )
+                end_point = trajectory[-1]
+                if result.raw_truth_vectors is None:
+                    raise RuntimeError("Radial-Gittins did not return raw truth vectors")
+                true_pareto_indices = np.asarray(
+                    raw_nondominated_indices(result.raw_truth_vectors), dtype=np.int64
+                )
+                recommended_indices = np.asarray(
+                    stop_point.deployable_online_raw_archive_arm_indices,
+                    dtype=np.int64,
+                )
                 np.savez_compressed(
                     destination,
                     benchmark=benchmark,
@@ -187,6 +202,25 @@ def main() -> None:
                     ),
                     full_cost_usd=full_cost,
                     halted_at_gittins_stop=not args.continue_after_stop,
+                    stop_recommended_arm_indices=recommended_indices,
+                    halfway_recommended_arm_indices=np.asarray(
+                        halfway_point.deployable_online_raw_archive_arm_indices,
+                        dtype=np.int64,
+                    ),
+                    halfway_cost_fraction=float(
+                        halfway_point.cumulative_search_cost_usd / full_cost
+                    ),
+                    halfway_cell_fraction=float(halfway_point.budget_fraction),
+                    end_recommended_arm_indices=np.asarray(
+                        end_point.deployable_online_raw_archive_arm_indices,
+                        dtype=np.int64,
+                    ),
+                    end_cost_fraction=float(
+                        end_point.cumulative_search_cost_usd / full_cost
+                    ),
+                    end_cell_fraction=float(end_point.budget_fraction),
+                    true_pareto_arm_indices=true_pareto_indices,
+                    raw_truth_vectors=np.asarray(result.raw_truth_vectors, dtype=np.float64),
                 )
                 print(
                     f"    stop_cost={stop_cost_fraction:.3%}, "
