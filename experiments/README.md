@@ -157,9 +157,12 @@ Claude 3 Haiku, Claude Haiku 4.5, Claude Opus 4.6, gpt-oss-20b, gpt-oss-120b, Ki
 
 ## Dependencies
 
+Declared in `../pyproject.toml`; Python 3.10+. Install from the repo root:
+
 ```bash
-pip install numpy scipy              # Radial-Gittins
-pip install botorch gpytorch         # Bayesian Optimization selector only
+pip install -e ".[dev]"        # core + Radial-Gittins + plots + pytest
+pip install -e ".[gittins]"    # scalar Gittins only (jax, jaxtyping, torch)
+pip install -e ".[bayesian]"   # Bayesian Optimization selector only
 ```
 
 CSV inspection needs only Python / pandas. Pickle loading needs stdlib (+ the `SampleResult` class in the sim scripts).

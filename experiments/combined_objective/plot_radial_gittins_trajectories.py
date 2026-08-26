@@ -5,9 +5,10 @@ Runs HotpotQA / MathQA offline replay at budget fraction 1.0, continues past
 the endogenous Gittins stop so the trajectory covers later budgets, and writes:
 
 * the completed-only deployable HV regret from the Gittins stop onward, marked
-  at the stop itself, alongside the all-posterior provisional HV regret curve;
+  at the stop itself, alongside the all-posterior provisional HV regret curve,
+  both plotted against cumulative search cost as a fraction of brute-force spend;
 * separate deployable and provisional raw-archive comparisons at Gittins
-  stop, 50%, and the actual end fraction.
+  stop, 50% of brute-force search cost, and the actual end fraction.
 
 The replay continues after the endogenous stop only to show counterfactual
 fixed-budget diagnostics.  The deployable archive is the terminal
@@ -31,6 +32,9 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
+from agentopt.model_selection.radial_gittins import (  # noqa: E402
+    DEFAULT_DIRECTIONS,
+)
 from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
     RadialGittinsBoundaryCache,
     RadialGittinsGrid,
@@ -142,6 +146,9 @@ def run_benchmark(
     batch_size: int,
     seed: int,
     grid_size: int,
+    directions: Sequence[Sequence[float]],
+    eta: float,
+    boundary_z_padding_extra: float,
     cache: RadialGittinsBoundaryCache,
 ) -> Tuple[RadialSimulationResult, np.ndarray, Tuple[int, ...]]:
     models, datapoints, table = load_pickle(pickle_path)
@@ -157,6 +164,9 @@ def run_benchmark(
         datapoints,
         table,
         batch_size=batch_size,
+        directions=directions,
+        search_cost_scale_eta=eta,
+        boundary_z_padding_extra=boundary_z_padding_extra,
         observation_budget_fraction=1.0,
         seed=seed,
         boundary_grid=grid,
@@ -178,7 +188,8 @@ def run_benchmark(
     raw_vectors = _full_raw_objective_vectors(models, eval_dps, table)
     print(
         f"stop_marker={result.gittins_stop_budget_fraction}, "
-        f"final_frac={result.total_evaluations / result.params['available_cells_in_universe']:.3f}, "
+        f"final_cost_frac={result.total_cost / result.params['bruteforce_search_cost_usd']:.3f}, "
+        f"final_eval_frac={result.total_evaluations / result.params['available_cells_in_universe']:.3f}, "
         f"stop_reason={result.stop_reason}, "
         f"traj_points={len(result.recommendation_trajectory)}, "
         f"policy_s={result.policy_wall_time_seconds:.1f}"
@@ -264,7 +275,7 @@ def plot_hv_curves(
                 ),
             )
         ax.set_title(name)
-        ax.set_xlabel("Observed budget fraction")
+        ax.set_xlabel("Fraction of brute-force search cost")
         ax.set_ylabel("Normalized-desirability hypervolume regret")
         ax.set_xlim(0.0, 1.02)
         ax.grid(True, alpha=0.3)
@@ -478,6 +489,30 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=4, choices=(4, 8))
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument(
+        "--eta",
+        type=float,
+        default=1.0,
+        help="USD-to-normalized-utility search-cost scale (default: 1.0)",
+    )
+    parser.add_argument(
+        "--extra-direction",
+        type=float,
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("ACCURACY", "COST_DESIRABILITY"),
+        help=(
+            "Append a positive simplex direction to the nine defaults; may be "
+            "specified more than once"
+        ),
+    )
+    parser.add_argument(
+        "--boundary-z-padding-extra",
+        type=float,
+        default=0.0,
+        help="Extra z-grid guard band for low-cost or extreme directions",
+    )
+    parser.add_argument(
         "--grid-size",
         type=int,
         default=129,
@@ -492,6 +527,10 @@ def main() -> None:
     args = parser.parse_args()
     outdir = args.outdir if args.outdir.is_absolute() else ROOT / args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
+    directions = tuple(DEFAULT_DIRECTIONS) + tuple(
+        tuple(float(component) for component in direction)
+        for direction in args.extra_direction
+    )
 
     cache = RadialGittinsBoundaryCache()
     results: Dict[str, RadialSimulationResult] = {}
@@ -510,6 +549,9 @@ def main() -> None:
             batch_size=args.batch_size,
             seed=args.seed,
             grid_size=args.grid_size,
+            directions=directions,
+            eta=args.eta,
+            boundary_z_padding_extra=args.boundary_z_padding_extra,
             cache=cache,
         )
         results[display] = result
@@ -526,12 +568,17 @@ def main() -> None:
             else None
         )
         summary[display] = {
+            "eta": args.eta,
+            "directions": [list(direction) for direction in directions],
+            "boundary_z_padding_extra": args.boundary_z_padding_extra,
             "stop_reason": result.stop_reason,
             "gittins_stop_budget_fraction": result.gittins_stop_budget_fraction,
             "gittins_stop_evaluations": result.gittins_stop_evaluations,
             "gittins_stop_cost_usd": result.gittins_stop_cost_usd,
             "final_evaluations": result.total_evaluations,
+            "final_cost_usd": result.total_cost,
             "available_cells": result.params["available_cells_in_universe"],
+            "bruteforce_search_cost_usd": result.params["bruteforce_search_cost_usd"],
             "final_hv_regret": (
                 final_checkpoint.deployable_hypervolume_regret
                 if final_checkpoint is not None

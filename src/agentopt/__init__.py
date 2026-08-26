@@ -6,7 +6,7 @@ Full product surface (MITM proxy, daemon, routing) is omitted; see the main
 ``experiments/`` replay frozen benchmark pickles without API calls.
 """
 
-__version__ = "0.1.0-research"
+__version__ = "0.1.0"
 
 from .base_models import AgentFn, Dataset, EvalFn, ModelsConfig
 from .model_selection import (

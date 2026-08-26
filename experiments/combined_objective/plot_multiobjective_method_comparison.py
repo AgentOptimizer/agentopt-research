@@ -591,25 +591,13 @@ def main() -> None:
                     }
                 )
 
-        panels.append(
-            {
-                "name": benchmark,
-                "stop_mean": stop_mean,
-                "deployable": (
-                    deployable_x,
-                    deployable_y,
-                    deployable_ci95,
-                    deployable_counts,
-                ),
-                "provisional": (
-                    provisional_x,
-                    provisional_y,
-                    provisional_ci95,
-                    provisional_counts,
-                ),
-                "random": random_curves,
-            }
-        )
+        ax.set_title(benchmark)
+        ax.set_xlabel("Fraction of brute-force search cost")
+        ax.set_ylabel("Hypervolume regret")
+        ax.set_xlim(0.0, 1.02)
+        ax.set_ylim(bottom=0.0)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc="upper right", fontsize=7.5)
 
     write_comparison_output(
         outdir=outdir,
