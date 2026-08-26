@@ -94,8 +94,10 @@ Available selectors: `brute_force` (combined objective), `random_search`, `matri
   observed mean accuracy and minimize observed mean deployment cost in USD;
 - restricts the deployable recommendation to completed direction winners,
   matching the required-completion Gittins stopping convention;
-- records a separate all-posterior provisional archive for fixed-budget
-  diagnostics; unfinished provisional winners are candidates, not terminal
+- records one archive per trajectory checkpoint, tagged with the eligibility
+  scope that produced it: all-posterior `provisional` before the endogenous
+  stop, when nothing is deployable yet, and completed-only `deployable` from
+  the stop onward; unfinished provisional winners are candidates, not terminal
   recommendations;
 - separately reports the legacy posterior-desirability archive and an offline
   oracle raw winner archive for diagnostics. The oracle archive uses the full
@@ -111,13 +113,13 @@ fewer than `batch_size` questions remain; Gittins tables still plan every stage
 as a full batch. `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
 
-`combined_objective/plot_radial_gittins_trajectories.py` writes separate completed-only deployable
-and all-posterior provisional raw-archive comparisons for each benchmark. Its
-main hypervolume series is the completed-only recommendation, drawn only from
-the endogenous Gittins stop onward and marked with the single stop-time point,
-because the deployable archive is not a recommendation before the policy stops;
-a dashed curve retains the provisional fixed-budget diagnostic across all
-budgets. Online and oracle membership
+`combined_objective/plot_radial_gittins_trajectories.py` writes one raw-archive
+comparison per benchmark, with each snapshot panel labelled by the scope its
+checkpoint recorded. Its hypervolume series is a single trajectory: a dashed
+all-posterior diagnostic before the endogenous Gittins stop and the solid
+completed-only recommendation from the stop onward, with the handover marked,
+because the deployable archive is not a recommendation before the policy
+stops. Online and oracle membership
 are plotted at full-dataset raw coordinates against the global raw Pareto
 front, so disagreements expose estimation error without feeding hidden
 outcomes back into the selector. The replay after the marked endogenous stop
