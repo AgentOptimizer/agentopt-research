@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import pickle
 import sys
 from collections import Counter
 from pathlib import Path
@@ -30,9 +31,13 @@ from experiments.combined_objective.offline_multiobjective_random_search import 
     common_question_ids,
     mean_raw_vectors,
     pareto_min_cost_indices,
+    run_budget_sweep,
 )
 from experiments.combined_objective.plot_multiobjective_method_comparison import (  # noqa: E402
+    _gittins_hv_space,
     _radial_regret_series,
+    _random_regret_series,
+    _selected_metric,
     panels_from_csv,
     write_comparison_figure,
 )
@@ -142,10 +147,10 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         _mean_cost_fraction(random_path, benchmark, matched_seeds, budget=0.4),
     )
     conditions = (
-        (f"Gittins adaptive stop\nmean actual cost: {mean_costs[0]:.1%}", gittins),
-        (f"Radial UCB adaptive stop\nmean actual cost: {mean_costs[1]:.1%}", ucb),
-        (f"Random questions, 10% budget\nmean actual cost: {mean_costs[2]:.1%}", random10),
-        (f"Random questions, 40% budget\nmean actual cost: {mean_costs[3]:.1%}", random40),
+        (f"Gittins adaptive stop\nMean cost: {mean_costs[0]:.1%}", gittins),
+        (f"Radial UCB adaptive stop\nMean cost: {mean_costs[1]:.1%}", ucb),
+        (f"Random questions, 10% budget\nMean cost: {mean_costs[2]:.1%}", random10),
+        (f"Random questions, 40% budget\nMean cost: {mean_costs[3]:.1%}", random40),
     )
     seed_sets = [set(values) for _, values in conditions]
     if any(len(values) != 20 for values in seed_sets) or len(set(map(frozenset, seed_sets))) != 1:
@@ -157,41 +162,53 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     )
     norm = mpl.colors.Normalize(vmin=1, vmax=20)
     fig, axes = plt.subplots(2, 4, figsize=(16.0, 7.7), sharex=True, sharey=True)
+    recommendation_size = 72
+    recommendation_edge = "#725b46"
+    recommendation_linewidth = 0.65
     for col, (title, recommendations) in enumerate(conditions):
         for row in range(2):
             _draw_landscape(axes[row, col], truth)
-        axes[0, col].set_title(title, fontsize=12)
+            axes[row, col].tick_params(axis="both", labelsize=11.5)
+        axes[0, col].set_title(title, fontsize=14, pad=8)
         selected = np.asarray(
             [models.index(name) for name in recommendations[42]], dtype=int,
         )
         points = truth[selected]
-        axes[0, col].scatter(points[:, 1], points[:, 0], s=48, color="#d55e00",
-                             edgecolors="white", linewidths=0.75, zorder=5)
+        axes[0, col].scatter(
+            points[:, 1], points[:, 0], s=recommendation_size, color="#d55e00",
+            edgecolors=recommendation_edge,
+            linewidths=recommendation_linewidth,
+            zorder=5,
+        )
         axes[0, col].text(0.82, 0.04, f"{len(selected)} recommended", transform=axes[0, col].transAxes,
-                          ha="right", va="bottom", fontsize=8.5)
+                          ha="right", va="bottom", fontsize=10.5)
         counts = _frequency(models, recommendations)
         shown = counts > 0
         axes[1, col].scatter(
             truth[shown, 1], truth[shown, 0], c=counts[shown], cmap=cmap, norm=norm,
-            s=46, edgecolors="#725b46", linewidths=0.5, zorder=5,
+            s=recommendation_size, edgecolors=recommendation_edge,
+            linewidths=recommendation_linewidth, zorder=5,
         )
-    axes[0, 0].set_ylabel("Seed 42\n\nMean accuracy")
-    axes[1, 0].set_ylabel("20-seed frequency\n\nMean accuracy")
-    for ax in axes[1]:
-        ax.set_xlabel("Mean deployment cost (USD)")
+    fig.supxlabel("Mean deployment cost (USD)", fontsize=15, y=0.025)
+    fig.supylabel("Mean accuracy", fontsize=15, x=0.052)
+    fig.text(0.018, 0.66, "Seed 42", rotation=90, ha="center", va="center",
+             fontsize=13)
+    fig.text(0.018, 0.285, "20-seed frequency", rotation=90,
+             ha="center", va="center", fontsize=13)
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     # Reserve a dedicated axis outside the four frontier columns.  Passing
     # ``ax=axes`` lets Matplotlib steal space unevenly and can overlap the last
     # panel once the manual paper layout is applied.
-    fig.subplots_adjust(left=0.07, right=0.88, bottom=0.10, top=0.82,
+    fig.subplots_adjust(left=0.09, right=0.88, bottom=0.12, top=0.78,
                         wspace=0.08, hspace=0.12)
     colorbar_ax = fig.add_axes([0.925, 0.18, 0.014, 0.57])
     colorbar = fig.colorbar(scalar, cax=colorbar_ax)
-    colorbar.set_label("Recommendation frequency (out of 20 seeds)")
+    colorbar.set_label("Recommendation frequency (out of 20 seeds)", fontsize=13)
     colorbar.set_ticks([1, 5, 10, 15, 20])
+    colorbar.ax.tick_params(labelsize=11.5)
     fig.suptitle(
         f"{LABELS[benchmark]}: single-run and 20-seed Pareto recommendations",
-        fontsize=15,
+        fontsize=18,
         y=0.975,
     )
     output_stem.parent.mkdir(parents=True, exist_ok=True)
@@ -245,6 +262,139 @@ def write_hv_comparison(data_dir: Path, output_path: Path) -> None:
         writer.writeheader(); writer.writerows(appended_rows)
 
 
+def _load_saved_run(path: Path):
+    with path.open("rb") as handle:
+        saved = pickle.load(handle)
+    return saved[0] if isinstance(saved, tuple) else saved
+
+
+def _checkpoint_metric_trajectory(run, field: str, archive_field: str):
+    truth, reference, ground_truth_hv = _gittins_hv_space(run)
+    xs = np.asarray(
+        [point.budget_fraction for point in run.recommendation_trajectory],
+        dtype=np.float64,
+    )
+    cache = {}
+    values = []
+    for point in run.recommendation_trajectory:
+        archive = tuple(getattr(point, archive_field))
+        if archive not in cache:
+            cache[archive] = _selected_metric(
+                truth, archive, ground_truth_hv, reference, field=field,
+            )
+        values.append(cache[archive])
+    ys = np.asarray(values, dtype=np.float64)
+    return xs, ys
+
+
+def write_distance_comparisons(data_dir: Path, outdir: Path) -> None:
+    """Backfill GD/IGD from saved archives and reuse the paper HV style."""
+    matched_seeds = sorted({
+        int(row["seed"])
+        for row in csv.DictReader((data_dir / "gittins_seed_results.csv").open())
+        if row["benchmark"].lower() == "hotpotqa"
+    })
+    if len(matched_seeds) != 20:
+        raise ValueError("expected exactly 20 matched seeds")
+
+    metric_specs = (
+        ("generational_distance", "Generational distance (GD)",
+         "all_methods_20seed_gd.png"),
+        ("inverted_generational_distance", "Inverted generational distance (IGD)",
+         "all_methods_20seed_igd.png"),
+    )
+    panels_by_metric = {field: [] for field, _, _ in metric_specs}
+    summary_rows = []
+
+    for benchmark in PICKLES:
+        models, datapoints, table = load_pickle(str(PICKLES[benchmark]))
+        random_results = run_budget_sweep(
+            models, datapoints, table, seeds=matched_seeds,
+        )
+        gittins_runs = [
+            _load_saved_run(data_dir / "raw_gittins" / f"{benchmark}_seed-{seed}.pkl")
+            for seed in matched_seeds
+        ]
+        ucb_runs = [
+            _load_saved_run(data_dir / "raw_ucb" / f"{benchmark}_seed-{seed}.pkl")
+            for seed in matched_seeds
+        ]
+        stop_mean = float(np.mean([
+            run.gittins_stop_cost_usd
+            / run.recommendation_trajectory[-1].cumulative_search_cost_usd
+            for run in gittins_runs
+        ]))
+
+        for field, _, _ in metric_specs:
+            deployable = _radial_regret_series([
+                _checkpoint_metric_trajectory(
+                    run, field, "online_raw_archive_arm_indices",
+                )
+                for run in gittins_runs
+            ])
+            provisional = _radial_regret_series([
+                _checkpoint_metric_trajectory(
+                    run, field, "posterior_archive_arm_indices",
+                )
+                for run in gittins_runs
+            ])
+            ucb = _radial_regret_series([
+                _checkpoint_metric_trajectory(
+                    run, field, "online_raw_archive_arm_indices",
+                )
+                for run in ucb_runs
+            ])
+            random = _random_regret_series(
+                random_results,
+                version="random_questions",
+                radial_by_seed={run.seed: run for run in gittins_runs},
+                x_axis="cost",
+                field=field,
+            )
+            panels_by_metric[field].append({
+                "name": LABELS[benchmark],
+                "stop_mean": stop_mean,
+                "deployable": deployable,
+                "provisional": provisional,
+                "ucb": ucb,
+                "random": [("random_questions", *random)],
+            })
+            for method, series in (
+                ("radial_gittins_deployable", deployable),
+                ("radial_gittins_provisional", provisional),
+                ("radial_ucb", ucb),
+            ):
+                for x, mean, two_se, count in zip(*series):
+                    summary_rows.append({
+                        "benchmark": LABELS[benchmark], "metric": field,
+                        "method": method, "cost_fraction": x, "mean": mean,
+                        "two_se": two_se, "n_runs": int(count),
+                    })
+            for x, mean, two_se in zip(*random):
+                summary_rows.append({
+                    "benchmark": LABELS[benchmark], "metric": field,
+                    "method": "random_questions", "cost_fraction": x,
+                    "mean": mean, "two_se": two_se, "n_runs": len(matched_seeds),
+                })
+
+    for field, ylabel, filename in metric_specs:
+        write_comparison_figure(
+            out_path=outdir / filename,
+            title="",
+            panels=panels_by_metric[field],
+            seeds=len(matched_seeds),
+            seed=matched_seeds[0],
+            x_axis="cost",
+            ylabel=ylabel,
+        )
+    with (data_dir / "all_method_gd_igd_summary.csv").open(
+        "w", newline="", encoding="utf-8",
+    ) as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(summary_rows[0]))
+        writer.writeheader()
+        writer.writerows(summary_rows)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path,
@@ -255,6 +405,7 @@ def main() -> None:
         plot_frontier_grid(benchmark, args.data_dir,
                            outdir / f"{benchmark}_2x4_frontier_comparison")
     write_hv_comparison(args.data_dir, outdir / "all_methods_20seed_hv_regret.png")
+    write_distance_comparisons(args.data_dir, outdir)
     print(f"wrote consolidated figures under {outdir}")
 
 
