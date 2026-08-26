@@ -12,7 +12,7 @@ from matplotlib.lines import Line2D
 
 
 ROOT = Path(__file__).resolve().parents[3]
-ETAS = (0.1, 0.2, 0.4, 0.7, 1.0)
+ETAS = (0.2, 0.4, 0.7, 1.0)
 BENCHMARKS = (("hotpotqa", "HotpotQA"), ("mathqa", "MathQA"))
 
 
@@ -177,7 +177,7 @@ def main() -> None:
              "at 100% observed cells"),
         )
         for stage_slug, recommendation_key, cost_key, stage_title in stages:
-            combined, axes = plt.subplots(len(ETAS), 2, figsize=(14.5, 23.5))
+            combined, axes = plt.subplots(len(ETAS), 2, figsize=(14.5, 4.7 * len(ETAS)))
             for row, eta in enumerate(ETAS):
                 for ax, (benchmark, title) in zip(axes[row], BENCHMARKS):
                     path = indir / "raw" / f"{benchmark}_eta-{slug(eta)}_seed-{args.seed}.npz"

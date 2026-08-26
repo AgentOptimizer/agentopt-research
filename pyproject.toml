@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentopt-research"
+description = "Research slice of agentopt: offline model-selection algorithms and benchmark replays"
+readme = "README.md"
+requires-python = ">=3.10"
+dynamic = ["version"]
+
+# ``import agentopt`` needs only these two. Every heavier selector dependency is
+# guarded by try/except in agentopt.model_selection and exposed as an extra.
+dependencies = [
+    "numpy>=1.24",
+    "pydantic>=2.1",
+]
+
+[project.optional-dependencies]
+# Accuracy-vs-cost radial Gittins (the main multi-objective protocol).
+radial = ["scipy>=1.10"]
+# Scalar Gittins index computation.
+gittins = ["jax>=0.4", "jaxtyping>=0.2", "torch>=2"]
+# Bayesian optimization selector.
+bayesian = ["botorch>=0.9", "gpytorch>=1.11", "torch>=2"]
+# Trajectory, sweep and comparison plots.
+plots = ["matplotlib>=3.6"]
+# Optional .env loading for the offline sims; skipped silently when absent.
+dotenv = ["python-dotenv>=1.0"]
+
+dev = [
+    "agentopt-research[radial,plots]",
+    "pytest>=7.4",
+]
+# Everything, including the multi-GB torch/jax stacks.
+all = [
+    "agentopt-research[radial,gittins,bayesian,plots,dotenv]",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+# Single source of truth: setuptools AST-reads the literal, so building does not
+# import agentopt (and does not need its runtime dependencies present).
+[tool.setuptools.dynamic]
+version = { attr = "agentopt.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# model_price.py resolves model_price.json relative to its own location, so the
+# JSON has to ship inside the package rather than as a source-tree-only file.
+[tool.setuptools.package-data]
+agentopt = ["py.typed", "model_price.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Tests import both ``agentopt`` (from src/) and ``experiments`` (from the repo
+# root), so bare ``pytest`` works without an editable install or PYTHONPATH.
+pythonpath = [".", "src"]

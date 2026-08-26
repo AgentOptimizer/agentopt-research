@@ -4,6 +4,13 @@
 The selector observes only cells it explicitly pulls from a frozen lookup
 table.  Full-matrix objective vectors are computed after selection only for
 evaluation metrics; they never enter calibration, indices, or stopping.
+
+Everything except the unfinished-arm index is shared infrastructure: the
+uniform warm start, the round-robin direction scheduler, the required-completion
+stopping convention, the budget guards, and the archive/hypervolume metrics.
+An alternative acquisition rule therefore only has to supply an
+``index_provider``; see :mod:`experiments.combined_objective.offline_radial_ucb`
+for the optimistic radial-UCB baseline built that way.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ import sys
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -94,21 +102,39 @@ class RadialArmSummary:
     is_oracle_raw_nondominated: bool = False
 
 
+PROVISIONAL_ARCHIVE_SCOPE = "provisional"
+DEPLOYABLE_ARCHIVE_SCOPE = "deployable"
+ARCHIVE_SCOPES = (PROVISIONAL_ARCHIVE_SCOPE, DEPLOYABLE_ARCHIVE_SCOPE)
+
+
 @dataclass(frozen=True)
 class RecommendationCheckpoint:
-    """Recommendation snapshot for budget-curve evaluation.
+    """One recorded recommendation and the arm scope that produced it.
 
-    The legacy fields through ``hypervolume_regret`` describe an all-posterior
-    provisional archive: every warm-started arm is eligible even when it is
-    unfinished.  They are retained for fixed-budget diagnostics and backwards
-    compatibility.
+    A checkpoint carries exactly one archive.  ``archive_scope`` states which
+    arms were eligible for it:
 
-    The explicit ``deployable_*`` fields repeat the winner and archive
-    calculation with only ``completed_arm_indices`` eligible.  This matches
-    the required-completion Gittins stopping contract and the final
-    ``RadialSimulationResult`` recommendation.  Full-data oracle fields are
-    diagnostic only and never affect acquisition, stopping, or either online
-    archive.
+    ``"provisional"``
+        Every warm-started arm, including unfinished ones.  This is the
+        fixed-budget diagnostic recorded before the policy stops, when the
+        required-completion contract has no recommendation to offer yet.
+
+    ``"deployable"``
+        Only ``completed_arm_indices``.  This matches the required-completion
+        stopping contract and the terminal ``RadialSimulationResult``
+        recommendation, and is the scope recorded from the endogenous stop
+        onward.
+
+    The scope switches at most once, so a trajectory is a provisional prefix
+    followed by a deployable suffix.  A run that finishes every arm without an
+    endogenous stop stays labelled provisional, where the two scopes coincide
+    because every arm is completed.  Full-data oracle fields are diagnostic
+    only and never affect acquisition, stopping, or the archive.
+
+    ``budget_fraction`` is the cost-aware share of brute-force search spend
+    (``cumulative_search_cost_usd / bruteforce_search_cost_usd``), not the
+    evaluation-count fraction.  Use ``cumulative_evaluations`` when the
+    question-budget axis is needed.
     """
 
     cumulative_evaluations: int
@@ -128,16 +154,15 @@ class RecommendationCheckpoint:
     hypervolume_regret: float
     event: str
     completed_arm_indices: Tuple[int, ...] = ()
-    deployable_direction_winner_arm_indices: Tuple[int, ...] = ()
-    deployable_estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...] = ()
-    deployable_posterior_archive_arm_indices: Tuple[int, ...] = ()
-    deployable_posterior_archive_models: Tuple[str, ...] = ()
-    deployable_online_raw_archive_arm_indices: Tuple[int, ...] = ()
-    deployable_online_raw_archive_models: Tuple[str, ...] = ()
-    deployable_oracle_raw_winner_archive_arm_indices: Tuple[int, ...] = ()
-    deployable_oracle_raw_winner_archive_models: Tuple[str, ...] = ()
-    deployable_hypervolume: float = 0.0
-    deployable_hypervolume_regret: float = 0.0
+    archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE
+
+    def __post_init__(self) -> None:
+        if self.archive_scope not in ARCHIVE_SCOPES:
+            raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
+
+    @property
+    def is_deployable(self) -> bool:
+        return self.archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
 
 
 @dataclass
@@ -184,6 +209,14 @@ class RadialSimulationResult:
 
 @dataclass(frozen=True)
 class DirectionVisitContext:
+    """State an acquisition rule may read when scoring one direction visit.
+
+    ``posteriors`` is a read-only view of the live shared posteriors, so it is
+    only valid during the visit it was created for.  ``effective_pull_costs``
+    holds the frozen per-arm continuation cost in normalized utility units,
+    which is the same quantity the boundary dynamic program consumes.
+    """
+
     global_step: int
     direction_index: int
     direction: Tuple[float, float]
@@ -192,6 +225,11 @@ class DirectionVisitContext:
     unfinished_arms: Tuple[int, ...]
     adaptive_pulls: Tuple[int, ...]
     model_names: Tuple[str, ...]
+    posteriors: Mapping[int, GaussianVectorPosterior] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    reference_point: Tuple[float, float] = (0.0, 0.0)
+    effective_pull_costs: Tuple[float, ...] = ()
 
 
 IndexProvider = Callable[[DirectionVisitContext, int], float]
@@ -315,6 +353,29 @@ def _sample_values(sample: SampleResult) -> Tuple[float, float, float]:
     if not math.isfinite(latency) or latency < 0.0:
         raise ValueError("lookup-table latencies must be finite and nonnegative")
     return score, cost, latency
+
+
+def _bruteforce_search_cost_usd(
+    models: Sequence[str],
+    available_by_arm: Mapping[int, Sequence[int]],
+    table: LookupTable,
+) -> float:
+    """Sum lookup-table deployment costs over every cell in the universe."""
+    total = 0.0
+    for arm_index, question_ids in available_by_arm.items():
+        model_data = table[models[arm_index]]
+        for question_id in question_ids:
+            sample = model_data.get(question_id)
+            if sample is None:
+                raise ValueError(
+                    f"missing lookup cell for model {models[arm_index]!r}, "
+                    f"question {question_id}"
+                )
+            _, cost, _ = _sample_values(sample)
+            total += cost
+    if not math.isfinite(total) or total <= 0.0:
+        raise ValueError("brute-force search cost must be finite and positive")
+    return float(total)
 
 
 def _best_index(indices: Mapping[int, float], tolerance: float) -> Tuple[Optional[int], float]:
@@ -620,26 +681,26 @@ def _recommendation_checkpoint(
     ground_truth_hv: float,
     total_evaluations: int,
     total_cost: float,
-    n_available: int,
+    bruteforce_search_cost_usd: float,
     event: str,
     completed_arms: Sequence[int] = (),
+    archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE,
 ) -> RecommendationCheckpoint:
-    provisional = _checkpoint_archive(
-        eligible_arms=tuple(sorted(posteriors)),
-        posteriors=posteriors,
-        directions=directions,
-        models=models,
-        reference_point=reference_point,
-        stop_tolerance=stop_tolerance,
-        truth_vectors=truth_vectors,
-        raw_truth_vectors=raw_truth_vectors,
-        observed_scores=observed_scores,
-        observed_costs=observed_costs,
-        ground_truth_hv=ground_truth_hv,
-    )
+    if archive_scope not in ARCHIVE_SCOPES:
+        raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
+    if (
+        not math.isfinite(bruteforce_search_cost_usd)
+        or bruteforce_search_cost_usd <= 0.0
+    ):
+        raise ValueError("bruteforce_search_cost_usd must be finite and positive")
     completed = tuple(int(i) for i in completed_arms)
-    deployable = _checkpoint_archive(
-        eligible_arms=completed,
+    eligible = (
+        completed
+        if archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
+        else tuple(sorted(posteriors))
+    )
+    archive = _checkpoint_archive(
+        eligible_arms=eligible,
         posteriors=posteriors,
         directions=directions,
         models=models,
@@ -654,53 +715,26 @@ def _recommendation_checkpoint(
     return RecommendationCheckpoint(
         cumulative_evaluations=int(total_evaluations),
         cumulative_search_cost_usd=float(total_cost),
-        budget_fraction=float(total_evaluations) / float(n_available),
-        selected_arm_indices=provisional.online_raw_archive_arm_indices,
-        selected_models=provisional.online_raw_archive_models,
-        direction_winner_arm_indices=provisional.direction_winner_arm_indices,
-        estimated_raw_winner_vectors=provisional.estimated_raw_winner_vectors,
-        posterior_archive_arm_indices=provisional.posterior_archive_arm_indices,
-        posterior_archive_models=provisional.posterior_archive_models,
-        online_raw_archive_arm_indices=(
-            provisional.online_raw_archive_arm_indices
-        ),
-        online_raw_archive_models=provisional.online_raw_archive_models,
+        budget_fraction=float(total_cost) / float(bruteforce_search_cost_usd),
+        selected_arm_indices=archive.online_raw_archive_arm_indices,
+        selected_models=archive.online_raw_archive_models,
+        direction_winner_arm_indices=archive.direction_winner_arm_indices,
+        estimated_raw_winner_vectors=archive.estimated_raw_winner_vectors,
+        posterior_archive_arm_indices=archive.posterior_archive_arm_indices,
+        posterior_archive_models=archive.posterior_archive_models,
+        online_raw_archive_arm_indices=archive.online_raw_archive_arm_indices,
+        online_raw_archive_models=archive.online_raw_archive_models,
         oracle_raw_winner_archive_arm_indices=(
-            provisional.oracle_raw_winner_archive_arm_indices
+            archive.oracle_raw_winner_archive_arm_indices
         ),
         oracle_raw_winner_archive_models=(
-            provisional.oracle_raw_winner_archive_models
+            archive.oracle_raw_winner_archive_models
         ),
-        hypervolume=provisional.hypervolume,
-        hypervolume_regret=provisional.hypervolume_regret,
+        hypervolume=archive.hypervolume,
+        hypervolume_regret=archive.hypervolume_regret,
         event=event,
         completed_arm_indices=completed,
-        deployable_direction_winner_arm_indices=(
-            deployable.direction_winner_arm_indices
-        ),
-        deployable_estimated_raw_winner_vectors=(
-            deployable.estimated_raw_winner_vectors
-        ),
-        deployable_posterior_archive_arm_indices=(
-            deployable.posterior_archive_arm_indices
-        ),
-        deployable_posterior_archive_models=(
-            deployable.posterior_archive_models
-        ),
-        deployable_online_raw_archive_arm_indices=(
-            deployable.online_raw_archive_arm_indices
-        ),
-        deployable_online_raw_archive_models=(
-            deployable.online_raw_archive_models
-        ),
-        deployable_oracle_raw_winner_archive_arm_indices=(
-            deployable.oracle_raw_winner_archive_arm_indices
-        ),
-        deployable_oracle_raw_winner_archive_models=(
-            deployable.oracle_raw_winner_archive_models
-        ),
-        deployable_hypervolume=deployable.hypervolume,
-        deployable_hypervolume_regret=deployable.hypervolume_regret,
+        archive_scope=archive_scope,
     )
 
 
@@ -812,6 +846,7 @@ def simulate_radial_gittins(
     ] = None,
     effective_cost_bin_ratio: Optional[float] = 2.0,
     effective_cost_bin_anchor: float = 1e-4,
+    boundary_z_padding_extra: float = 0.0,
     observation_budget_fraction: float = 1.0,
     max_total_question_evaluations: Optional[int] = None,
     max_search_cost_usd: Optional[float] = None,
@@ -821,12 +856,13 @@ def simulate_radial_gittins(
     history: Optional[List[Dict[str, Any]]] = None,
     run_metadata: Optional[Dict[str, Any]] = None,
     boundary_grid: Optional[RadialGittinsGrid] = None,
-    boundary_z_padding_extra: float = 0.0,
     boundary_cache: Optional[RadialGittinsBoundaryCache] = None,
     index_provider: Optional[IndexProvider] = None,
     question_universe: str = "common",
     halt_on_gittins_stop: bool = True,
     record_recommendation_trajectory: bool = False,
+    selector_name: str = "radial_gittins",
+    extra_params: Optional[Mapping[str, Any]] = None,
 ) -> RadialSimulationResult:
     """Replay the complete warm-start + round-robin radial-Gittins policy.
 
@@ -843,6 +879,12 @@ def simulate_radial_gittins(
     expected costs: a realized batch can overshoot the cap. Supplying
     ``guaranteed_batch_cost_usd`` makes the reservation a hard bound, and a
     replayed batch that violates the claimed bound raises an error.
+
+    Supplying ``index_provider`` replaces the boundary-table index for
+    unfinished arms, which is how alternative acquisition rules reuse this
+    replay. ``selector_name`` and ``extra_params`` then label the result so a
+    baseline is not reported as radial-Gittins. Boundary tables are never built
+    in that mode, so the DP grid and cache arguments are ignored.
     """
     wall_start = time.perf_counter()
     batch_size = _positive_integer(batch_size, "batch_size")
@@ -854,15 +896,15 @@ def simulate_radial_gittins(
         raise ValueError("datapoints must be nonempty and unique")
     if not math.isfinite(search_cost_scale_eta) or search_cost_scale_eta <= 0.0:
         raise ValueError("search_cost_scale_eta must be finite and positive")
-    if not 0.0 < observation_budget_fraction <= 1.0:
-        raise ValueError("observation_budget_fraction must lie in (0, 1]")
-    if not math.isfinite(stop_tolerance) or stop_tolerance < 0.0:
-        raise ValueError("stop_tolerance must be finite and nonnegative")
     if (
         not math.isfinite(boundary_z_padding_extra)
         or boundary_z_padding_extra < 0.0
     ):
         raise ValueError("boundary_z_padding_extra must be finite and nonnegative")
+    if not 0.0 < observation_budget_fraction <= 1.0:
+        raise ValueError("observation_budget_fraction must lie in (0, 1]")
+    if not math.isfinite(stop_tolerance) or stop_tolerance < 0.0:
+        raise ValueError("stop_tolerance must be finite and nonnegative")
     if (
         not math.isfinite(effective_cost_bin_anchor)
         or effective_cost_bin_anchor <= 0.0
@@ -927,6 +969,11 @@ def simulate_radial_gittins(
                 )
         evaluation_datapoints = tuple(int(x) for x in datapoints)
     n_available = sum(len(ids) for ids in available_by_arm.values())
+    bruteforce_search_cost_usd = _bruteforce_search_cost_usd(
+        models,
+        available_by_arm,
+        table,
+    )
 
     schedule = PerArmQuestionSchedule.create_from_available(
         available_by_arm,
@@ -1047,15 +1094,41 @@ def simulate_radial_gittins(
         existing = resolved_boundary_grids.get(key)
         if existing is not None:
             return existing
-        z_padding = max(1.0, horizon * effective_cost + 1.0)
-        z_padding += boundary_z_padding_extra
+        z_padding = (
+            max(1.0, horizon * effective_cost + 1.0)
+            + boundary_z_padding_extra
+        )
+        direction_array = np.asarray(direction, dtype=np.float64)
+        factors = float(np.max(direction_array)) / direction_array
+        scaled_lower = factors * (np.zeros(2) - reference_array)
+        scaled_upper = factors * (np.ones(2) - reference_array)
+        reachable_delta_min = float(scaled_lower[0] - scaled_upper[1])
+        reachable_delta_max = float(scaled_upper[0] - scaled_lower[1])
+        reachable_u_min = float(np.sum(scaled_lower) / 2.0)
+        reachable_u_max = float(np.sum(scaled_upper) / 2.0)
         # The base grid supplies resolution and a normal safety envelope.  It
-        # is expanded only when the mathematically required cumulative-cost
-        # band would exceed that envelope.
+        # is expanded when either the cumulative-cost band or an explicitly
+        # configured near-endpoint direction exceeds that envelope.
         expanded_base = replace(
             base_boundary_grid,
-            z_min=min(base_boundary_grid.z_min, -6.0 - z_padding),
-            z_max=max(base_boundary_grid.z_max, 6.0 + z_padding),
+            z_min=min(
+                base_boundary_grid.z_min,
+                -6.0 - z_padding,
+                reachable_u_min - z_padding,
+            ),
+            z_max=max(
+                base_boundary_grid.z_max,
+                6.0 + z_padding,
+                reachable_u_max + z_padding,
+            ),
+            delta_min=min(
+                base_boundary_grid.delta_min,
+                reachable_delta_min - 0.2,
+            ),
+            delta_max=max(
+                base_boundary_grid.delta_max,
+                reachable_delta_max + 0.2,
+            ),
         )
         resolved = direction_aware_grid(
             direction,
@@ -1171,6 +1244,15 @@ def simulate_radial_gittins(
             for i in range(n_arms)
             if adaptive_pulls[i] >= actual_horizons[i]
         )
+        # Nothing is deployable until the policy declares itself done: before
+        # the endogenous stop the required-completion contract cannot produce a
+        # recommendation, so the checkpoint records the all-posterior
+        # diagnostic instead of an empty archive.
+        archive_scope = (
+            DEPLOYABLE_ARCHIVE_SCOPE
+            if gittins_stop_evaluations is not None
+            else PROVISIONAL_ARCHIVE_SCOPE
+        )
         recommendation_trajectory.append(
             _recommendation_checkpoint(
                 posteriors=posteriors,
@@ -1185,9 +1267,10 @@ def simulate_radial_gittins(
                 ground_truth_hv=ground_truth_hv,
                 total_evaluations=total_evaluations,
                 total_cost=total_cost,
-                n_available=n_available,
+                bruteforce_search_cost_usd=bruteforce_search_cost_usd,
                 event=event,
                 completed_arms=completed_at_checkpoint,
+                archive_scope=archive_scope,
             )
         )
 
@@ -1245,6 +1328,11 @@ def simulate_radial_gittins(
             unfinished_arms=unfinished,
             adaptive_pulls=tuple(int(x) for x in adaptive_pulls),
             model_names=tuple(models),
+            posteriors=MappingProxyType(posteriors),
+            reference_point=resolved_reference,
+            effective_pull_costs=tuple(
+                float(x) for x in effective_pull_costs
+            ),
         )
         visit_counts[direction_index] += 1
 
@@ -1588,8 +1676,8 @@ def simulate_radial_gittins(
         "all_arms_completed",
     }
     gittins_stop_budget_fraction = (
-        float(gittins_stop_evaluations) / float(n_available)
-        if gittins_stop_evaluations is not None
+        float(gittins_stop_cost_usd) / float(bruteforce_search_cost_usd)
+        if gittins_stop_cost_usd is not None
         else None
     )
     if record_recommendation_trajectory:
@@ -1622,6 +1710,7 @@ def simulate_radial_gittins(
         "cost_reference_usd": calibration.cost_reference_usd,
         "reference_point": list(resolved_reference),
         "search_cost_scale_eta": search_cost_scale_eta,
+        "boundary_z_padding_extra": boundary_z_padding_extra,
         "expected_batch_costs_usd": expected_batch_costs.tolist(),
         "guaranteed_batch_costs_usd": (
             guaranteed_batch_costs.tolist()
@@ -1651,13 +1740,13 @@ def simulate_radial_gittins(
             else None
         ),
         "available_cells_in_universe": n_available,
+        "bruteforce_search_cost_usd": bruteforce_search_cost_usd,
         "planned_partial_tail_cells": planned_partial_tail_cells,
         "ragged_tail_cells_excluded": 0,
         "unobserved_cells_at_stop": int(
             sum(schedule.remaining(i) for i in range(n_arms))
         ),
         "boundary_grid_mode": boundary_grid_mode,
-        "boundary_z_padding_extra": boundary_z_padding_extra,
         "boundary_grids": [
             {
                 "direction": list(direction),
@@ -1669,9 +1758,22 @@ def simulate_radial_gittins(
                 resolved_boundary_grids.items()
             )
         ],
+        "acquisition": (
+            "radial_gittins_boundary_index"
+            if index_provider is None
+            else "external_index_provider"
+        ),
     }
+    if extra_params is not None:
+        overlapping = sorted(set(extra_params).intersection(params))
+        if overlapping:
+            raise ValueError(
+                "extra_params must not override replay params: "
+                f"{overlapping}"
+            )
+        params.update(dict(extra_params))
     result = RadialSimulationResult(
-        selector="radial_gittins",
+        selector=str(selector_name),
         seed=seed,
         params=params,
         selected_models=selected_models,
@@ -1743,8 +1845,13 @@ def summarize_radial_multi_seed(
 ) -> Dict[str, Any]:
     if not results:
         raise ValueError("at least one result is required")
+    selectors = {result.selector for result in results}
+    if len(selectors) != 1:
+        raise ValueError(
+            f"cannot summarize a mixture of selectors: {sorted(selectors)}"
+        )
     return {
-        "selector": "radial_gittins",
+        "selector": results[0].selector,
         "n_seeds": len(results),
         "mean_hypervolume_regret": float(
             np.mean([result.hypervolume_regret for result in results])
@@ -1776,7 +1883,7 @@ def summarize_radial_multi_seed(
 
 def print_radial_result(result: RadialSimulationResult) -> None:
     print(f"\n{'=' * 72}")
-    print(f"radial_gittins (seed={result.seed})")
+    print(f"{result.selector} (seed={result.seed})")
     print(f"stop={result.stop_reason}, C_ref=${result.cost_reference_usd:.6g}")
     print(
         f"evaluations={result.total_evaluations}, cost=${result.total_cost:.6f}, "

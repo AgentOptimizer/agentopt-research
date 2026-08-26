@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from typing import Dict, Sequence, Tuple, Union
 
 import numpy as np
@@ -32,18 +33,42 @@ def _two_vector(value: VectorLike, name: str, *, positive: bool) -> np.ndarray:
         array = np.repeat(array, 2)
     if array.shape != (2,):
         raise ValueError(f"{name} must be a scalar or a length-2 vector")
-    if not np.all(np.isfinite(array)):
+    # Scalar checks rather than numpy reductions: this is the innermost helper
+    # of the replay loop, where a two-element ``np.all`` costs more than the
+    # closed-form utility it is guarding.
+    first = float(array[0])
+    second = float(array[1])
+    if not (math.isfinite(first) and math.isfinite(second)):
         raise ValueError(f"{name} must contain only finite values")
-    if positive and np.any(array <= 0.0):
+    if positive and (first <= 0.0 or second <= 0.0):
         raise ValueError(f"{name} must be strictly positive")
     return array.copy()
 
 
 def _direction(value: VectorLike) -> np.ndarray:
     result = _two_vector(value, "direction", positive=True)
-    if not math.isclose(float(result.sum()), 1.0, rel_tol=1e-9, abs_tol=1e-9):
+    total = float(result[0]) + float(result[1])
+    if not math.isclose(total, 1.0, rel_tol=1e-9, abs_tol=1e-9):
         raise ValueError("direction components must sum to one")
     return result
+
+
+def _scaling_factors(direction_array: np.ndarray) -> np.ndarray:
+    """Return the direction-scaling vector ``max(direction) / direction``."""
+    largest = max(float(direction_array[0]), float(direction_array[1]))
+    return largest / direction_array
+
+
+@lru_cache(maxsize=512)
+def _regular_grid(lower: float, upper: float, size: int) -> np.ndarray:
+    """Return a shared read-only ``linspace``.
+
+    Grid axes are pure functions of the frozen grid settings and are re-read
+    on every boundary lookup, so rebuilding them each time is wasted work.
+    """
+    grid = np.linspace(lower, upper, size, dtype=np.float64)
+    grid.setflags(write=False)
+    return grid
 
 
 @dataclass(frozen=True)
@@ -97,28 +122,23 @@ class RadialGittinsGrid:
 
     @property
     def z_grid(self) -> np.ndarray:
-        return np.linspace(self.z_min, self.z_max, self.z_size, dtype=np.float64)
+        return _regular_grid(self.z_min, self.z_max, self.z_size)
 
     @property
     def delta_grid(self) -> np.ndarray:
-        return np.linspace(
-            self.delta_min,
-            self.delta_max,
-            self.delta_size,
-            dtype=np.float64,
-        )
+        return _regular_grid(self.delta_min, self.delta_max, self.delta_size)
 
     @property
     def x1_grid(self) -> np.ndarray:
         lower = self.z_min + self.delta_min / 2.0 - self.state_halo
         upper = self.z_max + self.delta_max / 2.0 + self.state_halo
-        return np.linspace(lower, upper, self.state_size, dtype=np.float64)
+        return _regular_grid(lower, upper, self.state_size)
 
     @property
     def x2_grid(self) -> np.ndarray:
         lower = self.z_min - self.delta_max / 2.0 - self.state_halo
         upper = self.z_max - self.delta_min / 2.0 + self.state_halo
-        return np.linspace(lower, upper, self.state_size, dtype=np.float64)
+        return _regular_grid(lower, upper, self.state_size)
 
 
 def direction_aware_grid(
@@ -153,7 +173,7 @@ def direction_aware_grid(
     if not math.isfinite(z_padding) or z_padding <= 0.0:
         raise ValueError("z_padding must be finite and positive")
 
-    factors = float(np.max(direction_array)) / direction_array
+    factors = _scaling_factors(direction_array)
     scaled_lower = factors * (lower - reference_array)
     scaled_upper = factors * (upper - reference_array)
     reachable_delta_min = float(scaled_lower[0] - scaled_upper[1])
@@ -253,7 +273,7 @@ def radial_posterior_coordinates(
     var_array = _two_vector(var, "var", positive=True)
     direction_array = _direction(direction)
     reference_array = _two_vector(reference, "reference", positive=False)
-    factors = float(np.max(direction_array)) / direction_array
+    factors = _scaling_factors(direction_array)
     scaled_means = factors * (mean_array - reference_array)
     scaled_var = factors * factors * var_array
     u = float((scaled_means[0] + scaled_means[1]) / 2.0)
@@ -296,7 +316,7 @@ def radial_transition_covariance(
         raise ValueError("next_var cannot exceed current_var")
     q = np.maximum(q, 0.0)
     direction_array = _direction(direction)
-    factors = float(np.max(direction_array)) / direction_array
+    factors = _scaling_factors(direction_array)
     scaled_q = factors * factors * q
     return np.array(
         [
@@ -552,47 +572,95 @@ def _boundary_from_q(
         method="linear",
         bounds_error=True,
     )
-    boundaries = np.empty(delta_grid.size, dtype=np.float64)
-    maximum_violation = 0.0
-    for delta_index, delta in enumerate(delta_grid):
-        points = np.column_stack(
-            (z_grid + delta / 2.0, z_grid - delta / 2.0)
-        )
-        line = np.asarray(interpolator(points), dtype=np.float64)
-        violation = max(0.0, -float(np.min(np.diff(line))))
-        maximum_violation = max(maximum_violation, violation)
-        if violation > monotonicity_tolerance:
-            raise BoundaryGridError(
-                "q(z, delta) is not numerically nondecreasing in z; "
-                f"violation {violation:.3g} exceeds {monotonicity_tolerance:.3g}"
-            )
-        nonnegative = np.flatnonzero(line >= 0.0)
-        if nonnegative.size == 0:
-            raise BoundaryGridError(
-                "no boundary root before z_max for "
-                f"delta={delta:.6g}; widen the z grid"
-            )
-        upper = int(nonnegative[0])
-        if upper == 0:
-            raise BoundaryGridError(
-                "boundary root is at or below z_min for "
-                f"delta={delta:.6g}; widen the z grid"
-            )
-        if upper < margin_cells or upper >= z_grid.size - margin_cells:
-            raise BoundaryGridError(
-                "boundary root is too close to a z-grid edge for "
-                f"delta={delta:.6g}"
-            )
-        lower = upper - 1
-        denominator = float(line[upper] - line[lower])
-        if denominator == 0.0:
-            boundaries[delta_index] = float(z_grid[upper])
-        else:
-            weight = -float(line[lower]) / denominator
-            boundaries[delta_index] = float(
-                z_grid[lower] + weight * (z_grid[upper] - z_grid[lower])
-            )
+    # One batched interpolation over the whole (delta, z) sheet. The per-delta
+    # call overhead of RegularGridInterpolator otherwise dominates the backward
+    # recursion by an order of magnitude over the Gaussian expectations that do
+    # the actual work.
+    half_delta = delta_grid[:, None] / 2.0
+    points = np.empty((delta_grid.size, z_grid.size, 2), dtype=np.float64)
+    points[:, :, 0] = z_grid[None, :] + half_delta
+    points[:, :, 1] = z_grid[None, :] - half_delta
+    lines = np.asarray(
+        interpolator(points.reshape(-1, 2)),
+        dtype=np.float64,
+    ).reshape(delta_grid.size, z_grid.size)
+
+    row_violations = np.maximum(0.0, -np.min(np.diff(lines, axis=1), axis=1))
+    maximum_violation = float(np.max(row_violations))
+    nonnegative = lines >= 0.0
+    has_root = nonnegative.any(axis=1)
+    upper = np.argmax(nonnegative, axis=1)
+
+    _reject_unusable_boundary_rows(
+        delta_grid,
+        z_grid,
+        row_violations=row_violations,
+        has_root=has_root,
+        upper=upper,
+        margin_cells=margin_cells,
+        monotonicity_tolerance=monotonicity_tolerance,
+    )
+
+    rows = np.arange(delta_grid.size)
+    lower = upper - 1
+    line_lower = lines[rows, lower]
+    denominator = lines[rows, upper] - line_lower
+    # A flat bracket puts the root at the upper node, which is weight one.
+    weight = np.divide(
+        -line_lower,
+        denominator,
+        out=np.ones_like(denominator),
+        where=denominator != 0.0,
+    )
+    boundaries = z_grid[lower] + weight * (z_grid[upper] - z_grid[lower])
     return boundaries, maximum_violation
+
+
+def _reject_unusable_boundary_rows(
+    delta_grid: np.ndarray,
+    z_grid: np.ndarray,
+    *,
+    row_violations: np.ndarray,
+    has_root: np.ndarray,
+    upper: np.ndarray,
+    margin_cells: int,
+    monotonicity_tolerance: float,
+) -> None:
+    """Raise for the first delta whose root search cannot be trusted."""
+    not_monotone = row_violations > monotonicity_tolerance
+    at_or_below_min = has_root & (upper == 0)
+    near_edge = (
+        has_root
+        & (upper != 0)
+        & ((upper < margin_cells) | (upper >= z_grid.size - margin_cells))
+    )
+    unusable = not_monotone | ~has_root | at_or_below_min | near_edge
+    if not unusable.any():
+        return
+    row = int(np.argmax(unusable))
+    delta = float(delta_grid[row])
+    if not_monotone[row]:
+        raise BoundaryGridError(
+            "q(z, delta) is not numerically nondecreasing in z; "
+            f"violation {float(row_violations[row]):.3g} exceeds "
+            f"{monotonicity_tolerance:.3g}"
+        )
+    if not has_root[row]:
+        raise BoundaryGridError(
+            f"no boundary root before z_max for delta={delta:.6g}; "
+            "widen the z grid"
+        )
+    if at_or_below_min[row]:
+        raise BoundaryGridError(
+            f"boundary root is at or below z_min for delta={delta:.6g}; "
+            "widen the z grid"
+        )
+    raise BoundaryGridError(
+        "boundary root is too close to a z-grid edge for "
+        f"delta={delta:.6g}: crossing_index={int(upper[row])}, "
+        f"required=[{margin_cells}, {z_grid.size - margin_cells}), "
+        f"z_range=[{z_grid[0]:.6g}, {z_grid[-1]:.6g}]"
+    )
 
 
 def build_radial_gittins_boundary_table(
@@ -618,7 +686,7 @@ def build_radial_gittins_boundary_table(
     z_grid = grid.z_grid
     delta_grid = grid.delta_grid
     variances = posterior_variance_schedule(initial, noise, horizon)
-    factors = float(np.max(direction_array)) / direction_array
+    factors = _scaling_factors(direction_array)
     x1_grid, x2_grid = _direction_aware_state_grids(
         grid,
         factors,

@@ -18,6 +18,22 @@ experiments/
 
 Proxy / daemon / live eval harness are stubbed or omitted; use the main `agentopt` package for online runs.
 
+## Setup
+
+Requires Python 3.10+. The offline sims evaluate `X | Y` annotations at runtime,
+so 3.9 fails on import.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"   # core + radial-Gittins + plots + pytest
+.venv/bin/python -m pytest          # no PYTHONPATH needed
+```
+
+`import agentopt` itself needs only `numpy` and `pydantic`. Heavier selector
+stacks are extras, matching the try/except guards in `agentopt.model_selection`:
+`radial` (scipy), `plots` (matplotlib), `gittins` (jax, jaxtyping, torch),
+`bayesian` (botorch, gpytorch), `dotenv`, and `all`.
+
 ## Quick access: per-combo metrics
 
 Use the brute-force CSVs (no dependencies):
