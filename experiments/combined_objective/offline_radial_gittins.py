@@ -7,7 +7,7 @@ evaluation metrics; they never enter calibration, indices, or stopping.
 
 Everything except the unfinished-arm index is shared infrastructure: the
 uniform warm start, the round-robin direction scheduler, the required-completion
-stopping convention, the budget guards, and the archive/hypervolume metrics.
+stopping convention, the budget guards, and the archive/hypervolume/GD/IGD metrics.
 An alternative acquisition rule therefore only has to supply an
 ``index_provider``; see :mod:`experiments.combined_objective.offline_radial_ucb`
 for the optimistic radial-UCB baseline built that way.
@@ -151,6 +151,8 @@ class RecommendationCheckpoint:
     oracle_raw_winner_archive_models: Tuple[str, ...]
     hypervolume: float
     hypervolume_regret: float
+    generational_distance: float
+    inverted_generational_distance: float
     event: str
     completed_arm_indices: Tuple[int, ...] = ()
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE
@@ -186,6 +188,8 @@ class RadialSimulationResult:
     hypervolume: float
     ground_truth_hypervolume: float
     hypervolume_regret: float
+    generational_distance: float
+    inverted_generational_distance: float
     contains_true_accuracy_best: bool
     model_results: List[RadialArmSummary] = field(default_factory=list)
     trace: List[Dict[str, Any]] = field(default_factory=list)
@@ -506,6 +510,104 @@ def hypervolume_2d(
     return float(area)
 
 
+def _front_points(points: np.ndarray) -> np.ndarray:
+    """Return *points* as a validated ``(n, 2)`` array, possibly empty."""
+    array = np.asarray(points, dtype=np.float64)
+    if array.size == 0:
+        return np.empty((0, 2), dtype=np.float64)
+    if array.ndim != 2 or array.shape[1] != 2:
+        raise ValueError("points must have shape (n, 2)")
+    if not np.all(np.isfinite(array)):
+        raise ValueError("points must be finite")
+    return array
+
+
+def _nondominated_front(points: np.ndarray) -> np.ndarray:
+    array = _front_points(points)
+    if array.shape[0] == 0:
+        return array
+    return array[nondominated_indices(array)]
+
+
+def _nearest_front_distances(points: np.ndarray, front: np.ndarray) -> np.ndarray:
+    """Euclidean distance from each row of *points* to the nearest row of *front*."""
+    delta = points[:, np.newaxis, :] - front[np.newaxis, :, :]
+    return np.sqrt(np.sum(delta * delta, axis=-1)).min(axis=1)
+
+
+def generational_distance(
+    obtained: np.ndarray,
+    reference_front: np.ndarray,
+) -> float:
+    """Mean distance from the obtained front to the ground-truth front.
+
+    Both arguments are points in the same maximization space used by
+    :func:`hypervolume_2d` (normalized desirability).  Dominated obtained
+    points are dropped first.  The reported value is
+
+    ``GD(A, P*) = (1/|A|) sum_{a in A} min_{z in P*} ||a - z||_2``.
+
+    This is zero when every obtained point lies on the reference front, even
+    if the archive is only a subset of that front.  An empty obtained set is
+    ``+inf`` unless the reference front is also empty.
+    """
+    obtained_front = _nondominated_front(obtained)
+    truth_front = _nondominated_front(reference_front)
+    if obtained_front.shape[0] == 0:
+        return 0.0 if truth_front.shape[0] == 0 else math.inf
+    if truth_front.shape[0] == 0:
+        return math.inf
+    return float(np.mean(_nearest_front_distances(obtained_front, truth_front)))
+
+
+def inverted_generational_distance(
+    obtained: np.ndarray,
+    reference_front: np.ndarray,
+) -> float:
+    """Mean distance from the ground-truth front to the obtained front.
+
+    ``IGD(A, P*) = (1/|P*|) sum_{z in P*} min_{a in A} ||z - a||_2``.
+
+    Unlike GD, a missing region of the true front increases IGD even when
+    every returned point is itself Pareto optimal.  An empty obtained set is
+    ``+inf`` unless the reference front is also empty.
+    """
+    obtained_front = _nondominated_front(obtained)
+    truth_front = _nondominated_front(reference_front)
+    if truth_front.shape[0] == 0:
+        return 0.0
+    if obtained_front.shape[0] == 0:
+        return math.inf
+    return float(np.mean(_nearest_front_distances(truth_front, obtained_front)))
+
+
+@dataclass(frozen=True)
+class FrontQualityMetrics:
+    hypervolume: float
+    hypervolume_regret: float
+    generational_distance: float
+    inverted_generational_distance: float
+
+
+def front_quality_metrics(
+    selected_points: np.ndarray,
+    reference_front: np.ndarray,
+    reference_point: Sequence[float],
+    ground_truth_hv: float,
+) -> FrontQualityMetrics:
+    """Score one archive against the ground-truth desirability front."""
+    selected = _front_points(selected_points)
+    selected_hv = hypervolume_2d(selected, reference_point)
+    return FrontQualityMetrics(
+        hypervolume=float(selected_hv),
+        hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
+        generational_distance=generational_distance(selected, reference_front),
+        inverted_generational_distance=inverted_generational_distance(
+            selected, reference_front
+        ),
+    )
+
+
 def provisional_direction_winner_arms(
     *,
     posteriors: Mapping[int, GaussianVectorPosterior],
@@ -582,6 +684,8 @@ class _CheckpointArchive:
     oracle_raw_winner_archive_models: Tuple[str, ...]
     hypervolume: float
     hypervolume_regret: float
+    generational_distance: float
+    inverted_generational_distance: float
 
 
 def _checkpoint_archive(
@@ -643,7 +747,17 @@ def _checkpoint_archive(
         if online_raw_archive_arms
         else np.empty((0, 2), dtype=np.float64)
     )
-    selected_hv = hypervolume_2d(selected_truth, reference_point)
+    truth_front = (
+        truth_vectors[nondominated_indices(truth_vectors)]
+        if truth_vectors.size
+        else np.empty((0, 2), dtype=np.float64)
+    )
+    quality = front_quality_metrics(
+        selected_truth,
+        truth_front,
+        reference_point,
+        ground_truth_hv,
+    )
     return _CheckpointArchive(
         direction_winner_arm_indices=tuple(winner_arms),
         estimated_raw_winner_vectors=tuple(
@@ -661,8 +775,10 @@ def _checkpoint_archive(
         oracle_raw_winner_archive_models=tuple(
             models[i] for i in oracle_raw_archive_arms
         ),
-        hypervolume=float(selected_hv),
-        hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
+        hypervolume=quality.hypervolume,
+        hypervolume_regret=quality.hypervolume_regret,
+        generational_distance=quality.generational_distance,
+        inverted_generational_distance=quality.inverted_generational_distance,
     )
 
 
@@ -731,6 +847,8 @@ def _recommendation_checkpoint(
         ),
         hypervolume=archive.hypervolume,
         hypervolume_regret=archive.hypervolume_regret,
+        generational_distance=archive.generational_distance,
+        inverted_generational_distance=archive.inverted_generational_distance,
         event=event,
         completed_arm_indices=completed,
         archive_scope=archive_scope,
@@ -1686,7 +1804,13 @@ def simulate_radial_gittins(
         if archive_arms
         else np.empty((0, 2), dtype=np.float64)
     )
-    selected_hv = hypervolume_2d(selected_truth, resolved_reference)
+    quality = front_quality_metrics(
+        selected_truth,
+        truth_front,
+        resolved_reference,
+        ground_truth_hv,
+    )
+    selected_hv = quality.hypervolume
     if selected_hv > ground_truth_hv + max(stop_tolerance, 1e-12):
         raise RuntimeError(
             "selected-set hypervolume exceeds the full ground-truth front; "
@@ -1791,7 +1915,9 @@ def simulate_radial_gittins(
         stopped_by_gittins=stopped_by_gittins,
         hypervolume=selected_hv,
         ground_truth_hypervolume=ground_truth_hv,
-        hypervolume_regret=max(0.0, ground_truth_hv - selected_hv),
+        hypervolume_regret=quality.hypervolume_regret,
+        generational_distance=quality.generational_distance,
+        inverted_generational_distance=quality.inverted_generational_distance,
         contains_true_accuracy_best=bool(
             truth_accuracy_best.intersection(archive_arm_set)
         ),
@@ -1839,6 +1965,11 @@ def simulate_radial_gittins(
     return result
 
 
+def _json_mean(values: Sequence[float]) -> Optional[float]:
+    mean = float(np.mean(np.asarray(list(values), dtype=np.float64)))
+    return mean if math.isfinite(mean) else None
+
+
 def summarize_radial_multi_seed(
     results: Sequence[RadialSimulationResult],
 ) -> Dict[str, Any]:
@@ -1854,6 +1985,12 @@ def summarize_radial_multi_seed(
         "n_seeds": len(results),
         "mean_hypervolume_regret": float(
             np.mean([result.hypervolume_regret for result in results])
+        ),
+        "mean_generational_distance": _json_mean(
+            [result.generational_distance for result in results]
+        ),
+        "mean_inverted_generational_distance": _json_mean(
+            [result.inverted_generational_distance for result in results]
         ),
         "mean_returned_cardinality": float(
             np.mean([len(result.selected_models) for result in results])
@@ -1886,7 +2023,9 @@ def print_radial_result(result: RadialSimulationResult) -> None:
     print(f"stop={result.stop_reason}, C_ref=${result.cost_reference_usd:.6g}")
     print(
         f"evaluations={result.total_evaluations}, cost=${result.total_cost:.6f}, "
-        f"HV regret={result.hypervolume_regret:.6f}"
+        f"HV regret={result.hypervolume_regret:.6f}, "
+        f"GD={result.generational_distance:.6f}, "
+        f"IGD={result.inverted_generational_distance:.6f}"
     )
     if result.params["max_search_cost_usd"] is not None:
         print(
