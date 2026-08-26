@@ -581,7 +581,9 @@ def _boundary_from_q(
         if upper < margin_cells or upper >= z_grid.size - margin_cells:
             raise BoundaryGridError(
                 "boundary root is too close to a z-grid edge for "
-                f"delta={delta:.6g}"
+                f"delta={delta:.6g}: crossing_index={upper}, "
+                f"required=[{margin_cells}, {z_grid.size - margin_cells}), "
+                f"z_range=[{z_grid[0]:.6g}, {z_grid[-1]:.6g}]"
             )
         lower = upper - 1
         denominator = float(line[upper] - line[lower])
