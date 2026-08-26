@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from experiments.combined_objective.offline_multiobjective_random_search import (  # noqa: E402
@@ -109,12 +109,12 @@ def plot_contact_sheet(
         correct = sorted(selected_indices & true_front_indices)
         false_positive = sorted(selected_indices - true_front_indices)
         missed = sorted(true_front_indices - selected_indices)
-        ax.scatter(truth[:, 1], truth[:, 0], s=8, color="#c5cad3", alpha=0.55)
+        ax.scatter(truth[:, 1], truth[:, 0], s=30, color="#c5cad3", alpha=0.55)
         ax.plot(true_front[:, 1], true_front[:, 0], color="#626b78", linewidth=1.0)
         for indices, color, marker, size in (
-            (correct, "#2f855a", "*", 38),
-            (false_positive, "#1f4e79", "s", 24),
-            (missed, "#c45c26", "D", 22),
+            (correct, "#2f855a", "*", 230),
+            (false_positive, "#1f4e79", "s", 75),
+            (missed, "#c45c26", "D", 70),
         ):
             if indices:
                 points = truth[indices]
@@ -224,6 +224,17 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--summary-seeds", type=int, default=50)
     parser.add_argument(
+        "--contact-sheet-only",
+        action="store_true",
+        help="Write one seed/version contact sheet per selected benchmark.",
+    )
+    parser.add_argument(
+        "--version",
+        choices=VERSIONS,
+        default="random_configurations",
+        help="Random protocol used with --contact-sheet-only.",
+    )
+    parser.add_argument(
         "--benchmarks", nargs="+", choices=tuple(BENCHMARK_PICKLES),
         default=list(BENCHMARK_PICKLES),
     )
@@ -234,9 +245,29 @@ def main() -> None:
     for benchmark in args.benchmarks:
         models, datapoints, table = load_pickle(str(BENCHMARK_PICKLES[benchmark]))
         plot_results = run_budget_sweep(
-            models, datapoints, table, seeds=(args.seed,),
+            models,
+            datapoints,
+            table,
+            versions=(args.version,) if args.contact_sheet_only else VERSIONS,
+            seeds=(args.seed,),
         )
         benchmark_dir = outdir / benchmark
+        if args.contact_sheet_only:
+            plot_contact_sheet(
+                plot_results,
+                benchmark=benchmark,
+                version=args.version,
+                output_path=(
+                    benchmark_dir
+                    / args.version
+                    / f"seed-{args.seed}_contact_sheet.png"
+                ),
+            )
+            print(
+                benchmark_dir / args.version
+                / f"seed-{args.seed}_contact_sheet.png"
+            )
+            continue
         for result in plot_results:
             percent = int(round(100 * result.budget_fraction))
             plot_snapshot(
@@ -270,11 +301,12 @@ def main() -> None:
         summary_by_benchmark[benchmark] = summary_results
         print(f"wrote {benchmark_dir}")
 
-    plot_combined_regret_curves(
-        summary_by_benchmark,
-        outdir / "hv_regret_curves.png",
-    )
-    print(f"wrote {outdir / 'hv_regret_curves.png'}")
+    if not args.contact_sheet_only:
+        plot_combined_regret_curves(
+            summary_by_benchmark,
+            outdir / "hv_regret_curves.png",
+        )
+        print(f"wrote {outdir / 'hv_regret_curves.png'}")
 
 
 if __name__ == "__main__":

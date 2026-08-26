@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -24,7 +25,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
@@ -38,7 +39,7 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
     RadialSimulationResult,
     hypervolume_2d,
 )
-from experiments.combined_objective.plot_radial_gittins_trajectories import (  # noqa: E402
+from experiments.combined_objective.plot.plot_radial_gittins_trajectories import (  # noqa: E402
     run_benchmark,
 )
 
@@ -238,10 +239,21 @@ def write_comparison_figure(
     seeds: int,
     seed: int,
     x_axis: str,
+    gittins_seeds: int | None = None,
 ) -> None:
-    figure, axes = plt.subplots(1, 2, figsize=(11.5, 4.2), sharey=False)
-    for ax, panel in zip(axes, panels):
-        _draw_stop_markers(ax, panel["stop_mean"], seeds)
+    resolved_gittins_seeds = seeds if gittins_seeds is None else gittins_seeds
+    ncols = 2 if len(panels) <= 2 else 3
+    nrows = math.ceil(len(panels) / ncols)
+    figure, axes = plt.subplots(
+        nrows,
+        ncols,
+        figsize=(5.75 * ncols, 4.2 * nrows),
+        sharey=False,
+        squeeze=False,
+    )
+    flat_axes = axes.ravel()
+    for ax, panel in zip(flat_axes, panels):
+        _draw_stop_markers(ax, panel["stop_mean"], resolved_gittins_seeds)
         deployable_x, deployable_y, deployable_ci95, _ = panel["deployable"]
         provisional_x, provisional_y, provisional_ci95, _ = panel["provisional"]
         deployable_x, deployable_y, deployable_ci95 = _post_stop_series(
@@ -258,8 +270,11 @@ def write_comparison_figure(
             color="#1f4e79",
             label=(
                 "deployable completed-only (post-stop)"
-                if seeds == 1
-                else f"deployable completed-only post-stop (mean, n={seeds})"
+                if resolved_gittins_seeds == 1
+                else (
+                    "deployable completed-only post-stop "
+                    f"(mean, n={resolved_gittins_seeds})"
+                )
             ),
             zorder=3,
         )
@@ -275,7 +290,7 @@ def write_comparison_figure(
                 zorder=5,
                 label=(
                     f"deployable regret at stop ({deployable_y[0]:.4f})"
-                    if seeds == 1
+                    if resolved_gittins_seeds == 1
                     else f"mean deployable regret at stop ({deployable_y[0]:.4f})"
                 ),
             )
@@ -317,6 +332,8 @@ def write_comparison_figure(
         ax.set_ylim(bottom=0.0)
         ax.grid(True, alpha=0.3)
         ax.legend(loc="upper right", fontsize=7.5)
+    for ax in flat_axes[len(panels):]:
+        ax.remove()
     figure.suptitle(title, fontsize=13)
     figure.tight_layout()
     figure.savefig(out_path, dpi=160, bbox_inches="tight")

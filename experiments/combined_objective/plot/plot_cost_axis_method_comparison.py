@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 RADIAL_DIR = ROOT / "analysis/vs/radial_gittins"
 RANDOM_DIR = ROOT / "analysis/vs/random_search"
 OUTDIR = ROOT / "analysis/vs/method_comparison_cost_axis"

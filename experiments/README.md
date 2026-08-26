@@ -126,7 +126,7 @@ fewer than `batch_size` questions remain; Gittins tables still plan every stage
 as a full batch. `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
 
-`combined_objective/plot_radial_gittins_trajectories.py` writes separate completed-only deployable
+`combined_objective/plot/plot_radial_gittins_trajectories.py` writes separate completed-only deployable
 and all-posterior provisional raw-archive comparisons for each benchmark. Its
 main hypervolume series is the completed-only recommendation, drawn only from
 the endogenous Gittins stop onward and marked with the single stop-time point,
@@ -139,8 +139,8 @@ outcomes back into the selector. The replay after the marked endogenous stop
 is forced only to show counterfactual later-budget diagnostics; it is not the
 policy's terminal output.
 
-`combined_objective/plot_multiobjective_random_search.py` plots the random-search
-budget sweep and `combined_objective/plot_multiobjective_method_comparison.py`
+`combined_objective/plot/plot_multiobjective_random_search.py` plots the random-search
+budget sweep and `combined_objective/plot/plot_multiobjective_method_comparison.py`
 plots radial-Gittins against it. `combined_objective/audit_multiobjective_results.py`
 re-checks dominance, distance to the front and hypervolume against the
 brute-force frontier.

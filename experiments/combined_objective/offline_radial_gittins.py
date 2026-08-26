@@ -821,6 +821,7 @@ def simulate_radial_gittins(
     history: Optional[List[Dict[str, Any]]] = None,
     run_metadata: Optional[Dict[str, Any]] = None,
     boundary_grid: Optional[RadialGittinsGrid] = None,
+    boundary_z_padding_extra: float = 0.0,
     boundary_cache: Optional[RadialGittinsBoundaryCache] = None,
     index_provider: Optional[IndexProvider] = None,
     question_universe: str = "common",
@@ -857,6 +858,11 @@ def simulate_radial_gittins(
         raise ValueError("observation_budget_fraction must lie in (0, 1]")
     if not math.isfinite(stop_tolerance) or stop_tolerance < 0.0:
         raise ValueError("stop_tolerance must be finite and nonnegative")
+    if (
+        not math.isfinite(boundary_z_padding_extra)
+        or boundary_z_padding_extra < 0.0
+    ):
+        raise ValueError("boundary_z_padding_extra must be finite and nonnegative")
     if (
         not math.isfinite(effective_cost_bin_anchor)
         or effective_cost_bin_anchor <= 0.0
@@ -1042,6 +1048,7 @@ def simulate_radial_gittins(
         if existing is not None:
             return existing
         z_padding = max(1.0, horizon * effective_cost + 1.0)
+        z_padding += boundary_z_padding_extra
         # The base grid supplies resolution and a normal safety envelope.  It
         # is expanded only when the mathematically required cumulative-cost
         # band would exceed that envelope.
@@ -1650,6 +1657,7 @@ def simulate_radial_gittins(
             sum(schedule.remaining(i) for i in range(n_arms))
         ),
         "boundary_grid_mode": boundary_grid_mode,
+        "boundary_z_padding_extra": boundary_z_padding_extra,
         "boundary_grids": [
             {
                 "direction": list(direction),
