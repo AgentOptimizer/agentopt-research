@@ -1089,6 +1089,8 @@ Plot against:
 
 - returned-set cardinality (expect around 3);
 - full returned archive hypervolume;
+- generational distance (GD) and inverted generational distance (IGD) of the
+  returned archive vs the ground-truth desirability front;
 - number of distinct directional winners;
 - number of nondominated returned configurations;
 - fraction of directions currently stopped;

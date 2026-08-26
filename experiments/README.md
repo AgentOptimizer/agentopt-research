@@ -115,7 +115,8 @@ are an explicitly reported speed/accuracy approximation for larger sweeps.
 
 `combined_objective/plot_radial_gittins_trajectories.py` writes one raw-archive
 comparison per benchmark, with each snapshot panel labelled by the scope its
-checkpoint recorded. Its hypervolume series is a single trajectory: a dashed
+checkpoint recorded. Its hypervolume, generational-distance, and inverted-generational-distance
+series are each a single trajectory: a dashed
 all-posterior diagnostic before the endogenous Gittins stop and the solid
 completed-only recommendation from the stop onward, with the handover marked,
 because the deployable archive is not a recommendation before the policy
@@ -129,7 +130,7 @@ policy's terminal output.
 `combined_objective/plot_multiobjective_random_search.py` plots the random-search
 budget sweep and `combined_objective/plot_multiobjective_method_comparison.py`
 plots radial-Gittins against it. `combined_objective/audit_multiobjective_results.py`
-re-checks dominance, distance to the front and hypervolume against the
+re-checks dominance, distance to the front, hypervolume, GD and IGD against the
 brute-force frontier.
 
 `--budget-fraction` is a fraction of question cells, not dollars. A

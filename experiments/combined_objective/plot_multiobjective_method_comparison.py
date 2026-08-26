@@ -36,7 +36,8 @@ from experiments.combined_objective.offline_multiobjective_random_search import 
 )
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
     RadialSimulationResult,
-    hypervolume_2d,
+    front_quality_metrics,
+    nondominated_indices,
 )
 from experiments.combined_objective.plot_radial_gittins_trajectories import (  # noqa: E402
     run_benchmark,
@@ -70,18 +71,45 @@ def _gittins_hv_space(
     )
 
 
+def _selected_metric(
+    truth_vectors: np.ndarray,
+    selected_indices: Sequence[int],
+    ground_truth_hv: float,
+    reference: Sequence[float],
+    field: str = "hypervolume_regret",
+) -> float:
+    selected = (
+        truth_vectors[list(selected_indices)]
+        if selected_indices
+        else np.empty((0, 2), dtype=np.float64)
+    )
+    truth_front = (
+        truth_vectors[nondominated_indices(truth_vectors)]
+        if truth_vectors.size
+        else np.empty((0, 2), dtype=np.float64)
+    )
+    quality = front_quality_metrics(
+        selected,
+        truth_front,
+        reference,
+        ground_truth_hv,
+    )
+    return float(getattr(quality, field))
+
+
 def _selected_regret(
     truth_vectors: np.ndarray,
     selected_indices: Sequence[int],
     ground_truth_hv: float,
     reference: Sequence[float],
 ) -> float:
-    selected_hv = (
-        hypervolume_2d(truth_vectors[list(selected_indices)], reference)
-        if selected_indices
-        else 0.0
+    return _selected_metric(
+        truth_vectors,
+        selected_indices,
+        ground_truth_hv,
+        reference,
+        field="hypervolume_regret",
     )
-    return float(max(0.0, ground_truth_hv - selected_hv))
 
 
 def _random_regret_series(
@@ -90,6 +118,7 @@ def _random_regret_series(
     version: str,
     radial_by_seed: Dict[int, RadialSimulationResult],
     x_axis: str,
+    field: str = "hypervolume_regret",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     grouped: Dict[float, list[float]] = defaultdict(list)
     grouped_x: Dict[float, list[float]] = defaultdict(list)
@@ -104,11 +133,12 @@ def _random_regret_series(
         radial = radial_by_seed[result.seed]
         truth_vectors, reference, ground_truth_hv = _gittins_hv_space(radial)
         grouped[result.budget_fraction].append(
-            _selected_regret(
+            _selected_metric(
                 truth_vectors,
                 result.selected_arm_indices,
                 ground_truth_hv,
                 reference,
+                field=field,
             )
         )
         grouped_x[result.budget_fraction].append(
@@ -238,6 +268,7 @@ def write_comparison_figure(
     seeds: int,
     seed: int,
     x_axis: str,
+    ylabel: str = "Normalized-desirability hypervolume regret",
 ) -> None:
     figure, axes = plt.subplots(1, 2, figsize=(11.5, 4.2), sharey=False)
     for ax, panel in zip(axes, panels):
@@ -312,7 +343,7 @@ def write_comparison_figure(
             if x_axis == "cost"
             else "Observed cell-budget fraction"
         )
-        ax.set_ylabel("Normalized-desirability hypervolume regret")
+        ax.set_ylabel(ylabel)
         ax.set_xlim(0.0, 1.02)
         ax.set_ylim(bottom=0.0)
         ax.grid(True, alpha=0.3)

@@ -1,4 +1,5 @@
 import json
+import math
 import unittest
 from unittest import mock
 
@@ -8,7 +9,9 @@ from agentopt.model_selection.radial_gittins_dp import RadialGittinsGrid
 from experiments.combined_objective import offline_radial_gittins as radial_replay
 from experiments.combined_objective.offline_radial_gittins import (
     _jsonable_result,
+    generational_distance,
     hypervolume_2d,
+    inverted_generational_distance,
     nondominated_indices,
     raw_archive_arm_indices,
     raw_nondominated_indices,
@@ -68,6 +71,46 @@ class ParetoMetricTests(unittest.TestCase):
         points = np.array([[0.5, 1.0], [1.0, 0.5]])
         self.assertAlmostEqual(hypervolume_2d(points), 0.75)
 
+    def test_gd_and_igd_are_zero_on_the_identical_front(self):
+        front = np.array([[0.5, 0.9], [0.8, 0.6]])
+        self.assertAlmostEqual(generational_distance(front, front), 0.0)
+        self.assertAlmostEqual(inverted_generational_distance(front, front), 0.0)
+
+    def test_gd_is_zero_for_a_subset_but_igd_penalizes_the_gap(self):
+        true_front = np.array([[0.0, 1.0], [1.0, 0.0]])
+        obtained = np.array([[0.0, 1.0]])
+        self.assertAlmostEqual(generational_distance(obtained, true_front), 0.0)
+        self.assertAlmostEqual(
+            inverted_generational_distance(obtained, true_front),
+            math.sqrt(2.0) / 2.0,
+        )
+
+    def test_gd_is_the_mean_distance_to_the_true_front(self):
+        true_front = np.array([[0.0, 1.0], [1.0, 0.0]])
+        obtained = np.array([[0.0, 0.0]])
+        self.assertAlmostEqual(generational_distance(obtained, true_front), 1.0)
+        self.assertAlmostEqual(
+            inverted_generational_distance(obtained, true_front),
+            1.0,
+        )
+
+    def test_dominated_extra_points_do_not_change_gd_or_igd(self):
+        true_front = np.array([[0.0, 1.0], [1.0, 0.0]])
+        obtained = np.array([[0.0, 1.0], [0.0, 0.0]])
+        self.assertAlmostEqual(generational_distance(obtained, true_front), 0.0)
+        self.assertAlmostEqual(
+            inverted_generational_distance(obtained, true_front),
+            inverted_generational_distance(true_front[:1], true_front),
+        )
+
+    def test_empty_obtained_front_is_infinite(self):
+        front = np.array([[0.5, 0.9]])
+        empty = np.empty((0, 2))
+        self.assertTrue(math.isinf(generational_distance(empty, front)))
+        self.assertTrue(math.isinf(inverted_generational_distance(empty, front)))
+        self.assertEqual(generational_distance(empty, empty), 0.0)
+        self.assertEqual(inverted_generational_distance(empty, empty), 0.0)
+
     def test_raw_nondominance_maximizes_accuracy_and_minimizes_cost(self):
         points = np.array(
             [
@@ -105,6 +148,8 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertAlmostEqual(result.cost_reference_usd, 0.01)
         np.testing.assert_allclose(result.prior_mean, (0.6, 0.5125))
         self.assertEqual(result.selected_models, ["C", "B", "A"])
+        self.assertAlmostEqual(result.generational_distance, 0.0)
+        self.assertAlmostEqual(result.inverted_generational_distance, 0.0)
         self.assertEqual(
             [winner.model_name for winner in result.direction_winners],
             ["C", "B", "A"],
@@ -671,6 +716,8 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(result.selected_models, ["A"])
         self.assertEqual(result.hypervolume, 0.0)
         self.assertEqual(result.ground_truth_hypervolume, 0.0)
+        self.assertEqual(result.generational_distance, 0.0)
+        self.assertEqual(result.inverted_generational_distance, 0.0)
 
     def test_any_tied_accuracy_best_counts_as_contained(self):
         models = ["A", "B"]

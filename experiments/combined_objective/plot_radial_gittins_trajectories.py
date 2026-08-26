@@ -4,8 +4,8 @@
 Runs HotpotQA / MathQA offline replay at budget fraction 1.0, continues past
 the endogenous Gittins stop so the trajectory covers later budgets, and writes:
 
-* one HV regret curve per benchmark against cumulative search cost as a
-  fraction of brute-force spend, dashed while the trajectory is the
+* one HV-regret, GD, and IGD curve per benchmark against cumulative search
+  cost as a fraction of brute-force spend, dashed while the trajectory is the
   all-posterior provisional diagnostic and solid once it becomes the
   completed-only deployable recommendation at the Gittins stop;
 * a raw-archive comparison at the Gittins stop, at 50% of brute-force search
@@ -30,6 +30,27 @@ from typing import Dict, List, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
+
+
+def _save_rgb_png(figure, output_path: Path, *, dpi: int = 160) -> None:
+    """Write an opaque RGB PNG. RGBA files fail Cursor's image preview."""
+    from io import BytesIO
+
+    output_path = Path(output_path)
+    buffer = BytesIO()
+    figure.savefig(
+        buffer,
+        format="png",
+        dpi=dpi,
+        bbox_inches="tight",
+        facecolor="white",
+        edgecolor="none",
+        transparent=False,
+    )
+    buffer.seek(0)
+    Image.open(buffer).convert("RGB").save(output_path, format="PNG")
+    print(f"wrote {output_path}")
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
@@ -165,9 +186,126 @@ def run_benchmark(
     return result, raw_vectors, eval_dps
 
 
+TRAJECTORY_METRICS = (
+    {
+        "field": "hypervolume_regret",
+        "ylabel": "Normalized-desirability hypervolume regret",
+        "handover": "deployable HV regret at handover",
+        "filename": "hv_regret_curves.png",
+    },
+    {
+        "field": "generational_distance",
+        "ylabel": "Generational distance (GD)",
+        "handover": "deployable GD at handover",
+        "filename": "gd_curves.png",
+    },
+    {
+        "field": "inverted_generational_distance",
+        "ylabel": "Inverted generational distance (IGD)",
+        "handover": "deployable IGD at handover",
+        "filename": "igd_curves.png",
+    },
+)
+
+
+def _plot_scope_series(
+    ax,
+    result: RadialSimulationResult,
+    *,
+    field: str,
+    ylabel: str,
+    handover_label: str,
+    show_legend: bool = True,
+) -> None:
+    traj = result.recommendation_trajectory
+    # The scope switches exactly once, so these are a prefix and a suffix.
+    # They are drawn as separate segments because the archive itself
+    # changes at the handover; joining them would imply a continuous curve.
+    provisional = [p for p in traj if not p.is_deployable]
+    deployable = [p for p in traj if p.is_deployable]
+    if provisional:
+        ax.plot(
+            [p.budget_fraction for p in provisional],
+            [getattr(p, field) for p in provisional],
+            color="#7a8ca5",
+            linewidth=1.3,
+            linestyle="--",
+            label="provisional all-posterior (pre-stop diagnostic)",
+        )
+    if len(deployable) > 1:
+        ax.plot(
+            [p.budget_fraction for p in deployable],
+            [getattr(p, field) for p in deployable],
+            color="#1f4e79",
+            linewidth=1.9,
+            label="deployable completed-only recommendation",
+        )
+    if deployable:
+        handover = deployable[0]
+        value = getattr(handover, field)
+        ax.scatter(
+            [handover.budget_fraction],
+            [value],
+            s=95,
+            color="#1f4e79",
+            marker="o",
+            edgecolors="white",
+            linewidths=1.0,
+            zorder=5,
+            label=f"{handover_label} ({value:.4f})",
+        )
+    if result.gittins_stop_budget_fraction is not None:
+        ax.axvspan(
+            result.gittins_stop_budget_fraction,
+            1.02,
+            color="#687386",
+            alpha=0.08,
+            label="forced post-stop diagnostic",
+        )
+        ax.axvline(
+            result.gittins_stop_budget_fraction,
+            color="#c45c26",
+            linestyle="--",
+            linewidth=1.4,
+            label=(
+                f"Gittins stop "
+                f"({result.gittins_stop_budget_fraction:.1%})"
+            ),
+        )
+    ax.set_xlabel("Fraction of brute-force search cost")
+    ax.set_ylabel(ylabel)
+    ax.set_xlim(0.0, 1.02)
+    ax.set_ylim(bottom=0.0)
+    ax.grid(True, alpha=0.3)
+    if show_legend:
+        ax.legend(loc="upper right", fontsize=8)
+
+
 def plot_hv_curves(
     results: Dict[str, RadialSimulationResult],
     output_path: Path,
+) -> None:
+    plot_metric_curves(
+        results,
+        output_path,
+        field="hypervolume_regret",
+        ylabel="Normalized-desirability hypervolume regret",
+        handover_label="deployable regret at handover",
+        title=(
+            "One recommendation trajectory per benchmark: all-posterior "
+            "diagnostic before the Gittins stop, completed-only after"
+        ),
+    )
+
+
+def plot_metric_curves(
+    results: Dict[str, RadialSimulationResult],
+    output_path: Path,
+    *,
+    field: str,
+    ylabel: str,
+    handover_label: str,
+    title: str,
 ) -> None:
     fig, axes = plt.subplots(
         1,
@@ -177,78 +315,55 @@ def plot_hv_curves(
         squeeze=False,
     )
     for ax, (name, result) in zip(axes[0], results.items()):
-        traj = result.recommendation_trajectory
-        # The scope switches exactly once, so these are a prefix and a suffix.
-        # They are drawn as separate segments because the archive itself
-        # changes at the handover; joining them would imply a continuous curve.
-        provisional = [p for p in traj if not p.is_deployable]
-        deployable = [p for p in traj if p.is_deployable]
-        if provisional:
-            ax.plot(
-                [p.budget_fraction for p in provisional],
-                [p.hypervolume_regret for p in provisional],
-                color="#7a8ca5",
-                linewidth=1.3,
-                linestyle="--",
-                label="provisional all-posterior (pre-stop diagnostic)",
-            )
-        if len(deployable) > 1:
-            ax.plot(
-                [p.budget_fraction for p in deployable],
-                [p.hypervolume_regret for p in deployable],
-                color="#1f4e79",
-                linewidth=1.9,
-                label="deployable completed-only recommendation",
-            )
-        if deployable:
-            handover = deployable[0]
-            ax.scatter(
-                [handover.budget_fraction],
-                [handover.hypervolume_regret],
-                s=95,
-                color="#1f4e79",
-                marker="o",
-                edgecolors="white",
-                linewidths=1.0,
-                zorder=5,
-                label=(
-                    "deployable regret at handover "
-                    f"({handover.hypervolume_regret:.4f})"
-                ),
-            )
-        if result.gittins_stop_budget_fraction is not None:
-            ax.axvspan(
-                result.gittins_stop_budget_fraction,
-                1.02,
-                color="#687386",
-                alpha=0.08,
-                label="forced post-stop diagnostic",
-            )
-            ax.axvline(
-                result.gittins_stop_budget_fraction,
-                color="#c45c26",
-                linestyle="--",
-                linewidth=1.4,
-                label=(
-                    f"Gittins stop "
-                    f"({result.gittins_stop_budget_fraction:.1%})"
-                ),
-            )
+        _plot_scope_series(
+            ax,
+            result,
+            field=field,
+            ylabel=ylabel,
+            handover_label=handover_label,
+        )
         ax.set_title(name)
-        ax.set_xlabel("Fraction of brute-force search cost")
-        ax.set_ylabel("Normalized-desirability hypervolume regret")
-        ax.set_xlim(0.0, 1.02)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper right", fontsize=8)
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout()
+    _save_rgb_png(fig, output_path, dpi=160)
+    plt.close(fig)
+
+
+def plot_front_quality_curves(
+    results: Dict[str, RadialSimulationResult],
+    output_path: Path,
+) -> None:
+    fig, axes = plt.subplots(
+        len(TRAJECTORY_METRICS),
+        len(results),
+        figsize=(5.25 * len(results), 3.55 * len(TRAJECTORY_METRICS)),
+        sharex=True,
+        sharey=False,
+        squeeze=False,
+    )
+    names = list(results)
+    for row, spec in enumerate(TRAJECTORY_METRICS):
+        for col, name in enumerate(names):
+            ax = axes[row, col]
+            _plot_scope_series(
+                ax,
+                results[name],
+                field=spec["field"],
+                ylabel=spec["ylabel"],
+                handover_label=spec["handover"],
+                show_legend=(row == 0 and col == len(names) - 1),
+            )
+            if row == 0:
+                ax.set_title(name)
+            if row < len(TRAJECTORY_METRICS) - 1:
+                ax.set_xlabel("")
     fig.suptitle(
-        "One recommendation trajectory per benchmark: all-posterior "
-        "diagnostic before the Gittins stop, completed-only after",
+        "One recommendation trajectory per benchmark: HV regret, GD, and IGD",
         fontsize=12,
     )
     fig.tight_layout()
-    fig.savefig(output_path, dpi=160, bbox_inches="tight")
+    _save_rgb_png(fig, output_path, dpi=160)
     plt.close(fig)
-    print(f"wrote {output_path}")
 
 
 def plot_raw_archive_comparison(
@@ -430,9 +545,8 @@ def plot_raw_archive_comparison(
         fontsize=12,
     )
     fig.tight_layout(rect=(0.0, 0.12, 1.0, 0.92))
-    fig.savefig(output_path, dpi=180, bbox_inches="tight")
+    _save_rgb_png(fig, output_path, dpi=180)
     plt.close(fig)
-    print(f"wrote {output_path}")
 
 
 def main() -> None:
@@ -540,6 +654,16 @@ def main() -> None:
                 if final_checkpoint is not None
                 else result.hypervolume_regret
             ),
+            "final_generational_distance": (
+                final_checkpoint.generational_distance
+                if final_checkpoint is not None
+                else result.generational_distance
+            ),
+            "final_inverted_generational_distance": (
+                final_checkpoint.inverted_generational_distance
+                if final_checkpoint is not None
+                else result.inverted_generational_distance
+            ),
             "final_archive_scope": (
                 final_checkpoint.archive_scope
                 if final_checkpoint is not None
@@ -547,6 +671,16 @@ def main() -> None:
             ),
             "gittins_stop_hv_regret": (
                 stop_checkpoint.hypervolume_regret
+                if stop_checkpoint is not None
+                else None
+            ),
+            "gittins_stop_generational_distance": (
+                stop_checkpoint.generational_distance
+                if stop_checkpoint is not None
+                else None
+            ),
+            "gittins_stop_inverted_generational_distance": (
+                stop_checkpoint.inverted_generational_distance
                 if stop_checkpoint is not None
                 else None
             ),
@@ -561,6 +695,8 @@ def main() -> None:
                 else None
             ),
             "completed_arm_archive_hv_regret": result.hypervolume_regret,
+            "completed_arm_archive_gd": result.generational_distance,
+            "completed_arm_archive_igd": result.inverted_generational_distance,
             "trajectory_len": len(result.recommendation_trajectory),
             "policy_wall_time_seconds": result.policy_wall_time_seconds,
             "final_online_raw_models": result.online_raw_archive_models,
@@ -579,6 +715,10 @@ def main() -> None:
                     "cumulative_search_cost_usd": checkpoint.cumulative_search_cost_usd,
                     "archive_scope": checkpoint.archive_scope,
                     "hv_regret": checkpoint.hypervolume_regret,
+                    "generational_distance": checkpoint.generational_distance,
+                    "inverted_generational_distance": (
+                        checkpoint.inverted_generational_distance
+                    ),
                     "archive_size": len(checkpoint.online_raw_archive_models),
                 }
             )
@@ -589,7 +729,19 @@ def main() -> None:
             output_path=outdir / f"{bench}_raw_archive_comparison.png",
         )
 
-    plot_hv_curves(results, outdir / "hv_regret_curves.png")
+    for spec in TRAJECTORY_METRICS:
+        plot_metric_curves(
+            results,
+            outdir / spec["filename"],
+            field=spec["field"],
+            ylabel=spec["ylabel"],
+            handover_label=spec["handover"],
+            title=(
+                "One recommendation trajectory per benchmark: all-posterior "
+                "diagnostic before the Gittins stop, completed-only after"
+            ),
+        )
+    plot_front_quality_curves(results, outdir / "front_quality_curves.png")
     summary_path = outdir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n")
     print(f"wrote {summary_path}")
