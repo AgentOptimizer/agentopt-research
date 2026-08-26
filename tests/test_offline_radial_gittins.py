@@ -220,23 +220,12 @@ class OfflineRoundRobinTests(unittest.TestCase):
             checkpoints[1].oracle_raw_winner_archive_models,
             ("A",),
         )
-        for checkpoint, result in zip(checkpoints, results):
+        for checkpoint in checkpoints:
+            self.assertEqual(checkpoint.archive_scope, "provisional")
+            self.assertFalse(checkpoint.is_deployable)
             self.assertEqual(checkpoint.completed_arm_indices, ())
-            self.assertEqual(
-                checkpoint.deployable_direction_winner_arm_indices,
-                (),
-            )
-            self.assertEqual(
-                checkpoint.deployable_online_raw_archive_models,
-                (),
-            )
-            self.assertEqual(checkpoint.deployable_hypervolume, 0.0)
-            self.assertEqual(
-                checkpoint.deployable_hypervolume_regret,
-                result.ground_truth_hypervolume,
-            )
 
-    def test_gittins_stop_checkpoint_excludes_unfinished_provisional_winner(self):
+    def test_trajectory_switches_from_provisional_to_deployable_at_the_stop(self):
         models = ["A", "B"]
         datapoints = [0, 1, 2]
         table = {
@@ -270,50 +259,58 @@ class OfflineRoundRobinTests(unittest.TestCase):
             halt_on_gittins_stop=False,
             record_recommendation_trajectory=True,
         )
-        stop = next(
-            checkpoint
-            for checkpoint in result.recommendation_trajectory
+        trajectory = result.recommendation_trajectory
+        stop_position = next(
+            index
+            for index, checkpoint in enumerate(trajectory)
             if checkpoint.event == "gittins_stop"
+        )
+        stop = trajectory[stop_position]
+
+        # Everything before the stop is the all-posterior diagnostic, where the
+        # unfinished arm B still wins its direction.
+        self.assertTrue(
+            all(
+                checkpoint.archive_scope == "provisional"
+                for checkpoint in trajectory[:stop_position]
+            )
+        )
+        self.assertTrue(
+            any(
+                1 in checkpoint.direction_winner_arm_indices
+                for checkpoint in trajectory[:stop_position]
+            )
+        )
+        # From the stop onward every snapshot is the completed-only handover.
+        self.assertTrue(
+            all(
+                checkpoint.is_deployable
+                for checkpoint in trajectory[stop_position:]
+            )
         )
 
         self.assertEqual(stop.cumulative_evaluations, 4)
         self.assertEqual(stop.completed_arm_indices, (0,))
-        self.assertEqual(stop.direction_winner_arm_indices, (0, 1))
-        self.assertEqual(stop.online_raw_archive_models, ("A", "B"))
+        self.assertEqual(stop.direction_winner_arm_indices, (0,))
+        self.assertEqual(stop.online_raw_archive_models, ("A",))
         self.assertEqual(stop.oracle_raw_winner_archive_models, ("A",))
-        self.assertEqual(
-            stop.deployable_direction_winner_arm_indices,
-            (0,),
-        )
-        self.assertEqual(
-            stop.deployable_online_raw_archive_models,
-            ("A",),
-        )
-        self.assertEqual(
-            stop.deployable_oracle_raw_winner_archive_models,
-            ("A",),
-        )
         self.assertLessEqual(
-            set(stop.deployable_online_raw_archive_arm_indices),
+            set(stop.online_raw_archive_arm_indices),
             set(stop.completed_arm_indices),
         )
 
-        final = result.recommendation_trajectory[-1]
+        final = trajectory[-1]
         self.assertEqual(final.event, "final")
         self.assertEqual(final.completed_arm_indices, (0, 1))
         self.assertEqual(
-            final.direction_winner_arm_indices,
-            final.deployable_direction_winner_arm_indices,
-        )
-        self.assertEqual(
-            final.online_raw_archive_arm_indices,
-            final.deployable_online_raw_archive_arm_indices,
+            list(final.online_raw_archive_models),
+            result.selected_models,
         )
         self.assertEqual(result.selected_models, ["A"])
         # The saved stop snapshot remains the completed-only A recommendation
         # after the diagnostic replay continues and finishes both arms.
         self.assertEqual(stop.completed_arm_indices, (0,))
-        self.assertEqual(stop.deployable_online_raw_archive_models, ("A",))
+        self.assertEqual(stop.online_raw_archive_models, ("A",))
 
         terminal_result = simulate_radial_gittins(
             models,
@@ -338,7 +335,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
         )
         self.assertEqual(
             terminal_result.selected_models,
-            list(terminal_stop.deployable_online_raw_archive_models),
+            list(terminal_stop.online_raw_archive_models),
         )
         self.assertEqual(terminal_result.selected_models, ["A"])
         self.assertEqual(terminal_result.total_evaluations, 4)
