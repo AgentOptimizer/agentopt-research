@@ -47,10 +47,13 @@ def plot_snapshot(
     output_path: Path,
 ) -> None:
     truth = result.truth_vectors
-    true_front = truth[pareto_min_cost_indices(truth)]
+    true_front_indices = set(pareto_min_cost_indices(truth))
+    true_front = truth[sorted(true_front_indices)]
     true_front = true_front[np.argsort(true_front[:, 1])]
-    selected = truth[list(result.selected_arm_indices)]
-    selected = selected[np.argsort(selected[:, 1])]
+    selected_indices = set(result.selected_arm_indices)
+    correct = sorted(selected_indices & true_front_indices)
+    false_positive = sorted(selected_indices - true_front_indices)
+    missed = sorted(true_front_indices - selected_indices)
 
     fig, ax = plt.subplots(figsize=(6.4, 5.0))
     ax.scatter(
@@ -61,18 +64,24 @@ def plot_snapshot(
         true_front[:, 1], true_front[:, 0], color="#5b6472", marker="o",
         markersize=4, linewidth=1.4, label="brute-force Pareto frontier", zorder=2,
     )
-    if len(selected):
-        ax.plot(
-            selected[:, 1], selected[:, 0], color="#1f4e79", marker="s",
-            markersize=6, linewidth=1.8, label="random-search recommendation",
-            zorder=3,
-        )
+    groups = (
+        (correct, "#2f855a", "*", 105, "recommended and on true front"),
+        (false_positive, "#1f4e79", "s", 62, "recommended but dominated"),
+        (missed, "#c45c26", "D", 58, "true-front point not recommended"),
+    )
+    for indices, color, marker, size, label in groups:
+        if indices:
+            points = truth[indices]
+            ax.scatter(points[:, 1], points[:, 0], color=color, marker=marker,
+                       s=size, edgecolors="white", linewidths=0.7,
+                       label=label, zorder=4)
     ax.set_xlabel("Mean deployment cost (USD, lower is better)")
     ax.set_ylabel("Mean accuracy (higher is better)")
     ax.set_title(
         f"{benchmark} — {_version_title(result.version)}\n"
         f"budget={result.budget_fraction:.0%}, seed={result.seed}, "
-        f"HV regret={result.hypervolume_regret:.4f}"
+        f"HV regret={result.hypervolume_regret:.4f}, "
+        f"precision={result.recommendation_precision:.2f}"
     )
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
@@ -91,21 +100,31 @@ def plot_contact_sheet(
 ) -> None:
     ordered = sorted(results, key=lambda result: result.budget_fraction)
     truth = ordered[0].truth_vectors
-    true_front = truth[pareto_min_cost_indices(truth)]
+    true_front_indices = set(pareto_min_cost_indices(truth))
+    true_front = truth[sorted(true_front_indices)]
     true_front = true_front[np.argsort(true_front[:, 1])]
     fig, axes = plt.subplots(2, 5, figsize=(20, 8), sharex=True, sharey=True)
     for ax, result in zip(axes.flat, ordered):
-        selected = truth[list(result.selected_arm_indices)]
-        selected = selected[np.argsort(selected[:, 1])]
+        selected_indices = set(result.selected_arm_indices)
+        correct = sorted(selected_indices & true_front_indices)
+        false_positive = sorted(selected_indices - true_front_indices)
+        missed = sorted(true_front_indices - selected_indices)
         ax.scatter(truth[:, 1], truth[:, 0], s=8, color="#c5cad3", alpha=0.55)
         ax.plot(true_front[:, 1], true_front[:, 0], color="#626b78", linewidth=1.0)
-        if len(selected):
-            ax.plot(
-                selected[:, 1], selected[:, 0], color="#1f4e79",
-                marker="s", markersize=3, linewidth=1.2,
-            )
+        for indices, color, marker, size in (
+            (correct, "#2f855a", "*", 38),
+            (false_positive, "#1f4e79", "s", 24),
+            (missed, "#c45c26", "D", 22),
+        ):
+            if indices:
+                points = truth[indices]
+                ax.scatter(points[:, 1], points[:, 0], color=color,
+                           marker=marker, s=size, edgecolors="white",
+                           linewidths=0.4, zorder=4)
         ax.set_title(
-            f"{result.budget_fraction:.0%}\nregret={result.hypervolume_regret:.4f}",
+            f"{result.budget_fraction:.0%}\n"
+            f"regret={result.hypervolume_regret:.4f}, "
+            f"FP={result.false_positive_count}",
             fontsize=9,
         )
         ax.grid(True, alpha=0.25)

@@ -62,6 +62,8 @@ class MultiObjectiveRandomSearchResult:
     ground_truth_hypervolume: float
     hypervolume_regret: float
     true_front_recall: float
+    recommendation_precision: float
+    false_positive_count: int
     estimated_vectors: np.ndarray
     truth_vectors: np.ndarray
     cost_reference_usd: float
@@ -192,6 +194,8 @@ def simulate_multiobjective_random_search(
     selected_hv = hypervolume_2d(truth_normalized[list(selected_arms)])
     recalled = len(true_front.intersection(selected_arms))
     recall = recalled / len(true_front) if true_front else 1.0
+    false_positive_count = len(set(selected_arms) - true_front)
+    precision = recalled / len(selected_arms) if selected_arms else 1.0
 
     return MultiObjectiveRandomSearchResult(
         version=version,
@@ -207,6 +211,8 @@ def simulate_multiobjective_random_search(
         ground_truth_hypervolume=float(ground_truth_hv),
         hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
         true_front_recall=float(recall),
+        recommendation_precision=float(precision),
+        false_positive_count=int(false_positive_count),
         estimated_vectors=estimated,
         truth_vectors=truth_raw,
         cost_reference_usd=cost_reference,
@@ -246,7 +252,7 @@ def write_results_csv(
         "version", "seed", "budget_fraction", "total_evaluations",
         "total_search_cost_usd", "n_recommended", "hypervolume",
         "ground_truth_hypervolume", "hypervolume_regret", "true_front_recall",
-        "selected_models",
+        "recommendation_precision", "false_positive_count", "selected_models",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -265,6 +271,8 @@ def write_results_csv(
                     "ground_truth_hypervolume": result.ground_truth_hypervolume,
                     "hypervolume_regret": result.hypervolume_regret,
                     "true_front_recall": result.true_front_recall,
+                    "recommendation_precision": result.recommendation_precision,
+                    "false_positive_count": result.false_positive_count,
                     "selected_models": json.dumps(result.selected_models),
                 }
             )

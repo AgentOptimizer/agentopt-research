@@ -100,6 +100,33 @@ class MultiObjectiveRandomSearchTests(unittest.TestCase):
             self.assertEqual(set(result.selected_arm_indices), {0, 1, 2})
             self.assertAlmostEqual(result.hypervolume_regret, 0.0)
             self.assertAlmostEqual(result.true_front_recall, 1.0)
+            self.assertAlmostEqual(result.recommendation_precision, 1.0)
+            self.assertEqual(result.false_positive_count, 0)
+
+    def test_random_questions_reports_false_positive_recommendations(self):
+        models = ["accurate", "cheap", "noisy"]
+        datapoints = list(range(10))
+        table = {
+            "accurate": {q: _sample(0.9, 0.09) for q in datapoints},
+            "cheap": {q: _sample(0.5, 0.01) for q in datapoints},
+            "noisy": {
+                q: _sample(1.0 if q == 0 else 0.0, 0.08)
+                for q in datapoints
+            },
+        }
+        # Find a deterministic seed whose one-question prefix observes q=0.
+        seed = next(
+            candidate
+            for candidate in range(100)
+            if np.random.default_rng(candidate).permutation(datapoints)[0] == 0
+        )
+        result = simulate_multiobjective_random_search(
+            models, datapoints, table, version="random_questions",
+            budget_fraction=0.1, seed=seed,
+        )
+        self.assertIn(2, result.selected_arm_indices)
+        self.assertEqual(result.false_positive_count, 1)
+        self.assertLess(result.recommendation_precision, 1.0)
 
     def test_sweep_has_every_version_seed_and_fraction(self):
         models, datapoints, table = _toy_table()

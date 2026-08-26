@@ -2,6 +2,9 @@
 experiments/data/
 experiments/combined_objective/results/
 experiments/single_objective/results/
+# Pre-refactor leftover paths (never commit)
+experiments/results/
+experiments/cached_results/
 /plot/
 /analysis/
 
