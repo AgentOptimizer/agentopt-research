@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the consolidated 2x6 frontier and all-method metric figures."""
+"""Create the consolidated 2x5 frontier and all-method metric figures."""
 
 from __future__ import annotations
 
@@ -170,18 +170,17 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     truth = mean_raw_vectors(models, common_question_ids(models, datapoints, table), table)
     gittins_path = _gittins_csv(data_dir, benchmark)
     gittins = _load_json_sets(gittins_path, benchmark)
-    ucb = _load_json_sets(data_dir / "ucb_seed_results.csv", benchmark)
     random_path = data_dir / f"{benchmark}_random_questions.csv"
     random10 = _load_json_sets(random_path, benchmark, budget=0.1)
     random40 = _load_json_sets(random_path, benchmark, budget=0.4)
-    baseline_path = data_dir / "pareto_baselines_40pct" / "recommendations.csv"
+    baseline_path = data_dir / "pareto_baselines_10pct" / "recommendations.csv"
     baseline_rows = list(csv.DictReader(baseline_path.open(encoding="utf-8")))
-    ege40 = {
+    ege10 = {
         int(row["seed"]): set(json.loads(row["selected_models"]))
         for row in baseline_rows
         if row["benchmark"] == benchmark and row["method"] == "ege_sh"
     }
-    ape40 = {
+    ape10 = {
         int(row["seed"]): set(json.loads(row["selected_models"]))
         for row in baseline_rows
         if row["benchmark"] == benchmark and row["method"] == "ape_k"
@@ -190,8 +189,6 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     mean_costs = (
         _mean_cost_fraction(gittins_path, benchmark,
                             matched_seeds, fraction_field="gittins_stop_cost_fraction"),
-        _mean_cost_fraction(data_dir / "ucb_seed_results.csv", benchmark,
-                            matched_seeds, fraction_field="stop_budget_fraction"),
         _mean_cost_fraction(random_path, benchmark, matched_seeds, budget=0.1),
         _mean_cost_fraction(random_path, benchmark, matched_seeds, budget=0.4),
         float(np.mean([
@@ -205,11 +202,10 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     )
     conditions = (
         (f"Gittins adaptive stop\nMean cost: {mean_costs[0]:.1%}", gittins),
-        (f"Radial UCB adaptive stop\nMean cost: {mean_costs[1]:.1%}", ucb),
-        (f"Random questions, 10% budget\nMean cost: {mean_costs[2]:.1%}", random10),
-        (f"Random questions, 40% budget\nMean cost: {mean_costs[3]:.1%}", random40),
-        (f"EGE-SH, 40% cell budget\nMean cost: {mean_costs[4]:.1%}", ege40),
-        (f"APE-k, 40% cell budget\nMean cost: {mean_costs[5]:.1%}", ape40),
+        (f"Random questions, 10% budget\nMean cost: {mean_costs[1]:.1%}", random10),
+        (f"Random questions, 40% budget\nMean cost: {mean_costs[2]:.1%}", random40),
+        (f"EGE-SH, 10% cell budget\nMean cost: {mean_costs[3]:.1%}", ege10),
+        (f"APE-k, 10% cell budget\nMean cost: {mean_costs[4]:.1%}", ape10),
     )
     seed_sets = [set(values) for _, values in conditions]
     if any(len(values) != 20 for values in seed_sets) or len(set(map(frozenset, seed_sets))) != 1:
@@ -220,7 +216,7 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         "YlOrRd_paper_20", base(np.linspace(0.18, 1.0, 256)),
     )
     norm = mpl.colors.Normalize(vmin=1, vmax=20)
-    fig, axes = plt.subplots(2, 6, figsize=(23.0, 7.7), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 5, figsize=(19.5, 7.7), sharex=True, sharey=True)
     recommendation_size = 72
     recommendation_edge = "#725b46"
     recommendation_linewidth = 0.65
@@ -530,7 +526,7 @@ def main() -> None:
     outdir = args.data_dir / "figures"
     for benchmark in benchmarks:
         plot_frontier_grid(benchmark, args.data_dir,
-                           outdir / f"{benchmark}_2x6_frontier_comparison")
+                           outdir / f"{benchmark}_2x5_frontier_comparison")
     hv_name = (
         "all_methods_20seed_hv_regret.png"
         if benchmarks == DEFAULT_BENCHMARKS
