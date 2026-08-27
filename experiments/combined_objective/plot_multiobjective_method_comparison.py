@@ -74,6 +74,7 @@ UCB_COLOR = "tab:blue"
 BASELINE_STYLES = {
     "ege_sh": ("#e09f3e", "EGE-SH"),
     "ape_k": ("#2a9d8f", "APE-k"),
+    "qnehvi": ("#7b61a8", "qNEHVI"),
 }
 
 

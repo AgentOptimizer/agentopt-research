@@ -57,16 +57,20 @@ LABELS = {
     "hotpotqa": "HotpotQA", "mathqa": "MathQA", "gpqa": "GPQA", "bfcl": "BFCL",
 }
 DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
-BASELINE_METHODS = ("ege_sh", "ape_k")
+BASELINE_METHODS = ("ege_sh", "ape_k", "qnehvi")
 
 
 def _load_baseline_rows(data_dir: Path) -> list[dict]:
-    path = data_dir / "pareto_baselines" / "cost_trajectory.csv"
-    if not path.exists():
-        raise FileNotFoundError(
-            f"missing {path}; run plot_pareto_identification_baselines.py first"
-        )
-    return list(csv.DictReader(path.open(encoding="utf-8")))
+    paths = (
+        data_dir / "pareto_baselines" / "cost_trajectory.csv",
+        data_dir / "qnehvi" / "cost_trajectory.csv",
+    )
+    rows = []
+    for path in paths:
+        if not path.exists():
+            raise FileNotFoundError(f"missing baseline trajectory: {path}")
+        rows.extend(csv.DictReader(path.open(encoding="utf-8")))
+    return rows
 
 
 def _baseline_curves(rows: list[dict], benchmark: str, metric: str):
@@ -198,6 +202,13 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         for row in baseline_rows
         if row["benchmark"] == benchmark and row["method"] == "ape_k"
     }
+    qnehvi_path = data_dir / "qnehvi" / "recommendations_10pct.csv"
+    qnehvi_rows = list(csv.DictReader(qnehvi_path.open(encoding="utf-8")))
+    qnehvi10 = {
+        int(row["seed"]): set(json.loads(row["selected_models"]))
+        for row in qnehvi_rows
+        if row["benchmark"] == benchmark
+    }
     full_search_cost = float(sum(
         table[model][question].cost
         for model in models
@@ -219,11 +230,16 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
             float(row["actual_cost_fraction"]) for row in baseline_rows
             if row["benchmark"] == benchmark and row["method"] == "ape_k"
         ])),
+        float(np.mean([
+            float(row["actual_cost_fraction"]) for row in qnehvi_rows
+            if row["benchmark"] == benchmark
+        ])),
     )
     conditions = (
         (f"Gittins\nAdaptive stop\nMean search cost: {mean_costs[0]:.1%}", gittins),
         (f"EGE-SH\n10% search budget\nMean search cost: {mean_costs[3]:.1%}", ege10),
         (f"APE-k\n10% search budget\nMean search cost: {mean_costs[4]:.1%}", ape10),
+        (f"qNEHVI\n10% search budget\nMean search cost: {mean_costs[5]:.1%}", qnehvi10),
         (f"Random questions\n10% search budget\nMean search cost: {mean_costs[1]:.1%}", random10),
         (f"Random configurations\n10% search budget\nMean search cost: {mean_costs[2]:.1%}", random_configurations10),
     )
@@ -236,7 +252,7 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         "YlOrRd_paper_20", base(np.linspace(0.18, 1.0, 256)),
     )
     norm = mpl.colors.Normalize(vmin=1, vmax=20)
-    fig, axes = plt.subplots(2, 5, figsize=(20.5, 8.6), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 6, figsize=(24.0, 8.6), sharex=True, sharey=True)
     recommendation_size = 110
     recommendation_edge = "#725b46"
     recommendation_linewidth = 0.85
@@ -309,7 +325,6 @@ def write_hv_comparison(
         available_panels.extend(panels_from_csv(source_csv, {}, "cost"))
     by_name = {panel["name"]: panel for panel in available_panels}
     panels = [by_name[LABELS[benchmark]] for benchmark in benchmarks]
-    ucb_rows = list(csv.DictReader((data_dir / "ucb_hv_regret_trajectories.csv").open()))
     baseline_rows = _load_baseline_rows(data_dir)
     appended_rows = []
     for source_csv in source_csvs:
@@ -321,29 +336,12 @@ def write_hv_comparison(
             appended_rows.append(row)
     for panel in panels:
         benchmark = panel["name"].lower()
-        trajectories = []
-        for seed in sorted({int(row["seed"]) for row in ucb_rows if row["benchmark"] == benchmark}):
-            rows = [row for row in ucb_rows if row["benchmark"] == benchmark and int(row["seed"]) == seed]
-            trajectories.append((
-                np.asarray([float(row["budget_fraction"]) for row in rows]),
-                np.asarray([float(row["hv_regret"]) for row in rows]),
-            ))
-        series = _radial_regret_series(trajectories)
-        panel["ucb"] = series
         panel["baselines"] = _baseline_curves(
             baseline_rows, benchmark, "hv_regret",
         )
-        for x, mean, ci, count in zip(*series):
-            appended_rows.append({
-                "benchmark": panel["name"], "method": "radial_ucb",
-                "budget_fraction": x, "mean_hv_regret": mean,
-                "ci95_half_width": ci, "n_runs": int(count),
-                "cost_reference_usd": "", "x_axis": "cost",
-                "stop_axis_fraction": panel["stop_mean"],
-            })
     write_comparison_figure(
         out_path=output_path,
-        title="Gittins, radial UCB, and random search (20 matched seeds)",
+        title="Gittins and Pareto-search baselines (20 matched seeds)",
         panels=panels, seeds=20, seed=42, x_axis="cost",
     )
     with (data_dir / "all_method_hv_regret_summary.csv").open("w", newline="", encoding="utf-8") as handle:
@@ -409,10 +407,6 @@ def write_distance_comparisons(
             seed: data_dir / "raw_gittins" / f"{benchmark}_seed-{seed}.pkl"
             for seed in matched_seeds
         }
-        ucb_paths = {
-            seed: data_dir / "raw_ucb" / f"{benchmark}_seed-{seed}.pkl"
-            for seed in matched_seeds
-        }
         stop_fractions = []
         for seed in matched_seeds:
             run = _load_saved_run(gittins_paths[seed])
@@ -440,13 +434,6 @@ def write_distance_comparisons(
                 )
                 for seed in matched_seeds
             ])
-            ucb = _radial_regret_series([
-                _checkpoint_metric_trajectory(
-                    _load_saved_run(ucb_paths[seed]),
-                    field, "online_raw_archive_arm_indices",
-                )
-                for seed in matched_seeds
-            ])
             random_questions = _random_regret_series(
                 random_results,
                 version="random_questions",
@@ -466,7 +453,6 @@ def write_distance_comparisons(
                 "stop_mean": stop_mean,
                 "deployable": deployable,
                 "provisional": provisional,
-                "ucb": ucb,
                 "random": [
                     ("random_questions", *random_questions),
                     ("random_configurations", *random_configurations),
@@ -478,7 +464,6 @@ def write_distance_comparisons(
             for method, series in (
                 ("radial_gittins_deployable", deployable),
                 ("radial_gittins_provisional", provisional),
-                ("radial_ucb", ucb),
             ):
                 for x, mean, two_se, count in zip(*series):
                     summary_rows.append({
@@ -546,7 +531,7 @@ def main() -> None:
     outdir = args.data_dir / "figures"
     for benchmark in benchmarks:
         plot_frontier_grid(benchmark, args.data_dir,
-                           outdir / f"{benchmark}_2x5_frontier_comparison")
+                           outdir / f"{benchmark}_2x6_frontier_comparison")
     hv_name = (
         "all_methods_20seed_hv_regret.png"
         if benchmarks == DEFAULT_BENCHMARKS
