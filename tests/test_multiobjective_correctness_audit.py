@@ -9,7 +9,11 @@ from experiments.combined_objective.audit_multiobjective_results import (
 from experiments.combined_objective.offline_multiobjective_random_search import (
     pareto_min_cost_indices,
 )
-from experiments.combined_objective.offline_radial_gittins import hypervolume_2d
+from experiments.combined_objective.offline_radial_gittins import (
+    generational_distance,
+    hypervolume_2d,
+    inverted_generational_distance,
+)
 
 
 class MultiObjectiveCorrectnessAuditTests(unittest.TestCase):
@@ -34,6 +38,8 @@ class MultiObjectiveCorrectnessAuditTests(unittest.TestCase):
         true_hv = hypervolume_2d(front)
         returned_hv = hypervolume_2d(front.copy())
         self.assertAlmostEqual(true_hv - returned_hv, 0.0)
+        self.assertAlmostEqual(generational_distance(front, front), 0.0)
+        self.assertAlmostEqual(inverted_generational_distance(front, front), 0.0)
 
 
 if __name__ == "__main__":

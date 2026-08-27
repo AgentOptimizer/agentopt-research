@@ -81,6 +81,8 @@ def plot_snapshot(
         f"{benchmark} — {_version_title(result.version)}\n"
         f"budget={result.budget_fraction:.0%}, seed={result.seed}, "
         f"HV regret={result.hypervolume_regret:.4f}, "
+        f"GD={result.generational_distance:.4f}, "
+        f"IGD={result.inverted_generational_distance:.4f}, "
         f"precision={result.recommendation_precision:.2f}"
     )
     ax.grid(True, alpha=0.3)
@@ -123,8 +125,9 @@ def plot_contact_sheet(
                            linewidths=0.4, zorder=4)
         ax.set_title(
             f"{result.budget_fraction:.0%}\n"
-            f"regret={result.hypervolume_regret:.4f}, "
-            f"FP={result.false_positive_count}",
+            f"HV={result.hypervolume_regret:.3f}, "
+            f"GD={result.generational_distance:.3f}, "
+            f"IGD={result.inverted_generational_distance:.3f}",
             fontsize=9,
         )
         ax.grid(True, alpha=0.25)
@@ -137,13 +140,15 @@ def plot_contact_sheet(
     plt.close(fig)
 
 
-def _regret_series(
-    results: Sequence[MultiObjectiveRandomSearchResult], version: str,
+def _metric_series(
+    results: Sequence[MultiObjectiveRandomSearchResult],
+    version: str,
+    field: str,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     grouped: Dict[float, list[float]] = defaultdict(list)
     for result in results:
         if result.version == version:
-            grouped[result.budget_fraction].append(result.hypervolume_regret)
+            grouped[result.budget_fraction].append(float(getattr(result, field)))
     fractions = np.asarray(sorted(grouped), dtype=np.float64)
     means = np.asarray([np.mean(grouped[f]) for f in fractions], dtype=np.float64)
     ci95 = np.asarray(
@@ -158,15 +163,20 @@ def _regret_series(
     return fractions, means, ci95
 
 
-def _draw_regret_axis(
-    ax, results: Sequence[MultiObjectiveRandomSearchResult], benchmark: str,
+def _draw_metric_axis(
+    ax,
+    results: Sequence[MultiObjectiveRandomSearchResult],
+    benchmark: str,
+    *,
+    field: str,
+    ylabel: str,
 ) -> None:
     styles = {
         "random_configurations": ("#c45c26", "Random configurations"),
         "random_questions": ("#1f4e79", "Random shared questions"),
     }
     for version in VERSIONS:
-        fractions, means, ci95 = _regret_series(results, version)
+        fractions, means, ci95 = _metric_series(results, version, field)
         color, label = styles[version]
         ax.plot(fractions, means, marker="o", linewidth=1.8, color=color, label=label)
         ax.fill_between(
@@ -180,12 +190,24 @@ def _draw_regret_axis(
         )
     ax.set_title(benchmark)
     ax.set_xlabel("Observed cell-budget fraction")
-    ax.set_ylabel("Hypervolume regret (lower is better)")
+    ax.set_ylabel(ylabel)
     ax.set_xticks(DEFAULT_BUDGET_FRACTIONS)
     ax.set_xlim(0.08, 1.02)
     ax.set_ylim(bottom=0.0)
     ax.grid(True, alpha=0.3)
     ax.legend(fontsize=8)
+
+
+def _draw_regret_axis(
+    ax, results: Sequence[MultiObjectiveRandomSearchResult], benchmark: str,
+) -> None:
+    _draw_metric_axis(
+        ax,
+        results,
+        benchmark,
+        field="hypervolume_regret",
+        ylabel="Hypervolume regret (lower is better)",
+    )
 
 
 def plot_regret_curve(
@@ -202,16 +224,49 @@ def plot_regret_curve(
     plt.close(fig)
 
 
+def plot_metric_curve(
+    results: Sequence[MultiObjectiveRandomSearchResult],
+    *,
+    benchmark: str,
+    field: str,
+    ylabel: str,
+    output_path: Path,
+) -> None:
+    fig, ax = plt.subplots(figsize=(6.8, 4.8))
+    _draw_metric_axis(ax, results, benchmark, field=field, ylabel=ylabel)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_combined_regret_curves(
     results_by_benchmark: Dict[str, Sequence[MultiObjectiveRandomSearchResult]],
     output_path: Path,
+) -> None:
+    plot_combined_metric_curves(
+        results_by_benchmark,
+        output_path,
+        field="hypervolume_regret",
+        ylabel="Hypervolume regret (lower is better)",
+        title="Multi-objective Random Search vs observed budget",
+    )
+
+
+def plot_combined_metric_curves(
+    results_by_benchmark: Dict[str, Sequence[MultiObjectiveRandomSearchResult]],
+    output_path: Path,
+    *,
+    field: str,
+    ylabel: str,
+    title: str,
 ) -> None:
     fig, axes = plt.subplots(1, len(results_by_benchmark), figsize=(12.5, 4.6))
     if len(results_by_benchmark) == 1:
         axes = [axes]
     for ax, (benchmark, results) in zip(axes, results_by_benchmark.items()):
-        _draw_regret_axis(ax, results, benchmark)
-    fig.suptitle("Multi-objective Random Search vs observed budget", fontsize=13)
+        _draw_metric_axis(ax, results, benchmark, field=field, ylabel=ylabel)
+    fig.suptitle(title, fontsize=13)
     fig.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=160, bbox_inches="tight")
@@ -267,6 +322,20 @@ def main() -> None:
             benchmark=benchmark,
             output_path=benchmark_dir / "hv_regret_curve.png",
         )
+        plot_metric_curve(
+            summary_results,
+            benchmark=benchmark,
+            field="generational_distance",
+            ylabel="Generational distance (GD, lower is better)",
+            output_path=benchmark_dir / "gd_curve.png",
+        )
+        plot_metric_curve(
+            summary_results,
+            benchmark=benchmark,
+            field="inverted_generational_distance",
+            ylabel="Inverted generational distance (IGD, lower is better)",
+            output_path=benchmark_dir / "igd_curve.png",
+        )
         summary_by_benchmark[benchmark] = summary_results
         print(f"wrote {benchmark_dir}")
 
@@ -275,6 +344,22 @@ def main() -> None:
         outdir / "hv_regret_curves.png",
     )
     print(f"wrote {outdir / 'hv_regret_curves.png'}")
+    plot_combined_metric_curves(
+        summary_by_benchmark,
+        outdir / "gd_curves.png",
+        field="generational_distance",
+        ylabel="Generational distance (GD, lower is better)",
+        title="Multi-objective Random Search GD vs observed budget",
+    )
+    print(f"wrote {outdir / 'gd_curves.png'}")
+    plot_combined_metric_curves(
+        summary_by_benchmark,
+        outdir / "igd_curves.png",
+        field="inverted_generational_distance",
+        ylabel="Inverted generational distance (IGD, lower is better)",
+        title="Multi-objective Random Search IGD vs observed budget",
+    )
+    print(f"wrote {outdir / 'igd_curves.png'}")
 
 
 if __name__ == "__main__":
