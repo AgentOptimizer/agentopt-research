@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create the consolidated 2x4 frontier and all-method HV-regret figures."""
+"""Create the consolidated 2x6 frontier and all-method metric figures."""
 
 from __future__ import annotations
 
@@ -174,6 +174,18 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     random_path = data_dir / f"{benchmark}_random_questions.csv"
     random10 = _load_json_sets(random_path, benchmark, budget=0.1)
     random40 = _load_json_sets(random_path, benchmark, budget=0.4)
+    baseline_path = data_dir / "pareto_baselines_40pct" / "recommendations.csv"
+    baseline_rows = list(csv.DictReader(baseline_path.open(encoding="utf-8")))
+    ege40 = {
+        int(row["seed"]): set(json.loads(row["selected_models"]))
+        for row in baseline_rows
+        if row["benchmark"] == benchmark and row["method"] == "ege_sh"
+    }
+    ape40 = {
+        int(row["seed"]): set(json.loads(row["selected_models"]))
+        for row in baseline_rows
+        if row["benchmark"] == benchmark and row["method"] == "ape_k"
+    }
     matched_seeds = set(gittins)
     mean_costs = (
         _mean_cost_fraction(gittins_path, benchmark,
@@ -182,12 +194,22 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
                             matched_seeds, fraction_field="stop_budget_fraction"),
         _mean_cost_fraction(random_path, benchmark, matched_seeds, budget=0.1),
         _mean_cost_fraction(random_path, benchmark, matched_seeds, budget=0.4),
+        float(np.mean([
+            float(row["actual_cost_fraction"]) for row in baseline_rows
+            if row["benchmark"] == benchmark and row["method"] == "ege_sh"
+        ])),
+        float(np.mean([
+            float(row["actual_cost_fraction"]) for row in baseline_rows
+            if row["benchmark"] == benchmark and row["method"] == "ape_k"
+        ])),
     )
     conditions = (
         (f"Gittins adaptive stop\nMean cost: {mean_costs[0]:.1%}", gittins),
         (f"Radial UCB adaptive stop\nMean cost: {mean_costs[1]:.1%}", ucb),
         (f"Random questions, 10% budget\nMean cost: {mean_costs[2]:.1%}", random10),
         (f"Random questions, 40% budget\nMean cost: {mean_costs[3]:.1%}", random40),
+        (f"EGE-SH, 40% cell budget\nMean cost: {mean_costs[4]:.1%}", ege40),
+        (f"APE-k, 40% cell budget\nMean cost: {mean_costs[5]:.1%}", ape40),
     )
     seed_sets = [set(values) for _, values in conditions]
     if any(len(values) != 20 for values in seed_sets) or len(set(map(frozenset, seed_sets))) != 1:
@@ -198,7 +220,7 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         "YlOrRd_paper_20", base(np.linspace(0.18, 1.0, 256)),
     )
     norm = mpl.colors.Normalize(vmin=1, vmax=20)
-    fig, axes = plt.subplots(2, 4, figsize=(16.0, 7.7), sharex=True, sharey=True)
+    fig, axes = plt.subplots(2, 6, figsize=(23.0, 7.7), sharex=True, sharey=True)
     recommendation_size = 72
     recommendation_edge = "#725b46"
     recommendation_linewidth = 0.65
@@ -230,7 +252,7 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
             linewidths=recommendation_linewidth, zorder=5,
         )
     fig.supxlabel("Mean deployment cost (USD)", fontsize=19, y=0.020)
-    fig.supylabel("Mean accuracy", fontsize=19, x=0.016)
+    fig.supylabel("Mean accuracy", fontsize=19, x=0.012)
     fig.text(0.052, 0.66, "Seed 42", rotation=90, ha="center", va="center",
              fontsize=17)
     fig.text(0.052, 0.285, "20-seed frequency", rotation=90,
@@ -239,9 +261,9 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     # Reserve a dedicated axis outside the four frontier columns.  Passing
     # ``ax=axes`` lets Matplotlib steal space unevenly and can overlap the last
     # panel once the manual paper layout is applied.
-    fig.subplots_adjust(left=0.09, right=0.88, bottom=0.12, top=0.78,
+    fig.subplots_adjust(left=0.080, right=0.91, bottom=0.12, top=0.78,
                         wspace=0.08, hspace=0.12)
-    colorbar_ax = fig.add_axes([0.925, 0.12, 0.014, 0.66])
+    colorbar_ax = fig.add_axes([0.94, 0.12, 0.010, 0.66])
     colorbar = fig.colorbar(scalar, cax=colorbar_ax)
     colorbar.set_label("Recommendation frequency (out of 20 seeds)", fontsize=17)
     colorbar.set_ticks([1, 5, 10, 15, 20])
@@ -508,7 +530,7 @@ def main() -> None:
     outdir = args.data_dir / "figures"
     for benchmark in benchmarks:
         plot_frontier_grid(benchmark, args.data_dir,
-                           outdir / f"{benchmark}_2x4_frontier_comparison")
+                           outdir / f"{benchmark}_2x6_frontier_comparison")
     hv_name = (
         "all_methods_20seed_hv_regret.png"
         if benchmarks == DEFAULT_BENCHMARKS
