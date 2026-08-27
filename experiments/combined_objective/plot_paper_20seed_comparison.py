@@ -168,8 +168,11 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     for col, (title, recommendations) in enumerate(conditions):
         for row in range(2):
             _draw_landscape(axes[row, col], truth)
-            axes[row, col].tick_params(axis="both", labelsize=11.5)
-        axes[0, col].set_title(title, fontsize=14, pad=8)
+            axes[row, col].tick_params(axis="both", labelsize=14)
+            axes[row, col].xaxis.set_major_formatter(
+                mpl.ticker.FuncFormatter(lambda value, _: f"{value:g}")
+            )
+        axes[0, col].set_title(title, fontsize=17, pad=10)
         selected = np.asarray(
             [models.index(name) for name in recommendations[42]], dtype=int,
         )
@@ -181,7 +184,7 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
             zorder=5,
         )
         axes[0, col].text(0.82, 0.04, f"{len(selected)} recommended", transform=axes[0, col].transAxes,
-                          ha="right", va="bottom", fontsize=10.5)
+                          ha="right", va="bottom", fontsize=13)
         counts = _frequency(models, recommendations)
         shown = counts > 0
         axes[1, col].scatter(
@@ -189,26 +192,26 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
             s=recommendation_size, edgecolors=recommendation_edge,
             linewidths=recommendation_linewidth, zorder=5,
         )
-    fig.supxlabel("Mean deployment cost (USD)", fontsize=15, y=0.025)
-    fig.supylabel("Mean accuracy", fontsize=15, x=0.052)
-    fig.text(0.018, 0.66, "Seed 42", rotation=90, ha="center", va="center",
-             fontsize=13)
-    fig.text(0.018, 0.285, "20-seed frequency", rotation=90,
-             ha="center", va="center", fontsize=13)
+    fig.supxlabel("Mean deployment cost (USD)", fontsize=19, y=0.020)
+    fig.supylabel("Mean accuracy", fontsize=19, x=0.016)
+    fig.text(0.052, 0.66, "Seed 42", rotation=90, ha="center", va="center",
+             fontsize=17)
+    fig.text(0.052, 0.285, "20-seed frequency", rotation=90,
+             ha="center", va="center", fontsize=17)
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     # Reserve a dedicated axis outside the four frontier columns.  Passing
     # ``ax=axes`` lets Matplotlib steal space unevenly and can overlap the last
     # panel once the manual paper layout is applied.
     fig.subplots_adjust(left=0.09, right=0.88, bottom=0.12, top=0.78,
                         wspace=0.08, hspace=0.12)
-    colorbar_ax = fig.add_axes([0.925, 0.18, 0.014, 0.57])
+    colorbar_ax = fig.add_axes([0.925, 0.12, 0.014, 0.66])
     colorbar = fig.colorbar(scalar, cax=colorbar_ax)
-    colorbar.set_label("Recommendation frequency (out of 20 seeds)", fontsize=13)
+    colorbar.set_label("Recommendation frequency (out of 20 seeds)", fontsize=17)
     colorbar.set_ticks([1, 5, 10, 15, 20])
-    colorbar.ax.tick_params(labelsize=11.5)
+    colorbar.ax.tick_params(labelsize=14)
     fig.suptitle(
         f"{LABELS[benchmark]}: single-run and 20-seed Pareto recommendations",
-        fontsize=18,
+        fontsize=22,
         y=0.975,
     )
     output_stem.parent.mkdir(parents=True, exist_ok=True)
