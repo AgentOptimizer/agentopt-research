@@ -79,7 +79,7 @@ python combined_objective/offline_multiobjective_random_search.py \
 Scripts auto-add `../src` to `PYTHONPATH` so `agentopt.model_selection` imports work.
 If a pickle is missing, they exit with a pointer to the local data directory.
 
-Available selectors: `brute_force` (combined objective), `random_search`, `matrix_ucb`, `gittins`, `bayesian_optimization`.
+Available selectors: `brute_force` (combined objective), `random_search`, `matrix_ucb`, `gittins`, `bayesian_optimization`. Pareto-set identification baselines (not live `ModelSelector` methods): `ege_sh`, `ege_sr`, `ape_k`, `qnehvi`.
 
 `combined_objective/offline_radial_gittins.py` has a separate set-valued result contract. It:
 
@@ -131,6 +131,31 @@ budget sweep and `combined_objective/plot_multiobjective_method_comparison.py`
 plots radial-Gittins against it. `combined_objective/audit_multiobjective_results.py`
 re-checks dominance, distance to the front and hypervolume against the
 brute-force frontier.
+
+Pareto-set identification baselines that are *not* radial index rules live in
+`combined_objective/offline_pareto_baselines.py`. They pull question batches
+from the same lookup tables and run to the full cell budget (no endogenous
+stop):
+
+* `ege_sh` (default EGE variant) and `ege_sr` — Empirical Gap Elimination
+  (Kone, Kaufmann, Richert, AISTATS 2024). Sequential Halving / Successive
+  Rejects allocation; fixed budget, no stopping time.
+* `ape_k` — Adaptive Pareto Exploration sampling (Kone et al., NeurIPS 2023).
+  The paper's `|OPT_ε1| ≥ k` fixed-confidence stop is omitted; the LUCB-style
+  sampler just exhausts the budget.
+* `qnehvi` — BoTorch qNEHVI over categorical configuration features
+  (`pip install -e ".[bayesian]"`). Sequential noisy hypervolume improvement
+  until the budget is gone.
+
+```bash
+python combined_objective/offline_pareto_baselines.py \
+    --pickle data/lookup/hotpotqa_lookup.pkl \
+    --methods ege_sh ape_k qnehvi \
+    --budget-fraction 1.0 --seeds 1
+
+python combined_objective/plot_pareto_identification_baselines.py \
+    --methods ege_sh ape_k qnehvi --seeds 1
+```
 
 `--budget-fraction` is a fraction of question cells, not dollars. A
 `--max-search-cost` guard reserves the frozen warm-start expected batch cost and

@@ -506,6 +506,48 @@ def hypervolume_2d(
     return float(area)
 
 
+def _nearest_distances(source: np.ndarray, target: np.ndarray) -> np.ndarray:
+    """Return the Euclidean distance from each ``source`` row to ``target``."""
+    source = np.asarray(source, dtype=np.float64)
+    target = np.asarray(target, dtype=np.float64)
+    if source.ndim != 2 or source.shape[1] != 2:
+        raise ValueError("source must have shape (n, 2)")
+    if target.ndim != 2 or target.shape[1] != 2:
+        raise ValueError("target must have shape (m, 2)")
+    if source.size == 0:
+        return np.empty(0, dtype=np.float64)
+    if target.size == 0:
+        return np.full(source.shape[0], math.inf, dtype=np.float64)
+    delta = source[:, None, :] - target[None, :, :]
+    return np.sqrt(np.sum(delta * delta, axis=-1)).min(axis=1)
+
+
+def generational_distance(
+    obtained: np.ndarray,
+    reference_front: np.ndarray,
+) -> float:
+    """Mean distance from obtained points to the nearest true-front point.
+
+    Both arrays are maximization vectors in the same geometry as
+    :func:`hypervolume_2d`.  An empty obtained set is ``+inf``.
+    """
+    distances = _nearest_distances(obtained, reference_front)
+    if distances.size == 0:
+        return math.inf
+    return float(np.mean(distances))
+
+
+def inverted_generational_distance(
+    obtained: np.ndarray,
+    reference_front: np.ndarray,
+) -> float:
+    """Mean distance from each true-front point to the nearest obtained point."""
+    distances = _nearest_distances(reference_front, obtained)
+    if distances.size == 0:
+        return 0.0
+    return float(np.mean(distances))
+
+
 def provisional_direction_winner_arms(
     *,
     posteriors: Mapping[int, GaussianVectorPosterior],
