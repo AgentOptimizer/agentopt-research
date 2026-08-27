@@ -57,9 +57,12 @@ from experiments.combined_objective.plot_radial_gittins_trajectories import (  #
 
 
 PICKLES = {
+    "GPQA": ROOT / "experiments/data/lookup/gpqa_lookup.pkl",
+    "BFCL": ROOT / "experiments/data/lookup/bfcl_lookup.pkl",
     "HotpotQA": ROOT / "experiments/data/lookup/hotpotqa_lookup.pkl",
     "MathQA": ROOT / "experiments/data/lookup/mathqa_lookup.pkl",
 }
+DEFAULT_BENCHMARKS = ("HotpotQA", "MathQA")
 
 RANDOM_STYLES = {
     "random_configurations": ("tab:brown", "Random configurations"),
@@ -283,7 +286,18 @@ def write_comparison_figure(
     x_axis: str,
     ylabel: str = "Normalized-desirability hypervolume regret",
 ) -> None:
-    figure, axes = plt.subplots(1, 2, figsize=(10.0, 4.7), sharey=False)
+    n_panels = len(panels)
+    ncols = 2 if n_panels > 1 else 1
+    nrows = int(np.ceil(n_panels / ncols))
+    figure, axes_grid = plt.subplots(
+        nrows, ncols,
+        figsize=(10.0, 4.7 if nrows == 1 else 8.2),
+        sharey=False,
+        squeeze=False,
+    )
+    axes = list(axes_grid.flat)
+    for ax in axes[n_panels:]:
+        ax.set_visible(False)
     for ax, panel in zip(axes, panels):
         _draw_stop_markers(ax, panel["stop_mean"], seeds)
         deployable_x, deployable_y, deployable_ci95, _ = panel["deployable"]
@@ -376,18 +390,19 @@ def write_comparison_figure(
         frameon=False,
     )
     shared_legend.set_in_layout(False)
-    figure.tight_layout(rect=(0.055, 0.23, 1.0, 0.98))
+    bottom = 0.23 if nrows == 1 else 0.14
+    figure.tight_layout(rect=(0.055, bottom, 1.0, 0.98))
     figure.supxlabel(
         "Cumulative search cost fraction"
         if x_axis == "cost" else "Observed cell-budget fraction",
         fontsize=14,
-        y=0.18,
+        y=0.18 if nrows == 1 else 0.10,
     )
     figure.supylabel(
         ylabel,
         fontsize=14,
         x=0.015,
-        y=0.60,
+        y=0.60 if nrows == 1 else 0.55,
     )
     # Use a fixed taller paper canvas even with the shared legend.
     figure.savefig(out_path, dpi=160)
@@ -431,7 +446,11 @@ def panels_from_csv(
         return xs, ys, cis, counts
 
     panels = []
-    for benchmark in PICKLES:
+    available_benchmarks = [
+        benchmark for benchmark in PICKLES
+        if (benchmark, "radial_gittins_deployable") in grouped
+    ]
+    for benchmark in available_benchmarks:
         random_curves = []
         for version in RANDOM_STYLES:
             xs, means, ci95, _ = _series(benchmark, version)
@@ -486,6 +505,11 @@ def main() -> None:
     )
     parser.add_argument("--batch-size", type=int, default=4, choices=(4, 8))
     parser.add_argument("--grid-size", type=int, default=129)
+    parser.add_argument(
+        "--benchmarks", nargs="+", choices=tuple(PICKLES),
+        default=list(DEFAULT_BENCHMARKS),
+        help="Benchmarks to run; defaults to HotpotQA and MathQA.",
+    )
     parser.add_argument(
         "--x-axis",
         choices=("cost", "cells"),
@@ -545,7 +569,8 @@ def main() -> None:
     seed_rows = []
     panels = []
 
-    for benchmark, pickle_path in PICKLES.items():
+    for benchmark in args.benchmarks:
+        pickle_path = PICKLES[benchmark]
         excluded = set(args.exclude_seed)
         run_seeds_list = []
         candidate_seed = args.seed
@@ -565,7 +590,7 @@ def main() -> None:
                 print(f"loaded {cache_path}")
             else:
                 last_error = None
-                for padding_extra in (0.0, 1.0, 2.0, 4.0):
+                for padding_extra in (0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0):
                     try:
                         radial, run_vectors, run_questions = run_benchmark(
                             pickle_path=pickle_path,
@@ -599,10 +624,10 @@ def main() -> None:
                         name=benchmark,
                         batch_size=args.batch_size,
                         seed=run_seed,
-                        grid_size=args.grid_size,
+                        grid_size=max(args.grid_size, 513),
                         directions=DEFAULT_DIRECTIONS,
                         eta=1.0,
-                        boundary_z_padding_extra=0.0,
+                        boundary_z_padding_extra=32.0,
                         cache=cache,
                         boundary_margin_cells=1,
                     )

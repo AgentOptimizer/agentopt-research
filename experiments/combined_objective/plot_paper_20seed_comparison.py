@@ -47,8 +47,21 @@ from experiments.single_objective.offline_selector_sim import load_pickle  # noq
 PICKLES = {
     "hotpotqa": ROOT / "experiments/data/lookup/hotpotqa_lookup.pkl",
     "mathqa": ROOT / "experiments/data/lookup/mathqa_lookup.pkl",
+    "gpqa": ROOT / "experiments/data/lookup/gpqa_lookup.pkl",
+    "bfcl": ROOT / "experiments/data/lookup/bfcl_lookup.pkl",
 }
-LABELS = {"hotpotqa": "HotpotQA", "mathqa": "MathQA"}
+LABELS = {
+    "hotpotqa": "HotpotQA", "mathqa": "MathQA", "gpqa": "GPQA", "bfcl": "BFCL",
+}
+DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
+
+
+def _gittins_csv(data_dir: Path, benchmark: str) -> Path:
+    return (
+        data_dir / "gittins_seed_results.csv"
+        if benchmark in DEFAULT_BENCHMARKS
+        else data_dir / "gpqa_bfcl_gittins_seed_results.csv"
+    )
 
 
 def _load_json_sets(path: Path, benchmark: str, *, budget: float | None = None) -> dict[int, set[str]]:
@@ -86,7 +99,7 @@ def _mean_cost_fraction(
     # checkpoints. Recover each run's full-matrix USD cost from the matched
     # Gittins summary: stop_cost / stop_cost_fraction uses that same denominator.
     gittins_rows = list(csv.DictReader(
-        (path.parent / "gittins_seed_results.csv").open(encoding="utf-8")
+        _gittins_csv(path.parent, benchmark).open(encoding="utf-8")
     ))
     full_cost = {
         int(row["seed"]): (
@@ -132,14 +145,15 @@ def _frequency(models: list[str], recommendations: dict[int, set[str]]) -> np.nd
 def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> None:
     models, datapoints, table = load_pickle(str(PICKLES[benchmark]))
     truth = mean_raw_vectors(models, common_question_ids(models, datapoints, table), table)
-    gittins = _load_json_sets(data_dir / "gittins_seed_results.csv", benchmark)
+    gittins_path = _gittins_csv(data_dir, benchmark)
+    gittins = _load_json_sets(gittins_path, benchmark)
     ucb = _load_json_sets(data_dir / "ucb_seed_results.csv", benchmark)
     random_path = data_dir / f"{benchmark}_random_questions.csv"
     random10 = _load_json_sets(random_path, benchmark, budget=0.1)
     random40 = _load_json_sets(random_path, benchmark, budget=0.4)
     matched_seeds = set(gittins)
     mean_costs = (
-        _mean_cost_fraction(data_dir / "gittins_seed_results.csv", benchmark,
+        _mean_cost_fraction(gittins_path, benchmark,
                             matched_seeds, fraction_field="gittins_stop_cost_fraction"),
         _mean_cost_fraction(data_dir / "ucb_seed_results.csv", benchmark,
                             matched_seeds, fraction_field="stop_budget_fraction"),
@@ -215,27 +229,34 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         y=0.975,
     )
     output_stem.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_stem.with_suffix(".png"), dpi=300, bbox_inches="tight")
-    fig.savefig(output_stem.with_suffix(".pdf"), bbox_inches="tight")
+    # Keep a fixed paper canvas. Tight bounding boxes can crop shared labels
+    # differently across datasets with very different deployment-cost scales.
+    fig.savefig(output_stem.with_suffix(".png"), dpi=300)
+    fig.savefig(output_stem.with_suffix(".pdf"))
     plt.close(fig)
 
 
-def write_hv_comparison(data_dir: Path, output_path: Path) -> None:
-    source_csv = data_dir / "gittins_random_hv_regret_summary.csv"
-    panels = panels_from_csv(source_csv, {}, "cost")
-    for panel in panels:
-        panel["random"] = [
-            series for series in panel["random"]
-            if series[0] == "random_questions"
-        ]
+def write_hv_comparison(
+    data_dir: Path, output_path: Path, benchmarks: tuple[str, ...],
+) -> None:
+    source_csvs = (
+        data_dir / "gittins_random_hv_regret_summary.csv",
+        data_dir / "small_gittins_run" / "method_hv_regret_summary.csv",
+    )
+    available_panels = []
+    for source_csv in source_csvs:
+        available_panels.extend(panels_from_csv(source_csv, {}, "cost"))
+    by_name = {panel["name"]: panel for panel in available_panels}
+    panels = [by_name[LABELS[benchmark]] for benchmark in benchmarks]
     ucb_rows = list(csv.DictReader((data_dir / "ucb_hv_regret_trajectories.csv").open()))
     appended_rows = []
-    for row in csv.DictReader(source_csv.open()):
-        if row["method"] == "random_configurations":
-            continue
-        row = dict(row)
-        row["ci95_half_width"] = float(row["ci95_half_width"]) * 2.0 / 1.96
-        appended_rows.append(row)
+    for source_csv in source_csvs:
+        for row in csv.DictReader(source_csv.open()):
+            if row["benchmark"].lower() not in benchmarks:
+                continue
+            row = dict(row)
+            row["ci95_half_width"] = float(row["ci95_half_width"]) * 2.0 / 1.96
+            appended_rows.append(row)
     for panel in panels:
         benchmark = panel["name"].lower()
         trajectories = []
@@ -290,7 +311,9 @@ def _checkpoint_metric_trajectory(run, field: str, archive_field: str):
     return xs, ys
 
 
-def write_distance_comparisons(data_dir: Path, outdir: Path) -> None:
+def write_distance_comparisons(
+    data_dir: Path, outdir: Path, benchmarks: tuple[str, ...],
+) -> None:
     """Backfill GD/IGD from saved archives and reuse the paper HV style."""
     matched_seeds = sorted({
         int(row["seed"])
@@ -309,48 +332,66 @@ def write_distance_comparisons(data_dir: Path, outdir: Path) -> None:
     panels_by_metric = {field: [] for field, _, _ in metric_specs}
     summary_rows = []
 
-    for benchmark in PICKLES:
+    for benchmark in benchmarks:
         models, datapoints, table = load_pickle(str(PICKLES[benchmark]))
         random_results = run_budget_sweep(
             models, datapoints, table, seeds=matched_seeds,
         )
-        gittins_runs = [
-            _load_saved_run(data_dir / "raw_gittins" / f"{benchmark}_seed-{seed}.pkl")
+        # Full post-stop trajectories are large. Load one archive at a time so
+        # the four-benchmark paper build does not retain 40 full runs in RAM.
+        gittins_paths = {
+            seed: data_dir / "raw_gittins" / f"{benchmark}_seed-{seed}.pkl"
             for seed in matched_seeds
-        ]
-        ucb_runs = [
-            _load_saved_run(data_dir / "raw_ucb" / f"{benchmark}_seed-{seed}.pkl")
+        }
+        ucb_paths = {
+            seed: data_dir / "raw_ucb" / f"{benchmark}_seed-{seed}.pkl"
             for seed in matched_seeds
-        ]
-        stop_mean = float(np.mean([
-            run.gittins_stop_cost_usd
-            / run.recommendation_trajectory[-1].cumulative_search_cost_usd
-            for run in gittins_runs
-        ]))
+        }
+        stop_fractions = []
+        for seed in matched_seeds:
+            run = _load_saved_run(gittins_paths[seed])
+            stop_fractions.append(
+                run.gittins_stop_cost_usd
+                / run.recommendation_trajectory[-1].cumulative_search_cost_usd
+            )
+            del run
+        stop_mean = float(np.mean(stop_fractions))
+        radial_template = _load_saved_run(gittins_paths[matched_seeds[0]])
+        radial_by_seed = {seed: radial_template for seed in matched_seeds}
 
         for field, _, _ in metric_specs:
             deployable = _radial_regret_series([
                 _checkpoint_metric_trajectory(
-                    run, field, "online_raw_archive_arm_indices",
+                    _load_saved_run(gittins_paths[seed]),
+                    field, "online_raw_archive_arm_indices",
                 )
-                for run in gittins_runs
+                for seed in matched_seeds
             ])
             provisional = _radial_regret_series([
                 _checkpoint_metric_trajectory(
-                    run, field, "posterior_archive_arm_indices",
+                    _load_saved_run(gittins_paths[seed]),
+                    field, "posterior_archive_arm_indices",
                 )
-                for run in gittins_runs
+                for seed in matched_seeds
             ])
             ucb = _radial_regret_series([
                 _checkpoint_metric_trajectory(
-                    run, field, "online_raw_archive_arm_indices",
+                    _load_saved_run(ucb_paths[seed]),
+                    field, "online_raw_archive_arm_indices",
                 )
-                for run in ucb_runs
+                for seed in matched_seeds
             ])
-            random = _random_regret_series(
+            random_questions = _random_regret_series(
                 random_results,
                 version="random_questions",
-                radial_by_seed={run.seed: run for run in gittins_runs},
+                radial_by_seed=radial_by_seed,
+                x_axis="cost",
+                field=field,
+            )
+            random_configurations = _random_regret_series(
+                random_results,
+                version="random_configurations",
+                radial_by_seed=radial_by_seed,
                 x_axis="cost",
                 field=field,
             )
@@ -360,7 +401,10 @@ def write_distance_comparisons(data_dir: Path, outdir: Path) -> None:
                 "deployable": deployable,
                 "provisional": provisional,
                 "ucb": ucb,
-                "random": [("random_questions", *random)],
+                "random": [
+                    ("random_questions", *random_questions),
+                    ("random_configurations", *random_configurations),
+                ],
             })
             for method, series in (
                 ("radial_gittins_deployable", deployable),
@@ -373,12 +417,18 @@ def write_distance_comparisons(data_dir: Path, outdir: Path) -> None:
                         "method": method, "cost_fraction": x, "mean": mean,
                         "two_se": two_se, "n_runs": int(count),
                     })
-            for x, mean, two_se in zip(*random):
-                summary_rows.append({
-                    "benchmark": LABELS[benchmark], "metric": field,
-                    "method": "random_questions", "cost_fraction": x,
-                    "mean": mean, "two_se": two_se, "n_runs": len(matched_seeds),
-                })
+            for method, series in (
+                ("random_questions", random_questions),
+                ("random_configurations", random_configurations),
+            ):
+                for x, mean, two_se in zip(*series):
+                    summary_rows.append({
+                        "benchmark": LABELS[benchmark], "metric": field,
+                        "method": method, "cost_fraction": x,
+                        "mean": mean, "two_se": two_se,
+                        "n_runs": len(matched_seeds),
+                    })
+        del radial_template, radial_by_seed
 
     for field, ylabel, filename in metric_specs:
         write_comparison_figure(
@@ -402,13 +452,32 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path,
                         default=ROOT / "analysis/paper_20seed_method_comparison")
+    parser.add_argument(
+        "--benchmarks", nargs="+", choices=tuple(PICKLES),
+        default=list(DEFAULT_BENCHMARKS),
+        help="Benchmarks to plot; defaults to HotpotQA and MathQA.",
+    )
+    parser.add_argument(
+        "--all-benchmarks", action="store_true",
+        help="Plot HotpotQA, MathQA, GPQA, and BFCL in one 2x2 metric figure.",
+    )
+    parser.add_argument("--skip-distances", action="store_true")
     args = parser.parse_args()
+    benchmarks = tuple(PICKLES) if args.all_benchmarks else tuple(args.benchmarks)
     outdir = args.data_dir / "figures"
-    for benchmark in PICKLES:
+    for benchmark in benchmarks:
         plot_frontier_grid(benchmark, args.data_dir,
                            outdir / f"{benchmark}_2x4_frontier_comparison")
-    write_hv_comparison(args.data_dir, outdir / "all_methods_20seed_hv_regret.png")
-    write_distance_comparisons(args.data_dir, outdir)
+    hv_name = (
+        "all_methods_20seed_hv_regret.png"
+        if benchmarks == DEFAULT_BENCHMARKS
+        else "all_methods_20seed_hv_regret_4benchmarks.png"
+        if benchmarks == tuple(PICKLES)
+        else f"all_methods_20seed_hv_regret_{'_'.join(benchmarks)}.png"
+    )
+    write_hv_comparison(args.data_dir, outdir / hv_name, benchmarks)
+    if not args.skip_distances:
+        write_distance_comparisons(args.data_dir, outdir, benchmarks)
     print(f"wrote consolidated figures under {outdir}")
 
 

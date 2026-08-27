@@ -23,9 +23,12 @@ from experiments.single_objective.offline_selector_sim import load_pickle  # noq
 
 
 PICKLES = {
+    "gpqa": ROOT / "experiments/data/lookup/gpqa_lookup.pkl",
+    "bfcl": ROOT / "experiments/data/lookup/bfcl_lookup.pkl",
     "hotpotqa": ROOT / "experiments/data/lookup/hotpotqa_lookup.pkl",
     "mathqa": ROOT / "experiments/data/lookup/mathqa_lookup.pkl",
 }
+DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
 SEEDS = tuple(range(42, 58)) + (59, 60, 61, 62)
 
 
@@ -41,7 +44,9 @@ def _run_one(benchmark: str, seed: int, destination: str) -> str:
         observation_budget_fraction=1.0,
         seed=seed,
         question_universe="common",
-        halt_on_index_stop=True,
+        # Record the adaptive stop, then continue the offline replay to the
+        # full matrix so diagnostic trajectories reach cost fraction 1.0.
+        halt_on_index_stop=False,
         record_recommendation_trajectory=True,
     )
     path = Path(destination)
@@ -54,6 +59,11 @@ def _write_summaries(outdir: Path) -> None:
     seed_rows = []
     trajectory_rows = []
     for benchmark in PICKLES:
+        if not all(
+            (outdir / "raw_ucb" / f"{benchmark}_seed-{seed}.pkl").exists()
+            for seed in SEEDS
+        ):
+            continue
         for seed in SEEDS:
             path = outdir / "raw_ucb" / f"{benchmark}_seed-{seed}.pkl"
             with path.open("rb") as handle:
@@ -103,16 +113,25 @@ def main() -> None:
         default=ROOT / "analysis/paper_20seed_method_comparison",
     )
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Recompute selected benchmark/seed caches even if they exist.",
+    )
+    parser.add_argument(
+        "--benchmarks", nargs="+", choices=tuple(PICKLES),
+        default=list(DEFAULT_BENCHMARKS),
+        help="Benchmarks to run; defaults to HotpotQA and MathQA.",
+    )
     args = parser.parse_args()
     outdir = args.outdir if args.outdir.is_absolute() else ROOT / args.outdir
     raw_dir = outdir / "raw_ucb"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
     pending = []
-    for benchmark in PICKLES:
+    for benchmark in args.benchmarks:
         for seed in SEEDS:
             destination = raw_dir / f"{benchmark}_seed-{seed}.pkl"
-            if not destination.exists():
+            if args.force or not destination.exists():
                 pending.append((benchmark, seed, destination))
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
         futures = {
@@ -124,7 +143,8 @@ def main() -> None:
             print(future.result(), flush=True)
 
     _write_summaries(outdir)
-    for benchmark, pickle_path in PICKLES.items():
+    for benchmark in args.benchmarks:
+        pickle_path = PICKLES[benchmark]
         models, datapoints, table = load_pickle(str(pickle_path))
         random_results = run_budget_sweep(
             models,
@@ -146,7 +166,8 @@ def main() -> None:
                     "bonus_mode": "posterior_sd",
                     "batch_size": 4,
                     "eta": 1.0,
-                    "budget": "adaptive_stop",
+                    "budget": "adaptive_stop_with_forced_full_diagnostic",
+                    "halt_on_index_stop": False,
                 },
                 "random_questions_budgets": [0.1, 0.4],
             },
