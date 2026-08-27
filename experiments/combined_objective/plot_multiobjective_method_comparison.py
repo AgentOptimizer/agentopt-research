@@ -69,10 +69,10 @@ RANDOM_STYLES = {
     "random_questions": ("tab:purple", "Random shared questions"),
 }
 
-GITTINS_COLOR = "tab:red"
+GITTINS_COLOR = "tab:orange"
 UCB_COLOR = "tab:blue"
 BASELINE_STYLES = {
-    "ege_sh": ("tab:orange", "EGE-SH"),
+    "ege_sh": ("tab:olive", "EGE-SH"),
     "ape_k": ("tab:blue", "APE-k"),
     "qnehvi": ("tab:pink", "qNEHVI"),
 }
@@ -226,7 +226,7 @@ def _draw_stop_markers(ax, stop_mean: float | None, seeds: int) -> None:
         stop_mean,
         color=GITTINS_COLOR,
         linestyle="--",
-        linewidth=1.4,
+        linewidth=1.8,
         label="Gittins stop" if seeds == 1 else "Mean Gittins stop",
     )
 
@@ -296,7 +296,7 @@ def write_comparison_figure(
     nrows = int(np.ceil(n_panels / ncols))
     figure, axes_grid = plt.subplots(
         nrows, ncols,
-        figsize=(10.0, 4.7 if nrows == 1 else 8.2),
+        figsize=(11.5, 5.0 if nrows == 1 else 8.5),
         sharey=False,
         squeeze=False,
     )
@@ -321,6 +321,7 @@ def write_comparison_figure(
             color=GITTINS_COLOR,
             label="Gittins completed-only",
             zorder=3,
+            linewidth=2.6,
         )
         if len(deployable_x):
             ax.scatter(
@@ -344,7 +345,7 @@ def write_comparison_figure(
             linestyle="-.",
             fill=False,
             zorder=2,
-            linewidth=1.3,
+            linewidth=1.6,
             alpha=0.55,
         )
         if panel.get("ucb") is not None:
@@ -380,7 +381,7 @@ def write_comparison_figure(
                 ax, xs, means, ci95, color=color, label=label,
                 linewidth=1.7,
             )
-        ax.set_title(panel["name"], fontsize=15)
+        ax.set_title(panel["name"], fontsize=18)
         ax.tick_params(axis="both", labelsize=11)
         ax.set_xlim(0.0, 1.02)
         ax.set_ylim(bottom=0.0)
@@ -397,16 +398,19 @@ def write_comparison_figure(
         loc="lower center",
         bbox_to_anchor=(0.5, 0.01),
         ncol=4 if len(unique) <= 8 else 5,
-        fontsize=11,
+        fontsize=13,
+        columnspacing=1.2,
+        handletextpad=0.6,
         frameon=False,
     )
     shared_legend.set_in_layout(False)
-    bottom = 0.23 if nrows == 1 else 0.14
-    figure.tight_layout(rect=(0.055, bottom, 1.0, 0.98))
+    bottom = 0.25 if nrows == 1 else 0.15
+    figure.tight_layout(rect=(0.065, bottom, 0.985, 0.98))
     figure.supxlabel(
         "Cumulative search cost fraction"
         if x_axis == "cost" else "Observed cell-budget fraction",
-        fontsize=14,
+        fontsize=17,
+        x=0.54,
         y=0.18 if nrows == 1 else 0.10,
     )
     figure.supylabel(
