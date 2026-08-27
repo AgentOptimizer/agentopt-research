@@ -149,10 +149,11 @@ def _draw_landscape(ax, truth: np.ndarray) -> None:
     indices = np.asarray(pareto_min_cost_indices(truth), dtype=int)
     indices = indices[np.argsort(truth[indices, 1])]
     front = truth[indices]
-    ax.scatter(truth[:, 1], truth[:, 0], s=15, color="#d8dce2", alpha=0.7,
+    ax.scatter(truth[:, 1], truth[:, 0], s=26, color="#d8dce2", alpha=0.75,
                edgecolors="none", zorder=1)
-    ax.plot(front[:, 1], front[:, 0], color="#3f4854", linewidth=1.4,
-            marker="o", markersize=3, markerfacecolor="white", zorder=3)
+    ax.plot(front[:, 1], front[:, 0], color="#3f4854", linewidth=1.7,
+            marker="o", markersize=5, markerfacecolor="white",
+            markeredgewidth=1.2, zorder=3)
     ax.grid(color="#d9dde3", linewidth=0.55, alpha=0.5)
     ax.spines[["top", "right"]].set_visible(False)
     ax.set_axisbelow(True)
@@ -236,9 +237,9 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     )
     norm = mpl.colors.Normalize(vmin=1, vmax=20)
     fig, axes = plt.subplots(2, 5, figsize=(20.5, 8.6), sharex=True, sharey=True)
-    recommendation_size = 72
+    recommendation_size = 110
     recommendation_edge = "#725b46"
-    recommendation_linewidth = 0.65
+    recommendation_linewidth = 0.85
     for col, (title, recommendations) in enumerate(conditions):
         for row in range(2):
             _draw_landscape(axes[row, col], truth)
