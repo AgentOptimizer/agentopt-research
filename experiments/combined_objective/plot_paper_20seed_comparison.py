@@ -41,6 +41,9 @@ from experiments.combined_objective.plot_multiobjective_method_comparison import
     panels_from_csv,
     write_comparison_figure,
 )
+from experiments.combined_objective.plot_pareto_identification_baselines import (  # noqa: E402
+    _series_from_rows as _baseline_series_from_rows,
+)
 from experiments.single_objective.offline_selector_sim import load_pickle  # noqa: E402
 
 
@@ -54,6 +57,26 @@ LABELS = {
     "hotpotqa": "HotpotQA", "mathqa": "MathQA", "gpqa": "GPQA", "bfcl": "BFCL",
 }
 DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
+BASELINE_METHODS = ("ege_sh", "ape_k")
+
+
+def _load_baseline_rows(data_dir: Path) -> list[dict]:
+    path = data_dir / "pareto_baselines" / "cost_trajectory.csv"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"missing {path}; run plot_pareto_identification_baselines.py first"
+        )
+    return list(csv.DictReader(path.open(encoding="utf-8")))
+
+
+def _baseline_curves(rows: list[dict], benchmark: str, metric: str):
+    label = LABELS[benchmark]
+    return [
+        (method, *_baseline_series_from_rows(
+            rows, method=method, benchmark=label, metric=metric,
+        )[:3])
+        for method in BASELINE_METHODS
+    ]
 
 
 def _gittins_csv(data_dir: Path, benchmark: str) -> Path:
@@ -249,6 +272,7 @@ def write_hv_comparison(
     by_name = {panel["name"]: panel for panel in available_panels}
     panels = [by_name[LABELS[benchmark]] for benchmark in benchmarks]
     ucb_rows = list(csv.DictReader((data_dir / "ucb_hv_regret_trajectories.csv").open()))
+    baseline_rows = _load_baseline_rows(data_dir)
     appended_rows = []
     for source_csv in source_csvs:
         for row in csv.DictReader(source_csv.open()):
@@ -268,6 +292,9 @@ def write_hv_comparison(
             ))
         series = _radial_regret_series(trajectories)
         panel["ucb"] = series
+        panel["baselines"] = _baseline_curves(
+            baseline_rows, benchmark, "hv_regret",
+        )
         for x, mean, ci, count in zip(*series):
             appended_rows.append({
                 "benchmark": panel["name"], "method": "radial_ucb",
@@ -322,6 +349,7 @@ def write_distance_comparisons(
     })
     if len(matched_seeds) != 20:
         raise ValueError("expected exactly 20 matched seeds")
+    baseline_rows = _load_baseline_rows(data_dir)
 
     metric_specs = (
         ("generational_distance", "Generational distance (GD)",
@@ -405,6 +433,9 @@ def write_distance_comparisons(
                     ("random_questions", *random_questions),
                     ("random_configurations", *random_configurations),
                 ],
+                "baselines": _baseline_curves(
+                    baseline_rows, benchmark, field,
+                ),
             })
             for method, series in (
                 ("radial_gittins_deployable", deployable),
@@ -416,6 +447,16 @@ def write_distance_comparisons(
                         "benchmark": LABELS[benchmark], "metric": field,
                         "method": method, "cost_fraction": x, "mean": mean,
                         "two_se": two_se, "n_runs": int(count),
+                    })
+            for method, xs, means, two_se in _baseline_curves(
+                baseline_rows, benchmark, field,
+            ):
+                for x, mean, spread in zip(xs, means, two_se):
+                    summary_rows.append({
+                        "benchmark": LABELS[benchmark], "metric": field,
+                        "method": method, "cost_fraction": x,
+                        "mean": mean, "two_se": spread,
+                        "n_runs": len(matched_seeds),
                     })
             for method, series in (
                 ("random_questions", random_questions),

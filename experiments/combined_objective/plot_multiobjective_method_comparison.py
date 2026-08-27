@@ -71,6 +71,10 @@ RANDOM_STYLES = {
 
 GITTINS_COLOR = "tab:red"
 UCB_COLOR = "tab:blue"
+BASELINE_STYLES = {
+    "ege_sh": ("#e09f3e", "EGE-SH"),
+    "ape_k": ("#2a9d8f", "APE-k"),
+}
 
 
 def _gittins_hv_space(
@@ -369,6 +373,12 @@ def write_comparison_figure(
                 marker="o",
                 linewidth=1.5,
             )
+        for method, xs, means, ci95 in panel.get("baselines", []):
+            color, label = BASELINE_STYLES.get(method, ("tab:gray", method))
+            _plot_regret_line(
+                ax, xs, means, ci95, color=color, label=label,
+                linewidth=1.7,
+            )
         ax.set_title(panel["name"], fontsize=15)
         ax.tick_params(axis="both", labelsize=11)
         ax.set_xlim(0.0, 1.02)
@@ -385,7 +395,7 @@ def write_comparison_figure(
         unique.keys(),
         loc="lower center",
         bbox_to_anchor=(0.5, 0.01),
-        ncol=4,
+        ncol=4 if len(unique) <= 8 else 5,
         fontsize=11,
         frameon=False,
     )
