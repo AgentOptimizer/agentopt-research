@@ -1,0 +1,83 @@
+{
+  "HotpotQA": {
+    "selector": "qnehvi",
+    "seed": 42,
+    "stop_reason": "question_budget",
+    "hv_regret": 0.0,
+    "generational_distance": 0.0,
+    "inverted_generational_distance": 0.0,
+    "evaluations": 15390,
+    "cost_usd": 49.37591075000025,
+    "archive_size": 8,
+    "final_models": [
+      "planner=Ministral 3 8B + solver=Claude Opus 4.6",
+      "planner=Ministral 3 8B + solver=gpt-oss-20b",
+      "planner=Qwen3 32B + solver=gpt-oss-120b",
+      "planner=Qwen3 Next 80B A3B + solver=gpt-oss-120b",
+      "planner=gpt-oss-120b + solver=Ministral 3 8B",
+      "planner=gpt-oss-120b + solver=gpt-oss-20b",
+      "planner=gpt-oss-20b + solver=Ministral 3 8B",
+      "planner=gpt-oss-20b + solver=gpt-oss-20b"
+    ],
+    "wall_seconds": 53.354124208010035,
+    "qnehvi_fits": 162,
+    "qnehvi_fit_failures": 0,
+    "params": {
+      "method": "qnehvi",
+      "batch_size": 4,
+      "observation_budget_fraction": 1.0,
+      "cell_budget": 15390,
+      "n_models": 81,
+      "n_questions": 190,
+      "algorithm_cost_reference_usd": 0.0011926875000000002,
+      "evaluation_cost_reference_usd": 0.0013278947368421052,
+      "bruteforce_search_cost_usd": 49.37591074999999,
+      "reference_point": [
+        0.0,
+        0.0
+      ],
+      "halt_on_identification_stop": false,
+      "qnehvi_mc_samples": 64,
+      "qnehvi_refit_every": 32
+    }
+  },
+  "MathQA": {
+    "selector": "qnehvi",
+    "seed": 42,
+    "stop_reason": "question_budget",
+    "hv_regret": 0.0,
+    "generational_distance": 0.0,
+    "inverted_generational_distance": 0.0,
+    "evaluations": 10935,
+    "cost_usd": 90.25981003000055,
+    "archive_size": 5,
+    "final_models": [
+      "answer=Claude Opus 4.6 + critic=Ministral 3 8B",
+      "answer=Claude Opus 4.6 + critic=Qwen3 Next 80B A3B",
+      "answer=Ministral 3 8B + critic=Ministral 3 8B",
+      "answer=Ministral 3 8B + critic=Qwen3 Next 80B A3B",
+      "answer=gpt-oss-20b + critic=gpt-oss-20b"
+    ],
+    "wall_seconds": 50.479626207990805,
+    "qnehvi_fits": 162,
+    "qnehvi_fit_failures": 0,
+    "params": {
+      "method": "qnehvi",
+      "batch_size": 4,
+      "observation_budget_fraction": 1.0,
+      "cell_budget": 10935,
+      "n_models": 81,
+      "n_questions": 135,
+      "algorithm_cost_reference_usd": 0.0023796500000000005,
+      "evaluation_cost_reference_usd": 0.0030366644444444445,
+      "bruteforce_search_cost_usd": 90.25981002999998,
+      "reference_point": [
+        0.0,
+        0.0
+      ],
+      "halt_on_identification_stop": false,
+      "qnehvi_mc_samples": 64,
+      "qnehvi_refit_every": 32
+    }
+  }
+}
