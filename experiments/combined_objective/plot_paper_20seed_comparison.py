@@ -170,9 +170,21 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
     truth = mean_raw_vectors(models, common_question_ids(models, datapoints, table), table)
     gittins_path = _gittins_csv(data_dir, benchmark)
     gittins = _load_json_sets(gittins_path, benchmark)
+    matched_seeds = set(gittins)
     random_path = data_dir / f"{benchmark}_random_questions.csv"
     random10 = _load_json_sets(random_path, benchmark, budget=0.1)
-    random40 = _load_json_sets(random_path, benchmark, budget=0.4)
+    random_configuration_runs = run_budget_sweep(
+        models,
+        datapoints,
+        table,
+        versions=("random_configurations",),
+        budget_fractions=(0.1,),
+        seeds=tuple(sorted(matched_seeds)),
+    )
+    random_configurations10 = {
+        result.seed: set(result.selected_models)
+        for result in random_configuration_runs
+    }
     baseline_path = data_dir / "pareto_baselines_10pct" / "recommendations.csv"
     baseline_rows = list(csv.DictReader(baseline_path.open(encoding="utf-8")))
     ege10 = {
@@ -185,12 +197,19 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         for row in baseline_rows
         if row["benchmark"] == benchmark and row["method"] == "ape_k"
     }
-    matched_seeds = set(gittins)
+    full_search_cost = float(sum(
+        table[model][question].cost
+        for model in models
+        for question in common_question_ids(models, datapoints, table)
+    ))
     mean_costs = (
         _mean_cost_fraction(gittins_path, benchmark,
                             matched_seeds, fraction_field="gittins_stop_cost_fraction"),
         _mean_cost_fraction(random_path, benchmark, matched_seeds, budget=0.1),
-        _mean_cost_fraction(random_path, benchmark, matched_seeds, budget=0.4),
+        float(np.mean([
+            result.total_search_cost_usd / full_search_cost
+            for result in random_configuration_runs
+        ])),
         float(np.mean([
             float(row["actual_cost_fraction"]) for row in baseline_rows
             if row["benchmark"] == benchmark and row["method"] == "ege_sh"
@@ -201,11 +220,11 @@ def plot_frontier_grid(benchmark: str, data_dir: Path, output_stem: Path) -> Non
         ])),
     )
     conditions = (
-        (f"Gittins adaptive stop\nMean cost: {mean_costs[0]:.1%}", gittins),
-        (f"Random questions, 10% budget\nMean cost: {mean_costs[1]:.1%}", random10),
-        (f"Random questions, 40% budget\nMean cost: {mean_costs[2]:.1%}", random40),
-        (f"EGE-SH, 10% cell budget\nMean cost: {mean_costs[3]:.1%}", ege10),
-        (f"APE-k, 10% cell budget\nMean cost: {mean_costs[4]:.1%}", ape10),
+        (f"Gittins\nAdaptive stop\nMean search cost: {mean_costs[0]:.1%}", gittins),
+        (f"EGE-SH\n10% search budget\nMean search cost: {mean_costs[3]:.1%}", ege10),
+        (f"APE-k\n10% search budget\nMean search cost: {mean_costs[4]:.1%}", ape10),
+        (f"Random questions\n10% search budget\nMean search cost: {mean_costs[1]:.1%}", random10),
+        (f"Random configurations\n10% search budget\nMean search cost: {mean_costs[2]:.1%}", random_configurations10),
     )
     seed_sets = [set(values) for _, values in conditions]
     if any(len(values) != 20 for values in seed_sets) or len(set(map(frozenset, seed_sets))) != 1:
