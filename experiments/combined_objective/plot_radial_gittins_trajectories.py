@@ -7,15 +7,15 @@ the endogenous Gittins stop so the trajectory covers later budgets, and writes:
 * one HV-regret, GD, and IGD curve per benchmark against cumulative search
   cost as a fraction of brute-force spend, dashed while the trajectory is the
   all-posterior provisional diagnostic and solid once it becomes the
-  completed-only deployable recommendation at the Gittins stop;
+  confidence-gated deployable recommendation at the Gittins stop;
 * a raw-archive comparison at the Gittins stop, at 50% of brute-force search
   cost, and at the actual end fraction.
 
 Each checkpoint carries a single archive whose scope it reports.  Before the
-policy stops nothing is deployable, so the curve tracks the provisional
-archive; from the stop onward it is the recommendation contract and unfinished
-winners are never promoted into it.  The replay continues after the stop only
-to show counterfactual fixed-budget diagnostics.
+policy stops the curve tracks the provisional archive; from the stop onward
+it is the confidence-gated recommendation contract (only arms with small
+enough posterior variance relative to the prior).  The replay continues after the
+stop only to show counterfactual fixed-budget diagnostics.
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ def _checkpoint_at_or_after(
 
 def _scope_label(checkpoint: RecommendationCheckpoint) -> str:
     return (
-        "completed-only deployable"
+        "confidence-gated deployable"
         if checkpoint.is_deployable
         else "all-posterior provisional"
     )
@@ -139,6 +139,8 @@ def run_benchmark(
     eta: float,
     boundary_z_padding_extra: float,
     cache: RadialGittinsBoundaryCache,
+    include_exact_axis_anchors: bool = True,
+    confidence_variance_ratio: float = 0.25,
 ) -> Tuple[RadialSimulationResult, np.ndarray, Tuple[int, ...]]:
     models, datapoints, table = load_pickle(pickle_path)
     grid = RadialGittinsGrid(
@@ -147,7 +149,11 @@ def run_benchmark(
         state_size=grid_size,
         boundary_margin_cells=max(2, min(4, grid_size // 32)),
     )
-    print(f"\n=== {name}: {len(models)} models, seed={seed}, grid={grid_size} ===")
+    print(
+        f"\n=== {name}: {len(models)} models, seed={seed}, grid={grid_size}, "
+        f"axis_anchors={include_exact_axis_anchors}, "
+        f"conf_var_ratio={confidence_variance_ratio} ==="
+    )
     result = simulate_radial_gittins(
         models,
         datapoints,
@@ -160,6 +166,8 @@ def run_benchmark(
         seed=seed,
         boundary_grid=grid,
         boundary_cache=cache,
+        include_exact_axis_anchors=include_exact_axis_anchors,
+        confidence_variance_ratio=confidence_variance_ratio,
         halt_on_gittins_stop=False,
         record_recommendation_trajectory=True,
         question_universe="common",
@@ -238,7 +246,7 @@ def _plot_scope_series(
             [getattr(p, field) for p in deployable],
             color="#1f4e79",
             linewidth=1.9,
-            label="deployable completed-only recommendation",
+            label="deployable confidence-gated recommendation",
         )
     if deployable:
         handover = deployable[0]
@@ -293,7 +301,7 @@ def plot_hv_curves(
         handover_label="deployable regret at handover",
         title=(
             "One recommendation trajectory per benchmark: all-posterior "
-            "diagnostic before the Gittins stop, completed-only after"
+            "diagnostic before the Gittins stop, confidence-gated after"
         ),
     )
 
@@ -583,6 +591,23 @@ def main() -> None:
         help="Extra z-grid guard band for low-cost or extreme directions",
     )
     parser.add_argument(
+        "--confidence-variance-ratio",
+        type=float,
+        default=0.25,
+        help=(
+            "Posterior-variance confidence gate as a fraction of prior "
+            "variance (default: 0.25)"
+        ),
+    )
+    parser.add_argument(
+        "--no-exact-axis-anchors",
+        action="store_true",
+        help=(
+            "Disable the exact accuracy/cost Gittins anchors "
+            "(enabled by default, matching the offline CLI)"
+        ),
+    )
+    parser.add_argument(
         "--grid-size",
         type=int,
         default=129,
@@ -623,6 +648,8 @@ def main() -> None:
             eta=args.eta,
             boundary_z_padding_extra=args.boundary_z_padding_extra,
             cache=cache,
+            include_exact_axis_anchors=(not args.no_exact_axis_anchors),
+            confidence_variance_ratio=args.confidence_variance_ratio,
         )
         results[display] = result
         raw_by_name[display] = raw_vectors
@@ -641,6 +668,8 @@ def main() -> None:
             "eta": args.eta,
             "directions": [list(direction) for direction in directions],
             "boundary_z_padding_extra": args.boundary_z_padding_extra,
+            "include_exact_axis_anchors": (not args.no_exact_axis_anchors),
+            "confidence_variance_ratio": args.confidence_variance_ratio,
             "stop_reason": result.stop_reason,
             "gittins_stop_budget_fraction": result.gittins_stop_budget_fraction,
             "gittins_stop_evaluations": result.gittins_stop_evaluations,
@@ -738,7 +767,7 @@ def main() -> None:
             handover_label=spec["handover"],
             title=(
                 "One recommendation trajectory per benchmark: all-posterior "
-                "diagnostic before the Gittins stop, completed-only after"
+                "diagnostic before the Gittins stop, confidence-gated after"
             ),
         )
     plot_front_quality_curves(results, outdir / "front_quality_curves.png")

@@ -7,7 +7,9 @@ from agentopt.model_selection.radial_gittins_dp import (
     BoundaryGridError,
     RadialGittinsBoundaryCache,
     RadialGittinsGrid,
+    axis_aware_grid,
     build_radial_gittins_boundary_table,
+    build_scalar_gittins_boundary_table,
     direction_aware_grid,
     gaussian_expectation_separable,
     posterior_variance_schedule,
@@ -250,6 +252,65 @@ class BoundaryTableTests(unittest.TestCase):
         )
         self.assertAlmostEqual(observed, 0.5 - 0.2 / math.sqrt(math.pi), places=12)
         self.assertLess(observed, 0.5)
+
+
+
+class ExactAxisGittinsTests(unittest.TestCase):
+    def test_axis_grid_is_finite_without_near_zero_direction_scaling(self):
+        grid = axis_aware_grid(reference=0.0)
+
+        self.assertEqual((grid.z_min, grid.z_max), (-2.0, 2.0))
+        self.assertEqual((grid.delta_min, grid.delta_max), (-12.0, 12.0))
+
+    def test_scalar_table_has_terminal_mean_index_and_cost_ordering(self):
+        grid = RadialGittinsGrid(
+            z_min=-2.0,
+            z_max=2.0,
+            z_size=81,
+            delta_min=-3.0,
+            delta_max=3.0,
+            delta_size=61,
+            state_size=81,
+            state_halo=3.0,
+            boundary_margin_cells=2,
+        )
+        low_cost = build_scalar_gittins_boundary_table(
+            objective_index=0,
+            effective_pull_cost=0.001,
+            initial_var=0.04,
+            obs_noise_var=0.0625,
+            horizon=3,
+            grid=grid,
+        )
+        high_cost = build_scalar_gittins_boundary_table(
+            objective_index=0,
+            effective_pull_cost=0.05,
+            initial_var=0.04,
+            obs_noise_var=0.0625,
+            horizon=3,
+            grid=grid,
+        )
+
+        self.assertEqual(low_cost.boundary(3), 0.0)
+        self.assertEqual(high_cost.boundary(3), 0.0)
+        self.assertGreater(high_cost.boundary(0), low_cost.boundary(0))
+
+    def test_scalar_cache_reuses_matching_axis_tables(self):
+        cache = RadialGittinsBoundaryCache()
+        kwargs = dict(
+            objective_index=1,
+            effective_pull_cost=0.05,
+            initial_var=0.04,
+            obs_noise_var=0.0625,
+            horizon=3,
+            grid=axis_aware_grid(),
+        )
+
+        first = cache.get_axis(**kwargs)
+        second = cache.get_axis(**kwargs)
+
+        self.assertIs(first, second)
+        self.assertEqual(len(cache), 1)
 
 
 if __name__ == "__main__":

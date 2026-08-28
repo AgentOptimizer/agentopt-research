@@ -203,6 +203,42 @@ def direction_aware_grid(
     )
 
 
+def axis_aware_grid(
+    *,
+    base_grid: RadialGittinsGrid = RadialGittinsGrid(),
+    objective_lower: float = 0.0,
+    objective_upper: float = 1.0,
+    reference: float = 0.0,
+    padding: float = 1.0,
+) -> RadialGittinsGrid:
+    """Return a tight scalar-state grid for an exact objective anchor.
+
+    An anchor compares one arm with the best alternative (or the null value at
+    the reference point), so its centered state is a difference of two values
+    rather than a direction-scaled radial coordinate.  This construction has
+    no division by a direction component and remains well behaved at the exact
+    axes.
+    """
+    lower = float(objective_lower)
+    upper = float(objective_upper)
+    reference = float(reference)
+    padding = float(padding)
+    if not all(math.isfinite(x) for x in (lower, upper, reference, padding)):
+        raise ValueError("axis grid settings must be finite")
+    if upper <= lower:
+        raise ValueError("objective_upper must exceed objective_lower")
+    if padding <= 0.0:
+        raise ValueError("padding must be positive")
+
+    relative_values = (lower - reference, upper - reference, 0.0)
+    difference_span = max(relative_values) - min(relative_values)
+    return replace(
+        base_grid,
+        z_min=-difference_span - padding,
+        z_max=difference_span + padding,
+    )
+
+
 @dataclass(frozen=True)
 class RadialGittinsBoundaryTable:
     """Stopping boundaries at stages ``0..H``; row ``H`` is terminal."""
@@ -246,6 +282,54 @@ class RadialGittinsBoundaryTable:
         return float(
             np.interp(delta, self.delta_grid, self.boundaries[int(stage)])
         )
+
+
+@dataclass(frozen=True)
+class ScalarGittinsBoundaryTable:
+    """Finite-horizon scalar Gittins roots for an exact axis anchor.
+
+    The online scalar index is ``posterior_mean - boundary(stage)``.  At the
+    horizon the boundary is zero, so a fully evaluated arm's index is its
+    posterior mean.  Recommendation eligibility is decided online by a
+    posterior-variance confidence gate, not by this table alone.
+    """
+
+    objective_index: int
+    effective_pull_cost: float
+    initial_var: float
+    obs_noise_var: float
+    horizon: int
+    grid: RadialGittinsGrid
+    x_grid: np.ndarray
+    boundaries: np.ndarray
+
+    def __post_init__(self) -> None:
+        if self.objective_index not in (0, 1):
+            raise ValueError("objective_index must be 0 or 1")
+        x_grid = np.asarray(self.x_grid, dtype=np.float64).copy()
+        boundaries = np.asarray(self.boundaries, dtype=np.float64).copy()
+        if x_grid.ndim != 1 or x_grid.size < 17:
+            raise ValueError("x_grid must be a one-dimensional grid of size >= 17")
+        if not np.all(np.isfinite(x_grid)) or not np.all(np.diff(x_grid) > 0.0):
+            raise ValueError("x_grid must be finite and strictly increasing")
+        expected_shape = (self.horizon + 1,)
+        if boundaries.shape != expected_shape:
+            raise ValueError(
+                f"boundaries must have shape {expected_shape}, "
+                f"got {boundaries.shape}"
+            )
+        if not np.all(np.isfinite(boundaries)):
+            raise ValueError("boundaries must be finite")
+        x_grid.setflags(write=False)
+        boundaries.setflags(write=False)
+        object.__setattr__(self, "x_grid", x_grid)
+        object.__setattr__(self, "boundaries", boundaries)
+
+    def boundary(self, stage: int) -> float:
+        """Return the scalar stopping root at one posterior stage."""
+        if int(stage) != stage or not 0 <= int(stage) <= self.horizon:
+            raise IndexError(f"stage must lie in [0, {self.horizon}]")
+        return float(self.boundaries[int(stage)])
 
 
 def posterior_variance_schedule(
@@ -733,11 +817,161 @@ def build_radial_gittins_boundary_table(
     )
 
 
+def _scalar_state_grid(
+    grid: RadialGittinsGrid,
+    variance_schedule: np.ndarray,
+) -> np.ndarray:
+    """Build a scalar grid with enough halo for all future belief movement."""
+    cumulative_variance = max(
+        0.0,
+        float(variance_schedule[0] - variance_schedule[-1]),
+    )
+    halo = max(
+        float(grid.state_halo),
+        float(grid.kernel_stddevs) * math.sqrt(cumulative_variance),
+    )
+    nominal_step = (
+        (grid.z_max - grid.z_min) + 2.0 * grid.state_halo
+    ) / (grid.state_size - 1)
+    lower = grid.z_min - halo
+    upper = grid.z_max + halo
+    size = max(
+        grid.state_size,
+        int(math.ceil((upper - lower) / nominal_step)) + 1,
+    )
+    return np.linspace(lower, upper, size, dtype=np.float64)
+
+
+def _scalar_boundary_from_q(
+    q_values: np.ndarray,
+    x_grid: np.ndarray,
+    *,
+    margin_cells: int,
+    monotonicity_tolerance: float,
+) -> Tuple[float, float]:
+    """Extract the unique scalar continuation root from a monotone Q curve."""
+    differences = np.diff(q_values)
+    maximum_violation = max(0.0, float(-np.min(differences)))
+    if maximum_violation > monotonicity_tolerance:
+        raise BoundaryGridError(
+            "scalar q(x) is not numerically nondecreasing; "
+            f"violation {maximum_violation:.3g} exceeds "
+            f"{monotonicity_tolerance:.3g}"
+        )
+    nonnegative = q_values >= 0.0
+    if not nonnegative.any():
+        raise BoundaryGridError(
+            "no scalar boundary root before x_grid maximum; widen the z grid"
+        )
+    upper = int(np.argmax(nonnegative))
+    if upper == 0:
+        raise BoundaryGridError(
+            "scalar boundary root is at or below x_grid minimum; widen the z grid"
+        )
+    if upper < margin_cells or upper >= x_grid.size - margin_cells:
+        raise BoundaryGridError(
+            "scalar boundary root is too close to a grid edge: "
+            f"crossing_index={upper}, required=[{margin_cells}, "
+            f"{x_grid.size - margin_cells})"
+        )
+    lower = upper - 1
+    denominator = float(q_values[upper] - q_values[lower])
+    weight = (
+        1.0
+        if denominator == 0.0
+        else float(-q_values[lower] / denominator)
+    )
+    root = float(x_grid[lower] + weight * (x_grid[upper] - x_grid[lower]))
+    return root, maximum_violation
+
+
+def build_scalar_gittins_boundary_table(
+    *,
+    objective_index: int,
+    effective_pull_cost: float,
+    initial_var: float,
+    obs_noise_var: float,
+    horizon: int,
+    grid: RadialGittinsGrid = RadialGittinsGrid(),
+) -> ScalarGittinsBoundaryTable:
+    """Solve the exact-axis completion-based finite-horizon Gittins DP.
+
+    For centered posterior mean ``x`` the recursion is
+
+    ``V_H(x) = max(0, x)``
+
+    ``Q_n(x) = -c + E[V_{n+1}(x')]``
+
+    ``V_n(x) = max(0, Q_n(x))``.
+    """
+    if objective_index not in (0, 1):
+        raise ValueError("objective_index must be 0 or 1")
+    cost = float(effective_pull_cost)
+    initial = float(initial_var)
+    noise = float(obs_noise_var)
+    if not math.isfinite(cost) or cost <= 0.0:
+        raise ValueError("effective_pull_cost must be finite and strictly positive")
+    if not math.isfinite(initial) or initial <= 0.0:
+        raise ValueError("initial_var must be finite and strictly positive")
+    if not math.isfinite(noise) or noise <= 0.0:
+        raise ValueError("obs_noise_var must be finite and strictly positive")
+    if int(horizon) != horizon or horizon <= 0:
+        raise ValueError("horizon must be a positive integer")
+    horizon = int(horizon)
+
+    variances = posterior_variance_schedule(
+        (initial, initial),
+        (noise, noise),
+        horizon,
+    )[:, 0]
+    x_grid = _scalar_state_grid(grid, variances)
+    value = np.maximum(0.0, x_grid)
+    boundaries = np.empty(horizon + 1, dtype=np.float64)
+    boundaries[horizon] = 0.0
+
+    for stage in range(horizon - 1, -1, -1):
+        transition_variance = max(
+            0.0,
+            float(variances[stage] - variances[stage + 1]),
+        )
+        if transition_variance <= np.finfo(np.float64).tiny:
+            continuation = value - cost
+        else:
+            continuation = _convolve_axis(
+                value,
+                transition_variance,
+                x_grid,
+                axis=0,
+                kernel_stddevs=grid.kernel_stddevs,
+            ) - cost
+        boundaries[stage], _ = _scalar_boundary_from_q(
+            continuation,
+            x_grid,
+            margin_cells=grid.boundary_margin_cells,
+            monotonicity_tolerance=grid.monotonicity_tolerance,
+        )
+        value = np.maximum(0.0, continuation)
+
+    return ScalarGittinsBoundaryTable(
+        objective_index=int(objective_index),
+        effective_pull_cost=cost,
+        initial_var=initial,
+        obs_noise_var=noise,
+        horizon=horizon,
+        grid=grid,
+        x_grid=x_grid,
+        boundaries=boundaries,
+    )
+
+
 class RadialGittinsBoundaryCache:
     """In-process cache keyed by every setting that changes a DP table."""
 
     def __init__(self) -> None:
         self._tables: Dict[Tuple[object, ...], RadialGittinsBoundaryTable] = {}
+        self._axis_tables: Dict[
+            Tuple[object, ...], ScalarGittinsBoundaryTable
+        ] = {}
 
     def get(
         self,
@@ -773,8 +1007,41 @@ class RadialGittinsBoundaryCache:
             self._tables[key] = table
         return table
 
+    def get_axis(
+        self,
+        *,
+        objective_index: int,
+        effective_pull_cost: float,
+        initial_var: float,
+        obs_noise_var: float,
+        horizon: int,
+        grid: RadialGittinsGrid,
+    ) -> ScalarGittinsBoundaryTable:
+        """Return a cached exact-axis scalar Gittins boundary table."""
+        objective_index = int(objective_index)
+        key = (
+            objective_index,
+            float(effective_pull_cost),
+            float(initial_var),
+            float(obs_noise_var),
+            int(horizon),
+            grid,
+        )
+        table = self._axis_tables.get(key)
+        if table is None:
+            table = build_scalar_gittins_boundary_table(
+                objective_index=objective_index,
+                effective_pull_cost=effective_pull_cost,
+                initial_var=initial_var,
+                obs_noise_var=obs_noise_var,
+                horizon=horizon,
+                grid=grid,
+            )
+            self._axis_tables[key] = table
+        return table
+
     def __len__(self) -> int:
-        return len(self._tables)
+        return len(self._tables) + len(self._axis_tables)
 
 
 __all__ = [
@@ -782,7 +1049,10 @@ __all__ = [
     "RadialGittinsBoundaryCache",
     "RadialGittinsBoundaryTable",
     "RadialGittinsGrid",
+    "ScalarGittinsBoundaryTable",
+    "axis_aware_grid",
     "build_radial_gittins_boundary_table",
+    "build_scalar_gittins_boundary_table",
     "direction_aware_grid",
     "gaussian_expectation_separable",
     "posterior_variance_schedule",

@@ -6,11 +6,12 @@ table.  Full-matrix objective vectors are computed after selection only for
 evaluation metrics; they never enter calibration, indices, or stopping.
 
 Everything except the unfinished-arm index is shared infrastructure: the
-uniform warm start, the round-robin direction scheduler, the required-completion
-stopping convention, the budget guards, and the archive/hypervolume/GD/IGD metrics.
-An alternative acquisition rule therefore only has to supply an
-``index_provider``; see :mod:`experiments.combined_objective.offline_radial_ucb`
-for the optimistic radial-UCB baseline built that way.
+uniform warm start, the round-robin task scheduler, the posterior-variance
+confidence gate for recommendations, the budget guards, and the
+archive/hypervolume/GD/IGD metrics.  Optional exact accuracy and cost anchors
+use the one-dimensional completion-based Gittins DP for unfinished indices and
+share every observation with the radial tasks.  An alternative acquisition rule
+can reuse this replay by supplying an ``index_provider``.
 """
 
 from __future__ import annotations
@@ -60,6 +61,7 @@ from agentopt.model_selection.radial_gittins import (
 from agentopt.model_selection.radial_gittins_dp import (
     RadialGittinsBoundaryCache,
     RadialGittinsGrid,
+    axis_aware_grid,
     direction_aware_grid,
     radial_posterior_coordinates,
     terminal_expected_radial_utility,
@@ -74,9 +76,26 @@ OFFLINE_PRODUCTION_BASE_GRID = RadialGittinsGrid(
 )
 
 
+EXACT_AXIS_ANCHORS: Tuple[Tuple[str, int], ...] = (
+    ("accuracy", 0),
+    ("cost", 1),
+)
+
+
 @dataclass(frozen=True)
 class DirectionWinner:
     direction: Tuple[float, float]
+    model_name: str
+    arm_index: int
+    terminal_utility: float
+
+
+@dataclass(frozen=True)
+class AxisAnchorWinner:
+    """Winner of an exact one-dimensional endpoint task."""
+
+    anchor: str
+    objective_index: int
     model_name: str
     arm_index: int
     terminal_utility: float
@@ -96,6 +115,7 @@ class RadialArmSummary:
     n_batches: int
     completed: bool
     is_direction_winner: bool = False
+    is_axis_anchor_winner: bool = False
     is_nondominated: bool = False
     is_posterior_nondominated: bool = False
     is_oracle_raw_nondominated: bool = False
@@ -114,20 +134,16 @@ class RecommendationCheckpoint:
     arms were eligible for it:
 
     ``"provisional"``
-        Every warm-started arm, including unfinished ones.  This is the
-        fixed-budget diagnostic recorded before the policy stops, when the
-        required-completion contract has no recommendation to offer yet.
+        Every warm-started arm, including low-confidence ones.  This is the
+        fixed-budget diagnostic recorded before the policy's endogenous stop.
 
     ``"deployable"``
-        Only ``completed_arm_indices``.  This matches the required-completion
-        stopping contract and the terminal ``RadialSimulationResult``
-        recommendation, and is the scope recorded from the endogenous stop
-        onward.
+        Only arms whose posterior variance is small enough relative to the
+        prior (``var[j] <= confidence_variance_ratio * prior_var[j]`` for both
+        objectives).  This scope is recorded from the endogenous stop onward.
 
     The scope switches at most once, so a trajectory is a provisional prefix
-    followed by a deployable suffix.  A run that finishes every arm without an
-    endogenous stop stays labelled provisional, where the two scopes coincide
-    because every arm is completed.  Full-data oracle fields are diagnostic
+    followed by a deployable suffix.  Full-data oracle fields are diagnostic
     only and never affect acquisition, stopping, or the archive.
 
     ``budget_fraction`` is the cost-aware share of brute-force search spend
@@ -156,6 +172,7 @@ class RecommendationCheckpoint:
     event: str
     completed_arm_indices: Tuple[int, ...] = ()
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE
+    axis_anchor_winner_arm_indices: Tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if self.archive_scope not in ARCHIVE_SCOPES:
@@ -208,6 +225,7 @@ class RadialSimulationResult:
     online_raw_archive_models: List[str] = field(default_factory=list)
     oracle_raw_winner_archive_arm_indices: Tuple[int, ...] = ()
     oracle_raw_winner_archive_models: List[str] = field(default_factory=list)
+    axis_anchor_winners: List[AxisAnchorWinner] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -240,11 +258,57 @@ IndexProvider = Callable[[DirectionVisitContext, int], float]
 
 @dataclass(frozen=True)
 class DirectionStatus:
+    """Confidence-gated radial recommendation vs unfinished Gittins indices."""
+
     should_stop: bool
-    best_completed_arm: Optional[int]
-    best_completed_index: float
+    best_confident_arm: Optional[int]
+    best_confident_index: float
     best_unfinished_arm: Optional[int]
     best_unfinished_index: float
+
+
+@dataclass(frozen=True)
+class AxisAnchorStatus:
+    """Confidence-gated exact-axis recommendation vs unfinished scalar indices."""
+
+    should_stop: bool
+    best_confident_arm: Optional[int]
+    best_confident_index: float
+    best_unfinished_arm: Optional[int]
+    best_unfinished_index: float
+
+
+DEFAULT_CONFIDENCE_VARIANCE_RATIO = 0.25
+
+
+def confident_arm_indices(
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    *,
+    prior_variance: Sequence[float],
+    confidence_variance_ratio: float,
+    arm_indices: Optional[Sequence[int]] = None,
+) -> Tuple[int, ...]:
+    """Arms whose posterior variance is at most ``ratio * prior`` on both axes."""
+    ratio = float(confidence_variance_ratio)
+    if not math.isfinite(ratio) or ratio <= 0.0:
+        raise ValueError("confidence_variance_ratio must be finite and positive")
+    prior = np.asarray(prior_variance, dtype=np.float64)
+    if prior.shape != (2,) or not np.all(np.isfinite(prior)) or np.any(prior <= 0.0):
+        raise ValueError("prior_variance must be a length-2 positive finite vector")
+    thresholds = ratio * prior
+    candidates = (
+        tuple(int(i) for i in arm_indices)
+        if arm_indices is not None
+        else tuple(sorted(posteriors))
+    )
+    confident: List[int] = []
+    for arm_index in candidates:
+        variance = np.asarray(posteriors[arm_index].var, dtype=np.float64)
+        if variance.shape != (2,) or not np.all(np.isfinite(variance)):
+            raise ValueError(f"posterior variance for arm {arm_index} must be finite")
+        if bool(np.all(variance <= thresholds)):
+            confident.append(arm_index)
+    return tuple(confident)
 
 
 def _validate_directions(
@@ -398,37 +462,119 @@ def evaluate_direction_status(
     *,
     direction: Tuple[float, float],
     posteriors: Mapping[int, GaussianVectorPosterior],
-    completed_arms: Sequence[int],
+    confident_arms: Sequence[int],
     unfinished_indices: Mapping[int, float],
     reference_point: Sequence[float],
     stop_tolerance: float,
 ) -> DirectionStatus:
-    """Combine completed terminal values and unfinished Gittins indices."""
-    completed_indices = {
+    """Compare confident-arm utilities with unfinished Gittins indices."""
+    confident_indices = {
         arm_index: terminal_expected_radial_utility(
             posteriors[arm_index].mean,
             posteriors[arm_index].var,
             direction,
             reference_point,
         )
-        for arm_index in completed_arms
+        for arm_index in confident_arms
     }
-    best_completed_arm, best_completed = _best_index(
-        completed_indices,
+    best_confident_arm, best_confident = _best_index(
+        confident_indices,
         stop_tolerance,
     )
     best_unfinished_arm, best_unfinished = _best_index(
         unfinished_indices,
         stop_tolerance,
     )
-    should_stop = best_completed_arm is not None and (
+    should_stop = best_confident_arm is not None and (
         best_unfinished_arm is None
-        or best_completed >= best_unfinished - stop_tolerance
+        or best_confident >= best_unfinished - stop_tolerance
     )
     return DirectionStatus(
         should_stop=should_stop,
-        best_completed_arm=best_completed_arm,
-        best_completed_index=best_completed,
+        best_confident_arm=best_confident_arm,
+        best_confident_index=best_confident,
+        best_unfinished_arm=best_unfinished_arm,
+        best_unfinished_index=best_unfinished,
+    )
+
+
+def _axis_terminal_values(
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    objective_index: int,
+    reference_point: Sequence[float],
+) -> Dict[int, float]:
+    """Return exact-axis posterior expected utilities for every arm."""
+    if objective_index not in (0, 1):
+        raise ValueError("objective_index must be 0 or 1")
+    reference = float(reference_point[objective_index])
+    return {
+        arm_index: float(posterior.mean[objective_index]) - reference
+        for arm_index, posterior in posteriors.items()
+    }
+
+
+def _best_axis_arm(
+    *,
+    arm_indices: Sequence[int],
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    objective_index: int,
+    reference_point: Sequence[float],
+    tolerance: float,
+) -> Tuple[Optional[int], float]:
+    """Choose an axis winner with the other objective as a Pareto tie-break."""
+    terminal_values = _axis_terminal_values(
+        posteriors=posteriors,
+        objective_index=objective_index,
+        reference_point=reference_point,
+    )
+    secondary_index = 1 - objective_index
+    best_arm: Optional[int] = None
+    best_primary = float("-inf")
+    best_secondary = float("-inf")
+    for arm_index in sorted(int(i) for i in arm_indices):
+        primary = terminal_values[arm_index]
+        secondary = float(posteriors[arm_index].mean[secondary_index])
+        if primary > best_primary + tolerance or (
+            abs(primary - best_primary) <= tolerance
+            and secondary > best_secondary + tolerance
+        ):
+            best_arm = arm_index
+            best_primary = primary
+            best_secondary = secondary
+    return best_arm, best_primary
+
+
+def evaluate_axis_anchor_status(
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    objective_index: int,
+    confident_arms: Sequence[int],
+    unfinished_indices: Mapping[int, float],
+    reference_point: Sequence[float],
+    stop_tolerance: float,
+) -> AxisAnchorStatus:
+    """Compare confident-axis means with unfinished scalar Gittins indices."""
+    best_confident_arm, best_confident = _best_axis_arm(
+        arm_indices=confident_arms,
+        posteriors=posteriors,
+        objective_index=objective_index,
+        reference_point=reference_point,
+        tolerance=stop_tolerance,
+    )
+
+    best_unfinished_arm, best_unfinished = _best_index(
+        unfinished_indices,
+        stop_tolerance,
+    )
+    should_stop = best_confident_arm is not None and (
+        best_unfinished_arm is None
+        or best_confident >= best_unfinished - stop_tolerance
+    )
+    return AxisAnchorStatus(
+        should_stop=should_stop,
+        best_confident_arm=best_confident_arm,
+        best_confident_index=best_confident,
         best_unfinished_arm=best_unfinished_arm,
         best_unfinished_index=best_unfinished,
     )
@@ -647,6 +793,36 @@ def provisional_direction_winner_arms(
     return winners
 
 
+def provisional_axis_anchor_winner_arms(
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    anchor_objectives: Sequence[int],
+    reference_point: Sequence[float],
+    stop_tolerance: float,
+    candidate_arms: Optional[Sequence[int]] = None,
+) -> List[int]:
+    """Return deduplicated exact-axis winners over current posteriors."""
+    arm_indices = (
+        list(candidate_arms)
+        if candidate_arms is not None
+        else sorted(posteriors)
+    )
+    if not arm_indices:
+        return []
+    winners: List[int] = []
+    for objective_index in anchor_objectives:
+        winner_arm, _ = _best_axis_arm(
+            arm_indices=arm_indices,
+            posteriors=posteriors,
+            objective_index=int(objective_index),
+            reference_point=reference_point,
+            tolerance=stop_tolerance,
+        )
+        if winner_arm is not None and winner_arm not in winners:
+            winners.append(winner_arm)
+    return winners
+
+
 def provisional_archive_from_posteriors(
     *,
     posteriors: Mapping[int, GaussianVectorPosterior],
@@ -675,6 +851,7 @@ def provisional_archive_from_posteriors(
 @dataclass(frozen=True)
 class _CheckpointArchive:
     direction_winner_arm_indices: Tuple[int, ...]
+    axis_anchor_winner_arm_indices: Tuple[int, ...]
     estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
     posterior_archive_arm_indices: Tuple[int, ...]
     posterior_archive_models: Tuple[str, ...]
@@ -701,16 +878,33 @@ def _checkpoint_archive(
     observed_scores: Mapping[int, Sequence[float]],
     observed_costs: Mapping[int, Sequence[float]],
     ground_truth_hv: float,
+    axis_anchor_objectives: Sequence[int] = (),
+    axis_anchor_eligible_arms: Optional[Sequence[int]] = None,
 ) -> _CheckpointArchive:
     """Build one online archive for an explicit arm-eligibility scope."""
     eligible = tuple(int(i) for i in eligible_arms)
-    winner_arms = provisional_direction_winner_arms(
+    direction_winner_arms = provisional_direction_winner_arms(
         posteriors=posteriors,
         directions=directions,
         reference_point=reference_point,
         stop_tolerance=stop_tolerance,
         candidate_arms=eligible,
     )
+    winner_arms = list(direction_winner_arms)
+    anchor_winner_arms = provisional_axis_anchor_winner_arms(
+        posteriors=posteriors,
+        anchor_objectives=axis_anchor_objectives,
+        reference_point=reference_point,
+        stop_tolerance=stop_tolerance,
+        candidate_arms=(
+            axis_anchor_eligible_arms
+            if axis_anchor_eligible_arms is not None
+            else eligible
+        ),
+    )
+    for arm_index in anchor_winner_arms:
+        if arm_index not in winner_arms:
+            winner_arms.append(arm_index)
     posterior_points = np.asarray(
         [posteriors[i].mean for i in winner_arms],
         dtype=np.float64,
@@ -759,7 +953,8 @@ def _checkpoint_archive(
         ground_truth_hv,
     )
     return _CheckpointArchive(
-        direction_winner_arm_indices=tuple(winner_arms),
+        direction_winner_arm_indices=tuple(direction_winner_arms),
+        axis_anchor_winner_arm_indices=tuple(anchor_winner_arms),
         estimated_raw_winner_vectors=tuple(
             (float(point[0]), float(point[1])) for point in estimated_raw_points
         ),
@@ -799,7 +994,9 @@ def _recommendation_checkpoint(
     bruteforce_search_cost_usd: float,
     event: str,
     completed_arms: Sequence[int] = (),
+    confident_arms: Sequence[int] = (),
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE,
+    axis_anchor_objectives: Sequence[int] = (),
 ) -> RecommendationCheckpoint:
     if archive_scope not in ARCHIVE_SCOPES:
         raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
@@ -809,8 +1006,9 @@ def _recommendation_checkpoint(
     ):
         raise ValueError("bruteforce_search_cost_usd must be finite and positive")
     completed = tuple(int(i) for i in completed_arms)
+    confident = tuple(int(i) for i in confident_arms)
     eligible = (
-        completed
+        confident
         if archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
         else tuple(sorted(posteriors))
     )
@@ -826,6 +1024,8 @@ def _recommendation_checkpoint(
         observed_scores=observed_scores,
         observed_costs=observed_costs,
         ground_truth_hv=ground_truth_hv,
+        axis_anchor_objectives=axis_anchor_objectives,
+        axis_anchor_eligible_arms=eligible,
     )
     return RecommendationCheckpoint(
         cumulative_evaluations=int(total_evaluations),
@@ -852,6 +1052,9 @@ def _recommendation_checkpoint(
         event=event,
         completed_arm_indices=completed,
         archive_scope=archive_scope,
+        axis_anchor_winner_arm_indices=(
+            archive.axis_anchor_winner_arm_indices
+        ),
     )
 
 
@@ -975,8 +1178,11 @@ def simulate_radial_gittins(
     boundary_grid: Optional[RadialGittinsGrid] = None,
     boundary_cache: Optional[RadialGittinsBoundaryCache] = None,
     index_provider: Optional[IndexProvider] = None,
+    include_exact_axis_anchors: bool = False,
     question_universe: str = "common",
     halt_on_gittins_stop: bool = True,
+    endogenous_stop: bool = True,
+    confidence_variance_ratio: float = DEFAULT_CONFIDENCE_VARIANCE_RATIO,
     record_recommendation_trajectory: bool = False,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
@@ -997,16 +1203,40 @@ def simulate_radial_gittins(
     ``guaranteed_batch_cost_usd`` makes the reservation a hard bound, and a
     replayed batch that violates the claimed bound raises an error.
 
+    When ``include_exact_axis_anchors`` is true, an accuracy anchor and a
+    deployment-cost-desirability anchor are appended to every round-robin pass.
+    They are exact one-dimensional completion-based problems, not near-axis
+    radial directions. Their physical pulls update the same arm posterior and
+    question cursor used by every radial direction.
+
+    An arm is confidence-eligible for recommendation once
+    ``posterior.var[j] <= confidence_variance_ratio * prior_var[j]`` for both
+    objectives.  Deployable archives and endogenous stopping use that set the
+    way the older required-completion rule used completed arms.
+
     Supplying ``index_provider`` replaces the boundary-table index for
     unfinished arms, which is how alternative acquisition rules reuse this
     replay. ``selector_name`` and ``extra_params`` then label the result so a
     baseline is not reported as radial-Gittins. Boundary tables are never built
     in that mode, so the DP grid and cache arguments are ignored.
+
+    Set ``endogenous_stop=False`` to disable economic skip/stop (for
+    budget-only baselines). Acquisition still ranks unfinished arms, but
+    tasks never declare ``should_stop``.
     """
     wall_start = time.perf_counter()
     batch_size = _positive_integer(batch_size, "batch_size")
     horizon_bin_width = _positive_integer(horizon_bin_width, "horizon_bin_width")
     resolved_directions = _validate_directions(directions)
+    if not isinstance(include_exact_axis_anchors, (bool, np.bool_)):
+        raise ValueError("include_exact_axis_anchors must be boolean")
+    if not isinstance(endogenous_stop, (bool, np.bool_)):
+        raise ValueError("endogenous_stop must be boolean")
+    if not isinstance(halt_on_gittins_stop, (bool, np.bool_)):
+        raise ValueError("halt_on_gittins_stop must be boolean")
+    resolved_axis_anchors = (
+        EXACT_AXIS_ANCHORS if include_exact_axis_anchors else ()
+    )
     if not models or len(set(models)) != len(models):
         raise ValueError("models must be nonempty and unique")
     if not datapoints or len(set(datapoints)) != len(datapoints):
@@ -1022,6 +1252,12 @@ def simulate_radial_gittins(
         raise ValueError("observation_budget_fraction must lie in (0, 1]")
     if not math.isfinite(stop_tolerance) or stop_tolerance < 0.0:
         raise ValueError("stop_tolerance must be finite and nonnegative")
+    confidence_variance_ratio = float(confidence_variance_ratio)
+    if (
+        not math.isfinite(confidence_variance_ratio)
+        or confidence_variance_ratio <= 0.0
+    ):
+        raise ValueError("confidence_variance_ratio must be finite and positive")
     if (
         not math.isfinite(effective_cost_bin_anchor)
         or effective_cost_bin_anchor <= 0.0
@@ -1191,10 +1427,9 @@ def simulate_radial_gittins(
         bin_ratio=effective_cost_bin_ratio,
     )
 
-    # With the required-completion convention, an arm can need to pay its
-    # pull cost at every remaining stage before becoming selectable.  The
-    # stopping root can therefore be displaced by roughly ``H * c`` for an
-    # expensive arm.  Resolve grids per (direction, horizon, cost-bin) and
+    # Even under anytime retirement the radial boundary root can shift by
+    # roughly ``H * c`` because continuation pays the pull cost at every
+    # remaining stage.  Resolve grids per (direction, horizon, cost-bin) and
     # include that displacement in the root-search band; a direction-only
     # grid is too narrow for the highest real MathQA cost bins.
     resolved_boundary_grids: Dict[
@@ -1255,6 +1490,33 @@ def simulate_radial_gittins(
         )
         resolved_boundary_grids[key] = resolved
         return resolved
+
+    resolved_axis_grids: Dict[
+        Tuple[int, int, float], RadialGittinsGrid
+    ] = {}
+
+    def grid_for_axis(
+        objective_index: int,
+        arm_index: int,
+    ) -> RadialGittinsGrid:
+        horizon = int(planning_horizons[arm_index])
+        effective_cost = float(effective_pull_costs[arm_index])
+        key = (objective_index, horizon, effective_cost)
+        existing = resolved_axis_grids.get(key)
+        if existing is not None:
+            return existing
+        z_padding = (
+            max(1.0, horizon * effective_cost + 1.0)
+            + boundary_z_padding_extra
+        )
+        resolved = axis_aware_grid(
+            base_grid=base_boundary_grid,
+            reference=resolved_reference[objective_index],
+            padding=z_padding,
+        )
+        resolved_axis_grids[key] = resolved
+        return resolved
+
     reservation_costs = (
         guaranteed_batch_costs
         if guaranteed_batch_costs is not None
@@ -1324,11 +1586,18 @@ def simulate_radial_gittins(
             }
         )
 
-    direction_index = 0
+    n_radial_tasks = len(resolved_directions)
+    n_search_tasks = n_radial_tasks + len(resolved_axis_anchors)
+    task_index = 0
     skipped_since_last_evaluation = 0
-    visit_counts = np.zeros(len(resolved_directions), dtype=np.int64)
+    visit_counts = np.zeros(n_search_tasks, dtype=np.int64)
     global_step = 0
-    stop_reason = "all_directions_gittins_stop"
+    economic_stop_reason = (
+        "all_tasks_gittins_stop"
+        if resolved_axis_anchors
+        else "all_directions_gittins_stop"
+    )
+    stop_reason = economic_stop_reason
     gittins_stop_evaluations: Optional[int] = None
     gittins_stop_cost_usd: Optional[float] = None
     recommendation_trajectory: List[RecommendationCheckpoint] = []
@@ -1361,10 +1630,14 @@ def simulate_radial_gittins(
             for i in range(n_arms)
             if adaptive_pulls[i] >= actual_horizons[i]
         )
-        # Nothing is deployable until the policy declares itself done: before
-        # the endogenous stop the required-completion contract cannot produce a
-        # recommendation, so the checkpoint records the all-posterior
-        # diagnostic instead of an empty archive.
+        confident_at_checkpoint = confident_arm_indices(
+            posteriors,
+            prior_variance=initial_var,
+            confidence_variance_ratio=confidence_variance_ratio,
+        )
+        # Nothing is labelled deployable until the policy declares itself done:
+        # before the endogenous stop the checkpoint records the all-posterior
+        # diagnostic under the provisional scope.
         archive_scope = (
             DEPLOYABLE_ARCHIVE_SCOPE
             if gittins_stop_evaluations is not None
@@ -1387,7 +1660,12 @@ def simulate_radial_gittins(
                 bruteforce_search_cost_usd=bruteforce_search_cost_usd,
                 event=event,
                 completed_arms=completed_at_checkpoint,
+                confident_arms=confident_at_checkpoint,
                 archive_scope=archive_scope,
+                axis_anchor_objectives=tuple(
+                    objective_index
+                    for _, objective_index in resolved_axis_anchors
+                ),
             )
         )
 
@@ -1398,6 +1676,11 @@ def simulate_radial_gittins(
             i for i in range(n_arms) if adaptive_pulls[i] >= actual_horizons[i]
         )
         unfinished = tuple(i for i in range(n_arms) if i not in completed)
+        confident = confident_arm_indices(
+            posteriors,
+            prior_variance=initial_var,
+            confidence_variance_ratio=confidence_variance_ratio,
+        )
         if not unfinished:
             stop_reason = "all_arms_completed"
             break
@@ -1435,93 +1718,179 @@ def simulate_radial_gittins(
             stop_reason = "search_cost_budget"
             break
 
-        direction = resolved_directions[direction_index]
-        context = DirectionVisitContext(
-            global_step=global_step,
-            direction_index=direction_index,
-            direction=direction,
-            visit_count=int(visit_counts[direction_index]),
-            completed_arms=completed,
-            unfinished_arms=unfinished,
-            adaptive_pulls=tuple(int(x) for x in adaptive_pulls),
-            model_names=tuple(models),
-            posteriors=MappingProxyType(posteriors),
-            reference_point=resolved_reference,
-            effective_pull_costs=tuple(
-                float(x) for x in effective_pull_costs
-            ),
-        )
-        visit_counts[direction_index] += 1
+        is_radial_task = task_index < n_radial_tasks
+        proposed_arm: Optional[int]
+        if is_radial_task:
+            direction_index = task_index
+            direction = resolved_directions[direction_index]
+            context = DirectionVisitContext(
+                global_step=global_step,
+                direction_index=direction_index,
+                direction=direction,
+                visit_count=int(visit_counts[task_index]),
+                completed_arms=completed,
+                unfinished_arms=unfinished,
+                adaptive_pulls=tuple(int(x) for x in adaptive_pulls),
+                model_names=tuple(models),
+                posteriors=MappingProxyType(posteriors),
+                reference_point=resolved_reference,
+                effective_pull_costs=tuple(
+                    float(x) for x in effective_pull_costs
+                ),
+            )
+            unfinished_indices: Dict[int, float] = {}
+            for arm_index in unfinished:
+                if index_provider is not None:
+                    index = float(index_provider(context, arm_index))
+                else:
+                    table_for_arm = cache.get(
+                        direction=direction,
+                        effective_pull_cost=float(
+                            effective_pull_costs[arm_index]
+                        ),
+                        initial_var=initial_var,
+                        obs_noise_var=noise_var,
+                        horizon=int(planning_horizons[arm_index]),
+                        grid=grid_for_arm(direction, arm_index),
+                    )
+                    u, delta, _ = radial_posterior_coordinates(
+                        posteriors[arm_index].mean,
+                        posteriors[arm_index].var,
+                        direction,
+                        resolved_reference,
+                    )
+                    boundary = table_for_arm.boundary(
+                        int(adaptive_pulls[arm_index]),
+                        delta,
+                    )
+                    index = u - boundary
+                unfinished_indices[arm_index] = index
 
-        unfinished_indices: Dict[int, float] = {}
-        for arm_index in unfinished:
-            if index_provider is not None:
-                index = float(index_provider(context, arm_index))
-            else:
-                table_for_arm = cache.get(
-                    direction=direction,
-                    effective_pull_cost=float(effective_pull_costs[arm_index]),
-                    initial_var=initial_var,
-                    obs_noise_var=noise_var,
+            direction_status = evaluate_direction_status(
+                direction=direction,
+                posteriors=posteriors,
+                confident_arms=confident,
+                unfinished_indices=unfinished_indices,
+                reference_point=resolved_reference,
+                stop_tolerance=stop_tolerance,
+            )
+            task_should_stop = direction_status.should_stop
+            proposed_arm = direction_status.best_unfinished_arm
+            visit_event: Dict[str, Any] = {
+                "event": "direction_visit",
+                "global_step": global_step,
+                "task_index": task_index,
+                "direction_index": direction_index,
+                "direction": list(direction),
+                "direction_should_stop": direction_status.should_stop,
+                "n_confident_arms": len(confident),
+                "best_confident_arm": direction_status.best_confident_arm,
+                "best_confident_model": (
+                    models[direction_status.best_confident_arm]
+                    if direction_status.best_confident_arm is not None
+                    else None
+                ),
+                "best_confident_terminal_index": _optional_finite(
+                    direction_status.best_confident_index
+                ),
+                "best_unfinished_arm": direction_status.best_unfinished_arm,
+                "best_unfinished_model": (
+                    models[direction_status.best_unfinished_arm]
+                    if direction_status.best_unfinished_arm is not None
+                    else None
+                ),
+                "best_unfinished_gittins_index": _optional_finite(
+                    direction_status.best_unfinished_index
+                ),
+            }
+        else:
+            anchor_name, objective_index = resolved_axis_anchors[
+                task_index - n_radial_tasks
+            ]
+            terminal_values = _axis_terminal_values(
+                posteriors=posteriors,
+                objective_index=objective_index,
+                reference_point=resolved_reference,
+            )
+            unfinished_indices = {}
+            for arm_index in unfinished:
+                table_for_arm = cache.get_axis(
+                    objective_index=objective_index,
+                    effective_pull_cost=float(
+                        effective_pull_costs[arm_index]
+                    ),
+                    initial_var=float(initial_var[objective_index]),
+                    obs_noise_var=float(noise_var[objective_index]),
                     horizon=int(planning_horizons[arm_index]),
-                    grid=grid_for_arm(direction, arm_index),
+                    grid=grid_for_axis(objective_index, arm_index),
                 )
-                u, delta, _ = radial_posterior_coordinates(
-                    posteriors[arm_index].mean,
-                    posteriors[arm_index].var,
-                    direction,
-                    resolved_reference,
+                unfinished_indices[arm_index] = (
+                    terminal_values[arm_index]
+                    - table_for_arm.boundary(
+                        int(adaptive_pulls[arm_index])
+                    )
                 )
-                boundary = table_for_arm.boundary(
-                    int(adaptive_pulls[arm_index]),
-                    delta,
-                )
-                index = u - boundary
-            unfinished_indices[arm_index] = index
 
-        status = evaluate_direction_status(
-            direction=direction,
-            posteriors=posteriors,
-            completed_arms=completed,
-            unfinished_indices=unfinished_indices,
-            reference_point=resolved_reference,
-            stop_tolerance=stop_tolerance,
+            anchor_status = evaluate_axis_anchor_status(
+                posteriors=posteriors,
+                objective_index=objective_index,
+                confident_arms=confident,
+                unfinished_indices=unfinished_indices,
+                reference_point=resolved_reference,
+                stop_tolerance=stop_tolerance,
+            )
+            task_should_stop = anchor_status.should_stop
+            proposed_arm = anchor_status.best_unfinished_arm
+            visit_event = {
+                "event": "axis_anchor_visit",
+                "global_step": global_step,
+                "task_index": task_index,
+                "anchor": anchor_name,
+                "objective_index": objective_index,
+                "anchor_should_stop": anchor_status.should_stop,
+                "n_confident_arms": len(confident),
+                "best_confident_arm": anchor_status.best_confident_arm,
+                "best_confident_model": (
+                    models[anchor_status.best_confident_arm]
+                    if anchor_status.best_confident_arm is not None
+                    else None
+                ),
+                "best_confident_terminal_index": _optional_finite(
+                    anchor_status.best_confident_index
+                ),
+                "best_unfinished_arm": anchor_status.best_unfinished_arm,
+                "best_unfinished_model": (
+                    models[anchor_status.best_unfinished_arm]
+                    if anchor_status.best_unfinished_arm is not None
+                    else None
+                ),
+                "best_unfinished_gittins_index": _optional_finite(
+                    anchor_status.best_unfinished_index
+                ),
+            }
+
+        if not endogenous_stop:
+            task_should_stop = False
+            if is_radial_task:
+                visit_event["direction_should_stop"] = False
+            else:
+                visit_event["anchor_should_stop"] = False
+
+        visit_counts[task_index] += 1
+        visit_event.update(
+            {
+                "selected_arm": None,
+                "selected_model": None,
+                "question_ids": [],
+                "actual_batch_search_cost_usd": 0.0,
+                "cumulative_evaluations": total_evaluations,
+                "cumulative_search_cost_usd": total_cost,
+            }
         )
-        visit_event: Dict[str, Any] = {
-            "event": "direction_visit",
-            "global_step": global_step,
-            "direction_index": direction_index,
-            "direction": list(direction),
-            "direction_should_stop": status.should_stop,
-            "best_completed_arm": status.best_completed_arm,
-            "best_completed_model": (
-                models[status.best_completed_arm]
-                if status.best_completed_arm is not None
-                else None
-            ),
-            "best_completed_terminal_index": _optional_finite(
-                status.best_completed_index
-            ),
-            "best_unfinished_arm": status.best_unfinished_arm,
-            "best_unfinished_model": (
-                models[status.best_unfinished_arm]
-                if status.best_unfinished_arm is not None
-                else None
-            ),
-            "best_unfinished_gittins_index": _optional_finite(
-                status.best_unfinished_index
-            ),
-            "selected_arm": None,
-            "selected_model": None,
-            "question_ids": [],
-            "actual_batch_search_cost_usd": 0.0,
-            "cumulative_evaluations": total_evaluations,
-            "cumulative_search_cost_usd": total_cost,
-        }
 
-        if status.should_stop and not past_gittins_stop:
+        if task_should_stop and not past_gittins_stop:
             skipped_since_last_evaluation += 1
-            if skipped_since_last_evaluation == len(resolved_directions):
+            if skipped_since_last_evaluation == n_search_tasks:
                 if gittins_stop_evaluations is None:
                     gittins_stop_evaluations = int(total_evaluations)
                     gittins_stop_cost_usd = float(total_cost)
@@ -1529,7 +1898,7 @@ def simulate_radial_gittins(
                 if halt_on_gittins_stop:
                     trace.append(visit_event)
                     global_step += 1
-                    stop_reason = "all_directions_gittins_stop"
+                    stop_reason = economic_stop_reason
                     break
                 past_gittins_stop = True
                 skipped_since_last_evaluation = 0
@@ -1537,10 +1906,10 @@ def simulate_radial_gittins(
             else:
                 trace.append(visit_event)
                 global_step += 1
-                direction_index = (direction_index + 1) % len(resolved_directions)
+                task_index = (task_index + 1) % n_search_tasks
                 continue
 
-        selected_arm = status.best_unfinished_arm
+        selected_arm = proposed_arm
         if selected_arm is None:
             trace.append(visit_event)
             stop_reason = "all_arms_completed"
@@ -1669,14 +2038,21 @@ def simulate_radial_gittins(
         _append_recommendation_checkpoint("adaptive_pull")
         skipped_since_last_evaluation = 0
         global_step += 1
-        direction_index = (direction_index + 1) % len(resolved_directions)
+        task_index = (task_index + 1) % n_search_tasks
 
     completed_final = [
         i for i in range(n_arms) if adaptive_pulls[i] >= actual_horizons[i]
     ]
+    recommendable_arms = confident_arm_indices(
+        posteriors,
+        prior_variance=initial_var,
+        confidence_variance_ratio=confidence_variance_ratio,
+    )
+    if not recommendable_arms:
+        recommendable_arms = tuple(completed_final)
     direction_winners: List[DirectionWinner] = []
     for direction in resolved_directions:
-        if not completed_final:
+        if not recommendable_arms:
             break
         utilities = {
             arm_index: terminal_expected_radial_utility(
@@ -1685,7 +2061,7 @@ def simulate_radial_gittins(
                 direction,
                 resolved_reference,
             )
-            for arm_index in completed_final
+            for arm_index in recommendable_arms
         }
         winner_arm, utility = _best_index(utilities, stop_tolerance)
         assert winner_arm is not None
@@ -1698,8 +2074,33 @@ def simulate_radial_gittins(
             )
         )
 
+    axis_anchor_winners: List[AxisAnchorWinner] = []
+    for anchor_name, objective_index in resolved_axis_anchors:
+        if not recommendable_arms:
+            break
+        winner_arm, utility = _best_axis_arm(
+            arm_indices=recommendable_arms,
+            posteriors=posteriors,
+            objective_index=objective_index,
+            reference_point=resolved_reference,
+            tolerance=stop_tolerance,
+        )
+        assert winner_arm is not None
+        axis_anchor_winners.append(
+            AxisAnchorWinner(
+                anchor=anchor_name,
+                objective_index=objective_index,
+                model_name=models[winner_arm],
+                arm_index=winner_arm,
+                terminal_utility=utility,
+            )
+        )
+
     unique_winner_arms: List[int] = []
     for winner in direction_winners:
+        if winner.arm_index not in unique_winner_arms:
+            unique_winner_arms.append(winner.arm_index)
+    for winner in axis_anchor_winners:
         if winner.arm_index not in unique_winner_arms:
             unique_winner_arms.append(winner.arm_index)
     if unique_winner_arms:
@@ -1740,7 +2141,12 @@ def simulate_radial_gittins(
     selected_models = [models[i] for i in online_raw_archive_arms]
 
     model_results: List[RadialArmSummary] = []
-    winner_arm_set = set(unique_winner_arms)
+    direction_winner_arm_set = {
+        winner.arm_index for winner in direction_winners
+    }
+    axis_anchor_winner_arm_set = {
+        winner.arm_index for winner in axis_anchor_winners
+    }
     archive_arm_set = set(online_raw_archive_arms)
     posterior_archive_arm_set = set(posterior_archive_arms)
     oracle_raw_archive_arm_set = set(oracle_raw_archive_arms)
@@ -1764,7 +2170,10 @@ def simulate_radial_gittins(
                 n_samples_evaluated=len(scores),
                 n_batches=posterior.n_batches,
                 completed=arm_index in completed_final,
-                is_direction_winner=arm_index in winner_arm_set,
+                is_direction_winner=arm_index in direction_winner_arm_set,
+                is_axis_anchor_winner=(
+                    arm_index in axis_anchor_winner_arm_set
+                ),
                 is_nondominated=arm_index in archive_arm_set,
                 is_posterior_nondominated=arm_index in posterior_archive_arm_set,
                 is_oracle_raw_nondominated=arm_index in oracle_raw_archive_arm_set,
@@ -1788,10 +2197,18 @@ def simulate_radial_gittins(
             )
         )
     )
-    stopped_by_gittins = gittins_stop_evaluations is not None or stop_reason in {
+    economic_stop_reasons = {
         "all_directions_gittins_stop",
-        "all_arms_completed",
+        "all_tasks_gittins_stop",
     }
+    if endogenous_stop:
+        # Completing every arm is also a natural Gittins terminal state when
+        # economic stopping is enabled; budget-only baselines must not claim it.
+        economic_stop_reasons = economic_stop_reasons | {"all_arms_completed"}
+    stopped_by_gittins = (
+        gittins_stop_evaluations is not None
+        or stop_reason in economic_stop_reasons
+    )
     gittins_stop_budget_fraction = (
         float(gittins_stop_cost_usd) / float(bruteforce_search_cost_usd)
         if gittins_stop_cost_usd is not None
@@ -1828,6 +2245,35 @@ def simulate_radial_gittins(
         "posterior_archive_space": "normalized_posterior_mean_desirability",
         "oracle_raw_winner_archive_is_diagnostic": True,
         "directions": [list(x) for x in resolved_directions],
+        "include_exact_axis_anchors": bool(resolved_axis_anchors),
+        "exact_axis_anchors": [
+            {"name": name, "objective_index": objective_index}
+            for name, objective_index in resolved_axis_anchors
+        ],
+        "axis_anchor_stopping": (
+            "confidence_gated_scalar_gittins"
+            if resolved_axis_anchors
+            else None
+        ),
+        "radial_stopping": "confidence_gated_vs_unfinished_index",
+        "confidence_variance_ratio": confidence_variance_ratio,
+        "search_task_order": (
+            [
+                {
+                    "kind": "radial",
+                    "direction": list(direction),
+                }
+                for direction in resolved_directions
+            ]
+            + [
+                {
+                    "kind": "exact_axis_anchor",
+                    "name": name,
+                    "objective_index": objective_index,
+                }
+                for name, objective_index in resolved_axis_anchors
+            ]
+        ),
         "prior_variance": calibration.prior_var.tolist(),
         "obs_noise_variance": calibration.warm_obs_noise_var.tolist(),
         "cost_reference_usd": calibration.cost_reference_usd,
@@ -1851,6 +2297,7 @@ def simulate_radial_gittins(
         "max_total_question_evaluations": max_total_question_evaluations,
         "max_search_cost_usd": max_search_cost_usd,
         "halt_on_gittins_stop": halt_on_gittins_stop,
+        "endogenous_stop": bool(endogenous_stop),
         "record_recommendation_trajectory": record_recommendation_trajectory,
         "horizon_bin_width": horizon_bin_width,
         "actual_horizons": actual_horizons.tolist(),
@@ -1881,10 +2328,29 @@ def simulate_radial_gittins(
                 resolved_boundary_grids.items()
             )
         ],
+        "axis_anchor_grids": [
+            {
+                "name": EXACT_AXIS_ANCHORS[objective_index][0],
+                "objective_index": objective_index,
+                "horizon": horizon,
+                "effective_pull_cost": effective_cost,
+                "grid": asdict(grid),
+            }
+            for (objective_index, horizon, effective_cost), grid in sorted(
+                resolved_axis_grids.items()
+            )
+        ],
         "acquisition": (
-            "radial_gittins_boundary_index"
-            if index_provider is None
-            else "external_index_provider"
+            (
+                "radial_gittins_boundary_index"
+                if index_provider is None
+                else "external_index_provider"
+            )
+            + (
+                "+exact_axis_scalar_gittins"
+                if resolved_axis_anchors
+                else ""
+            )
         ),
     }
     if extra_params is not None:
@@ -1938,6 +2404,7 @@ def simulate_radial_gittins(
         oracle_raw_winner_archive_models=[
             models[i] for i in oracle_raw_archive_arms
         ],
+        axis_anchor_winners=axis_anchor_winners,
     )
     if run_metadata is not None:
         run_metadata.update(
@@ -2038,6 +2505,13 @@ def print_radial_result(result: RadialSimulationResult) -> None:
             f"  {winner.direction}: {winner.model_name} "
             f"(terminal={winner.terminal_utility:.6f})"
         )
+    if result.axis_anchor_winners:
+        print("exact axis-anchor winners:")
+        for winner in result.axis_anchor_winners:
+            print(
+                f"  {winner.anchor}: {winner.model_name} "
+                f"(terminal={winner.terminal_utility:.6f})"
+            )
     print(f"online raw-space recommendation: {result.selected_models}")
     print(f"posterior-desirability archive: {result.posterior_archive_models}")
     print(
@@ -2096,6 +2570,23 @@ def main() -> None:
         help="Optional per-batch upper bound in USD, shared by every arm",
     )
     parser.add_argument("--eta", type=float, default=1.0)
+    parser.add_argument(
+        "--confidence-variance-ratio",
+        type=float,
+        default=DEFAULT_CONFIDENCE_VARIANCE_RATIO,
+        help=(
+            "Recommend/stop using arms with posterior.var[j] <= "
+            "ratio * prior_var[j] on both objectives (default: 0.25)"
+        ),
+    )
+    parser.add_argument(
+        "--no-exact-axis-anchors",
+        action="store_true",
+        help=(
+            "Disable the default exact accuracy and cost scalar-Gittins "
+            "anchor tasks"
+        ),
+    )
     parser.add_argument("--effective-cost-bin-ratio", type=float, default=2.0)
     parser.add_argument("--effective-cost-bin-anchor", type=float, default=1e-4)
     parser.add_argument(
@@ -2148,12 +2639,16 @@ def main() -> None:
             max_search_cost_usd=args.max_search_cost,
             guaranteed_batch_cost_usd=args.guaranteed_batch_cost,
             search_cost_scale_eta=args.eta,
+            confidence_variance_ratio=args.confidence_variance_ratio,
             effective_cost_bin_ratio=args.effective_cost_bin_ratio,
             effective_cost_bin_anchor=args.effective_cost_bin_anchor,
             horizon_bin_width=args.horizon_bin_width,
             seed=args.base_seed + offset,
             boundary_grid=grid,
             boundary_cache=cache,
+            include_exact_axis_anchors=(
+                not args.no_exact_axis_anchors
+            ),
             question_universe=("per_arm" if args.ragged_diagnostic else "common"),
         )
         print_radial_result(result)

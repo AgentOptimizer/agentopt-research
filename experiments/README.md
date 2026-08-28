@@ -92,13 +92,13 @@ Available selectors: `brute_force` (combined objective), `random_search`, `matri
 - visits radial directions round-robin while sharing one posterior per configuration;
 - returns direction winners filtered in online empirical raw space: maximize
   observed mean accuracy and minimize observed mean deployment cost in USD;
-- restricts the deployable recommendation to completed direction winners,
-  matching the required-completion Gittins stopping convention;
-- records one archive per trajectory checkpoint, tagged with the eligibility
-  scope that produced it: all-posterior `provisional` before the endogenous
-  stop, when nothing is deployable yet, and completed-only `deployable` from
-  the stop onward; unfinished provisional winners are candidates, not terminal
-  recommendations;
+- forms direction and exact-axis winners from arms whose posterior variance
+  satisfies ``var[j] <= confidence_variance_ratio * prior_var[j]`` on both
+  objectives (default ratio ``0.25``), then compares those confident utilities
+  against unfinished Gittins indices for endogenous stopping;
+- records one archive per trajectory checkpoint, tagged with scope:
+  all-posterior `provisional` before the endogenous stop and
+  confidence-gated `deployable` from the stop onward;
 - separately reports the legacy posterior-desirability archive and an offline
   oracle raw winner archive for diagnostics. The oracle archive uses the full
   cached matrix and never affects acquisition, stopping, or the deployable
@@ -118,9 +118,8 @@ comparison per benchmark, with each snapshot panel labelled by the scope its
 checkpoint recorded. Its hypervolume, generational-distance, and inverted-generational-distance
 series are each a single trajectory: a dashed
 all-posterior diagnostic before the endogenous Gittins stop and the solid
-completed-only recommendation from the stop onward, with the handover marked,
-because the deployable archive is not a recommendation before the policy
-stops. Online and oracle membership
+confidence-gated recommendation from the stop onward, with the handover marked.
+Online and oracle membership
 are plotted at full-dataset raw coordinates against the global raw Pareto
 front, so disagreements expose estimation error without feeding hidden
 outcomes back into the selector. The replay after the marked endogenous stop
