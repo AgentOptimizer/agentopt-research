@@ -97,6 +97,10 @@ class ParetoBaselineResult:
     params: Dict[str, object]
     selected_arm_indices: Tuple[int, ...]
     selected_models: Tuple[str, ...]
+    completed_arm_indices: Tuple[int, ...]
+    completed_models: Tuple[str, ...]
+    completed_pareto_arm_indices: Tuple[int, ...]
+    completed_pareto_models: Tuple[str, ...]
     total_evaluations: int
     total_search_cost_usd: float
     hypervolume: float
@@ -241,6 +245,18 @@ def empirical_raw_pareto_arms(puller: _QuestionPuller) -> Tuple[int, ...]:
         return ()
     local = pareto_min_cost_indices(raw[sampled])
     return tuple(sampled[i] for i in local)
+
+
+def completed_raw_pareto_arms(puller: _QuestionPuller) -> Tuple[int, ...]:
+    """Return the empirical Pareto set restricted to fully evaluated arms."""
+    completed = [
+        i for i in range(puller.n_arms)
+        if int(puller.n_pulls[i]) == len(puller.questions)
+    ]
+    if not completed:
+        return ()
+    local = pareto_min_cost_indices(puller.raw_means()[completed])
+    return tuple(completed[i] for i in local)
 
 
 def ege_recommended_arms(
@@ -497,6 +513,7 @@ def simulate_pareto_baseline(
     qnehvi_refit_every: int = 8,
     reference_point: Sequence[float] = (0.0, 0.0),
     evaluation_question_ids: Optional[Sequence[int]] = None,
+    complete_only: bool = False,
 ) -> ParetoBaselineResult:
     """Run one full-budget Pareto identification baseline on a lookup table."""
     if method not in METHODS:
@@ -591,8 +608,15 @@ def simulate_pareto_baseline(
             record=record,
         )
     wall_time = time.perf_counter() - wall_start
-    if not selected:
+    if not selected and not complete_only:
         selected = empirical_raw_pareto_arms(puller)
+    completed = tuple(
+        i for i in range(puller.n_arms)
+        if int(puller.n_pulls[i]) == len(questions)
+    )
+    completed_pareto = completed_raw_pareto_arms(puller)
+    if complete_only:
+        selected = completed_pareto
     record("terminal", selected)
 
     selected_hv = hypervolume_2d(truth_normalized[list(selected)], reference)
@@ -612,6 +636,7 @@ def simulate_pareto_baseline(
         "bruteforce_search_cost_usd": bruteforce_cost,
         "reference_point": list(reference),
         "halt_on_identification_stop": False,
+        "complete_only": bool(complete_only),
     }
     if method == APE_K:
         params.update(
@@ -637,6 +662,10 @@ def simulate_pareto_baseline(
         params=params,
         selected_arm_indices=tuple(int(i) for i in selected),
         selected_models=tuple(models[i] for i in selected),
+        completed_arm_indices=completed,
+        completed_models=tuple(models[i] for i in completed),
+        completed_pareto_arm_indices=completed_pareto,
+        completed_pareto_models=tuple(models[i] for i in completed_pareto),
         total_evaluations=int(puller.total_evaluations),
         total_search_cost_usd=float(puller.total_cost_usd),
         hypervolume=float(selected_hv),

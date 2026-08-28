@@ -55,6 +55,10 @@ class MultiObjectiveRandomSearchResult:
     budget_fraction: float
     selected_arm_indices: Tuple[int, ...]
     selected_models: Tuple[str, ...]
+    completed_arm_indices: Tuple[int, ...]
+    completed_models: Tuple[str, ...]
+    completed_pareto_arm_indices: Tuple[int, ...]
+    completed_pareto_models: Tuple[str, ...]
     sampled_arm_indices: Tuple[int, ...]
     sampled_question_ids: Tuple[int, ...]
     total_evaluations: int
@@ -139,6 +143,7 @@ def simulate_multiobjective_random_search(
     budget_fraction: float,
     seed: int = 42,
     evaluation_question_ids: Sequence[int] | None = None,
+    complete_only: bool = False,
 ) -> MultiObjectiveRandomSearchResult:
     """Run one random-search protocol at one observed-cell budget."""
     if version not in VERSIONS:
@@ -190,6 +195,17 @@ def simulate_multiobjective_random_search(
         estimated[:] = mean_raw_vectors(models, sampled_questions, table)
         selected_arms = tuple(pareto_min_cost_indices(estimated))
 
+    completed_arms = tuple(
+        arm for arm in sampled_arms if len(sampled_questions) == len(questions)
+    )
+    if completed_arms:
+        local_complete = pareto_min_cost_indices(estimated[list(completed_arms)])
+        completed_pareto = tuple(completed_arms[i] for i in local_complete)
+    else:
+        completed_pareto = ()
+    if complete_only:
+        selected_arms = completed_pareto
+
     total_cost = 0.0
     for arm_index in sampled_arms:
         samples = table[models[arm_index]]
@@ -217,6 +233,10 @@ def simulate_multiobjective_random_search(
         budget_fraction=fraction,
         selected_arm_indices=selected_arms,
         selected_models=tuple(models[i] for i in selected_arms),
+        completed_arm_indices=completed_arms,
+        completed_models=tuple(models[i] for i in completed_arms),
+        completed_pareto_arm_indices=completed_pareto,
+        completed_pareto_models=tuple(models[i] for i in completed_pareto),
         sampled_arm_indices=sampled_arms,
         sampled_question_ids=sampled_questions,
         total_evaluations=total_evaluations,
