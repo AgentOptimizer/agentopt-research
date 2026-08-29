@@ -27,8 +27,9 @@ METHODS = (("gittins", "Radial Gittins\nAdaptive stopping"),
            ("random_questions", "Random questions\n10% total evaluations"),
            ("random_configurations", "Random configurations\n10% total evaluations"))
 
-def _load_cache(data_dir: Path, benchmark: str, method: str, seed: int) -> dict:
-    path = data_dir / "frontier_estimates" / benchmark / method / f"seed-{seed}.json"
+def _load_cache(data_dir: Path, benchmark: str, method: str, seed: int,
+                cache_name: str = "frontier_estimates") -> dict:
+    path = data_dir / cache_name / benchmark / method / f"seed-{seed}.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
     required = {"estimated_selected_models", "completed_selected_models"}
     if not required <= payload.keys():
@@ -40,6 +41,17 @@ def _scatter(ax, truth, models, names, **kwargs) -> int:
     if indices.size:
         ax.scatter(truth[indices, 1], truth[indices, 0], **kwargs)
     return int(indices.size)
+
+def _scatter_estimated(ax, cache: dict, **kwargs) -> int:
+    values = cache["estimated_selected_values"]
+    names = cache["estimated_selected_models"]
+    points = np.asarray([
+        [values[name]["mean_accuracy"], values[name]["mean_deployment_cost_usd"]]
+        for name in names
+    ], dtype=float).reshape((-1, 2))
+    if points.size:
+        ax.scatter(points[:, 1], points[:, 0], **kwargs)
+    return len(names)
 
 def _mean_run_fractions(method: str, method_caches: dict[int, dict],
                         full_search_cost: float,
@@ -64,7 +76,7 @@ def _mean_run_fractions(method: str, method_caches: dict[int, dict],
     return float(np.mean(costs)), float(np.mean(evaluations))
 
 def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
-                   methods=METHODS) -> None:
+                   methods=METHODS, cache_name="frontier_estimates") -> None:
     models, datapoints, table = load_pickle(str(PICKLES[benchmark]))
     question_ids = common_question_ids(models, datapoints, table)
     truth = mean_raw_vectors(models, question_ids, table)
@@ -72,7 +84,7 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
         table[model][question].cost for model in models for question in question_ids
     ))
     full_total_evaluations = len(models) * len(question_ids)
-    caches = {method: {s: _load_cache(data_dir, benchmark, method, s) for s in SEEDS}
+    caches = {method: {s: _load_cache(data_dir, benchmark, method, s, cache_name) for s in SEEDS}
               for method, _ in methods}
     base = mpl.colormaps["YlOrRd"]
     cmap = mpl.colors.LinearSegmentedColormap.from_list("YlOrRd_paper_20", base(np.linspace(.18, 1, 256)))
@@ -98,15 +110,16 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
             f"{method_name}\n{run_details}\nMean search cost: {mean_cost:.1%}",
             fontsize=21, pad=10,
         )
-        n_normal = _scatter(axes[0, col], truth, models, caches[method][seed]["estimated_selected_models"], **style)
-        n_complete = _scatter(axes[1, col], truth, models, caches[method][seed]["completed_selected_models"], **style)
-        recommendations = {s: set(caches[method][s]["completed_selected_models"]) for s in SEEDS}
+        selected_names = caches[method][seed]["estimated_selected_models"]
+        n_normal = _scatter_estimated(axes[0, col], caches[method][seed], **style)
+        n_actual = _scatter(axes[1, col], truth, models, selected_names, **style)
+        recommendations = {s: set(caches[method][s]["estimated_selected_models"]) for s in SEEDS}
         counts = _frequency(models, recommendations)
         shown = counts > 0
         if np.any(shown):
             axes[2, col].scatter(truth[shown, 1], truth[shown, 0], c=counts[shown], cmap=cmap,
                                  norm=norm, s=110, edgecolors="#725b46", linewidths=.85, zorder=5)
-        for row, text_value in enumerate((f"{n_normal} recommended", f"{n_complete} recommended",
+        for row, text_value in enumerate((f"{n_normal} recommended", f"{n_actual} recommended",
                                           f"{np.count_nonzero(shown)} unique")):
             axes[row, col].text(.96, .05, text_value, transform=axes[row, col].transAxes,
                                 ha="right", fontsize=21)
@@ -161,13 +174,30 @@ def main() -> None:
     parser.add_argument("--methods", nargs="+", choices=[item[0] for item in METHODS],
                         default=[item[0] for item in METHODS])
     parser.add_argument("--data-dir", type=Path, default=ROOT / "analysis/continuous_seeds_42_61/data")
+    parser.add_argument("--budget-fraction", type=float, default=0.1)
+    parser.add_argument("--cache-name", default=None)
     args = parser.parse_args()
-    methods = tuple(item for item in METHODS if item[0] in args.methods)
+    if not 0.0 < args.budget_fraction <= 1.0:
+        raise SystemExit("--budget-fraction must be in (0, 1]")
+    budget_label = f"{args.budget_fraction:.0%} total evaluations"
+    titled_methods = (
+        METHODS[0],
+        *((method, f"{title.split(chr(10), 1)[0]}\n{budget_label}")
+          for method, title in METHODS[1:]),
+    )
+    methods = tuple(item for item in titled_methods if item[0] in args.methods)
+    cache_name = args.cache_name or (
+        "frontier_estimates"
+        if np.isclose(args.budget_fraction, 0.1)
+        else f"frontier_estimates_{args.budget_fraction:.0%}".replace("%", "pct")
+    )
     suffix = "frontier_comparison" if len(methods) == len(METHODS) else "frontier_preview"
+    if not np.isclose(args.budget_fraction, 0.1):
+        suffix += f"_{args.budget_fraction:.0%}".replace("%", "pct")
     for benchmark in args.benchmarks:
         plot_benchmark(benchmark, args.data_dir,
                        args.data_dir.parent / "figures" / f"{benchmark}_3x{len(methods)}_{suffix}.png",
-                       args.seed, methods)
+                       args.seed, methods, cache_name)
 
 if __name__ == "__main__":
     main()

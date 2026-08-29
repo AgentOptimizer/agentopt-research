@@ -50,6 +50,7 @@ def _write_cache(
     method: str,
     seed: int,
     estimated_names: tuple[str, ...],
+    estimated_points: tuple[tuple[float, float], ...],
     completed_names: tuple[str, ...],
     metadata: dict[str, object],
 ) -> None:
@@ -58,6 +59,13 @@ def _write_cache(
         "method": method,
         "seed": seed,
         "estimated_selected_models": list(estimated_names),
+        "estimated_selected_values": {
+            name: {
+                "mean_accuracy": float(point[0]),
+                "mean_deployment_cost_usd": float(point[1]),
+            }
+            for name, point in zip(estimated_names, estimated_points)
+        },
         "completed_selected_models": list(completed_names),
         "selection_semantics": {
             "estimated": "algorithm-normal recommendation; completion not required",
@@ -87,54 +95,72 @@ def _gittins_cache(data_dir: Path, benchmark: str, seed: int):
     names_by_arm = {item.arm_index: item.model_name for item in run.model_results}
     estimated_arms = tuple(stop.posterior_archive_arm_indices)
     completed_arms = tuple(stop.online_raw_archive_arm_indices)
+    estimated_points = tuple(
+        (float(run.raw_truth_vectors[arm, 0]), float(run.raw_truth_vectors[arm, 1]))
+        for arm in estimated_arms
+    )
     return (
         tuple(names_by_arm[arm] for arm in estimated_arms),
+        estimated_points,
         tuple(names_by_arm[arm] for arm in completed_arms),
         {"event": "gittins_stop", "source": str(path)},
     )
 
 
-def _build_one(task: tuple[str, str, int, str, bool]) -> str:
-    benchmark, method, seed, data_dir_raw, force = task
+def _build_one(task: tuple[str, str, int, str, bool, float, str]) -> str:
+    benchmark, method, seed, data_dir_raw, force, budget_fraction, cache_name = task
     data_dir = Path(data_dir_raw)
-    destination = data_dir / "frontier_estimates" / benchmark / method / f"seed-{seed}.json"
+    destination = data_dir / cache_name / benchmark / method / f"seed-{seed}.json"
     if destination.exists() and not force:
         return f"cached {destination}"
 
     if method == "gittins":
-        estimated_names, completed_names, metadata = _gittins_cache(data_dir, benchmark, seed)
+        estimated_names, estimated_points, completed_names, metadata = _gittins_cache(
+            data_dir, benchmark, seed,
+        )
     else:
         models, datapoints, table = load_pickle(str(PICKLES[benchmark]))
         if method in (EGE_SH, APE_K, QNEHVI):
             kwargs = {"qnehvi_refit_every": 32} if method == QNEHVI else {}
             result = simulate_pareto_baseline(
                 models, datapoints, table, method=method, seed=seed,
-                observation_budget_fraction=0.1, **kwargs,
+                observation_budget_fraction=budget_fraction, **kwargs,
             )
             indices = list(result.selected_arm_indices)
             estimated_names = tuple(result.selected_models)
+            estimated_points = tuple(
+                (float(result.estimated_raw_vectors[i, 0]),
+                 float(result.estimated_raw_vectors[i, 1]))
+                for i in indices
+            )
             completed_names = tuple(result.completed_pareto_models)
             metadata = {
-                "observation_budget_fraction": 0.1,
+                "observation_budget_fraction": budget_fraction,
                 "total_evaluations": result.total_evaluations,
                 "total_search_cost_usd": result.total_search_cost_usd,
             }
         else:
             result = simulate_multiobjective_random_search(
                 models, datapoints, table, version=method,
-                budget_fraction=0.1, seed=seed,
+                budget_fraction=budget_fraction, seed=seed,
             )
             indices = list(result.selected_arm_indices)
             estimated_names = tuple(result.selected_models)
+            estimated_points = tuple(
+                (float(result.estimated_vectors[i, 0]),
+                 float(result.estimated_vectors[i, 1]))
+                for i in indices
+            )
             completed_names = tuple(result.completed_pareto_models)
             metadata = {
-                "budget_fraction": 0.1,
+                "budget_fraction": budget_fraction,
                 "total_evaluations": result.total_evaluations,
                 "total_search_cost_usd": result.total_search_cost_usd,
             }
     _write_cache(
         destination, benchmark=benchmark, method=method, seed=seed,
-        estimated_names=estimated_names, completed_names=completed_names,
+        estimated_names=estimated_names, estimated_points=estimated_points,
+        completed_names=completed_names,
         metadata=metadata,
     )
     return f"wrote {destination}"
@@ -149,6 +175,8 @@ def main() -> None:
     parser.add_argument("--seeds", nargs="+", type=int, default=list(SEEDS))
     parser.add_argument("--jobs", type=int, default=min(4, os.cpu_count() or 1))
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--budget-fraction", type=float, default=0.1)
+    parser.add_argument("--cache-name", default=None)
     parser.add_argument(
         "--data-dir", type=Path,
         default=ROOT / "analysis/continuous_seeds_42_61/data",
@@ -157,8 +185,16 @@ def main() -> None:
     invalid = sorted(set(args.seeds) - set(SEEDS))
     if invalid:
         raise SystemExit(f"seeds must be within the continuous range 42--61: {invalid}")
+    if not 0.0 < args.budget_fraction <= 1.0:
+        raise SystemExit("--budget-fraction must be in (0, 1]")
+    cache_name = args.cache_name or (
+        "frontier_estimates"
+        if np.isclose(args.budget_fraction, 0.1)
+        else f"frontier_estimates_{args.budget_fraction:.0%}".replace("%", "pct")
+    )
     tasks = [
-        (benchmark, method, seed, str(args.data_dir.resolve()), args.force)
+        (benchmark, method, seed, str(args.data_dir.resolve()), args.force,
+         args.budget_fraction, cache_name)
         for benchmark in args.benchmarks
         for method in args.methods
         for seed in args.seeds
