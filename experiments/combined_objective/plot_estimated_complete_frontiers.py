@@ -10,6 +10,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
+from matplotlib.ticker import FuncFormatter
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
@@ -21,11 +22,11 @@ from experiments.single_objective.offline_selector_sim import load_pickle  # noq
 SEEDS = tuple(range(42, 62))
 BENCHMARKS = ("hotpotqa", "mathqa")
 METHODS = (("gittins", "Radial Gittins\nAdaptive stopping"),
-           (EGE_SH, "EGE-SH\n10% total evaluations"),
-           (APE_K, "APE-k\n10% total evaluations"),
-           (QNEHVI, "qNEHVI\n10% total evaluations"),
-           ("random_questions", "Random questions\n10% total evaluations"),
-           ("random_configurations", "Random configurations\n10% total evaluations"))
+           (EGE_SH, "EGE-SH\n10% total evals"),
+           (APE_K, "APE-k\n10% total evals"),
+           (QNEHVI, "qNEHVI\n10% total evals"),
+           ("random_questions", "Random questions\n10% total evals"),
+           ("random_configurations", "Random configurations\n10% total evals"))
 
 def _load_cache(data_dir: Path, benchmark: str, method: str, seed: int,
                 cache_name: str = "frontier_estimates") -> dict:
@@ -92,7 +93,9 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
     n_methods = len(methods)
     figure, axes = plt.subplots(3, n_methods, figsize=(4 * n_methods, 13),
                                 sharex=True, sharey=True, squeeze=False)
-    style = dict(s=110, color="#d55e00", edgecolors="#725b46", linewidths=.85, zorder=5)
+    recommendation_size = 190
+    style = dict(s=recommendation_size, color="#d55e00", edgecolors="#725b46",
+                 linewidths=1.0, zorder=5)
     for col, (method, title) in enumerate(methods):
         for row in range(3):
             _draw_landscape(axes[row, col], truth)
@@ -100,15 +103,23 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
             # after the figure is reduced to paper-column width.
             axes[row, col].collections[0].set_facecolor("#c4cad2")
             axes[row, col].collections[0].set_alpha(.85)
-            axes[row, col].tick_params(axis="both", labelsize=20)
+            axes[row, col].collections[0].set_sizes(
+                np.full(len(truth), 50.0)
+            )
+            axes[row, col].lines[0].set_markersize(8.5)
+            axes[row, col].lines[0].set_linewidth(2.0)
+            compact_tick = FuncFormatter(lambda value, _: f"{value:g}")
+            axes[row, col].xaxis.set_major_formatter(compact_tick)
+            axes[row, col].yaxis.set_major_formatter(compact_tick)
+            axes[row, col].tick_params(axis="both", labelsize=23)
         mean_cost, _ = _mean_run_fractions(
             method, caches[method], full_search_cost, full_total_evaluations,
         )
         run_details = title.split("\n", 1)[1]
         method_name = title.split("\n", 1)[0]
         axes[0, col].set_title(
-            f"{method_name}\n{run_details}\nMean search cost: {mean_cost:.1%}",
-            fontsize=21, pad=10,
+            f"{method_name}\n{run_details}\nSearch cost: {mean_cost:.1%}",
+            fontsize=27, pad=10, linespacing=1.02,
         )
         selected_names = caches[method][seed]["estimated_selected_models"]
         n_normal = _scatter_estimated(axes[0, col], caches[method][seed], **style)
@@ -118,53 +129,83 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
         shown = counts > 0
         if np.any(shown):
             axes[2, col].scatter(truth[shown, 1], truth[shown, 0], c=counts[shown], cmap=cmap,
-                                 norm=norm, s=110, edgecolors="#725b46", linewidths=.85, zorder=5)
+                                 norm=norm, s=recommendation_size,
+                                 edgecolors="#725b46", linewidths=1.0, zorder=5)
         for row, text_value in enumerate((f"{n_normal} recommended", f"{n_actual} recommended",
                                           f"{np.count_nonzero(shown)} unique")):
             axes[row, col].text(.96, .05, text_value, transform=axes[row, col].transAxes,
-                                ha="right", fontsize=21)
+                                ha="right", fontsize=24)
     legend_handles = (
-        Line2D([], [], linestyle="none", marker="o", markersize=13,
+        Line2D([], [], linestyle="none", marker="o", markersize=18,
                markerfacecolor="#d55e00", markeredgecolor="#725b46",
-               label=f"Seed {seed} recommendations (rows 1–2)"),
-        Line2D([], [], linestyle="none", marker="o", markersize=13,
+               label=f"Seed {seed}"),
+        Line2D([], [], linestyle="none", marker="o", markersize=18,
                markerfacecolor=cmap(norm(4)), markeredgecolor="#725b46",
-               label="20-seed recommendations (row 3; color = frequency)"),
-        Line2D([], [], linestyle="none", marker="o", markersize=13,
+               label="20 seeds"),
+        Line2D([], [], linestyle="none", marker="o", markersize=18,
                markerfacecolor="#c4cad2", markeredgecolor="none",
                label="All configurations"),
         Line2D([], [], color="#3f4854", linewidth=1.7, marker="o",
-               markersize=10, markerfacecolor="white", markeredgewidth=1.2,
+               markersize=14, markerfacecolor="white", markeredgewidth=1.5,
                label="Empirical Pareto frontier"),
     )
-    figure.legend(
-        handles=legend_handles, loc="lower center", bbox_to_anchor=(.5, .002),
-        ncol=4, frameon=False, fontsize=24, columnspacing=1.0,
+    shared_legend = figure.legend(
+        handles=legend_handles, loc="lower center", bbox_to_anchor=(.52, .042),
+        ncol=4, frameon=False, fontsize=29, columnspacing=1.20,
         handlelength=2.0, handletextpad=.6,
     )
-    figure.supxlabel("Mean deployment cost (USD)", fontsize=32, x=.515, y=.067)
-    figure.supylabel("Mean accuracy", fontsize=32, x=.030, y=.475)
-    row_labels = (
-        (.700, "Estimated", f"Seed {seed}"),
-        (.475, "Actual", f"Seed {seed}"),
-        (.250, "Actual", "Seeds 42–61 frequency"),
+    shared_xlabel = figure.supxlabel(
+        "Mean deployment cost (USD)", fontsize=32, x=.515, y=.121,
     )
-    for y, archive_label, seed_label in row_labels:
-        figure.text(.073, y, archive_label, rotation=90,
-                    ha="center", va="center", fontsize=22)
-        figure.text(.096, y, seed_label, rotation=90,
-                    ha="center", va="center", fontsize=22)
-    cax = figure.add_axes([.938, .150, .012, .65])
-    colorbar = figure.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
-    colorbar.set_label("Recommendation frequency (out of 20 seeds)", fontsize=26,
-                       labelpad=16)
-    colorbar.set_ticks([1, 5, 10, 15, 20]); colorbar.ax.tick_params(labelsize=19)
-    figure.subplots_adjust(left=.125, right=.91, bottom=.15, top=.80, wspace=.08, hspace=.14)
-    figure.suptitle(
+    shared_ylabel = figure.supylabel(
+        "Mean accuracy", fontsize=32, x=.008, y=.510,
+    )
+    figure.subplots_adjust(
+        left=.095, right=.995, bottom=.205, top=.80, wspace=.055, hspace=.14,
+    )
+    # Anchor the row annotations to the actual panel centers so they remain
+    # visually centered when spacing or margins change.
+    row_labels = (
+        ("Estimated", f"Seed {seed}"),
+        ("Actual", f"Seed {seed}"),
+        ("Actual", "Seeds 42–61"),
+    )
+    for row, (archive_label, seed_label) in enumerate(row_labels):
+        panel_box = axes[row, 0].get_position()
+        y = (panel_box.y0 + panel_box.y1) / 2
+        figure.text(.043, y, archive_label, rotation=90,
+                    ha="center", va="center", fontsize=25)
+        figure.text(.062, y, seed_label, rotation=90,
+                    ha="center", va="center", fontsize=25)
+    cax = figure.add_axes([.095, .020, .900, .018])
+    colorbar = figure.colorbar(
+        mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
+        cax=cax,
+        orientation="horizontal",
+    )
+    colorbar.ax.set_xlabel(
+        "Recommendation frequency (out of 20 seeds)", fontsize=29, labelpad=7,
+    )
+    colorbar.set_ticks([1, 5, 10, 15, 20])
+    colorbar.ax.tick_params(labelsize=25)
+    title_y = .975 if benchmark == "mathqa" else .983
+    main_title = figure.suptitle(
         f"{LABELS[benchmark]}: estimations and actual values of Pareto recommendations",
-                    fontsize=34, y=.975)
+                    fontsize=38, y=title_y)
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output, dpi=220); figure.savefig(output.with_suffix(".pdf")); plt.close(figure)
+    figure.savefig(
+        output, dpi=220, bbox_inches="tight", pad_inches=.05,
+        bbox_extra_artists=(
+            shared_legend, shared_xlabel, shared_ylabel, main_title,
+        ),
+    )
+    figure.savefig(
+        output.with_suffix(".pdf"), bbox_inches="tight", pad_inches=.05,
+        bbox_extra_artists=(
+            shared_legend, shared_xlabel, shared_ylabel, main_title,
+        ),
+    )
+    plt.close(figure)
     print(f"wrote {output} and {output.with_suffix('.pdf')}")
 
 def main() -> None:
@@ -179,7 +220,7 @@ def main() -> None:
     args = parser.parse_args()
     if not 0.0 < args.budget_fraction <= 1.0:
         raise SystemExit("--budget-fraction must be in (0, 1]")
-    budget_label = f"{args.budget_fraction:.0%} total evaluations"
+    budget_label = f"{args.budget_fraction:.0%} total evals"
     titled_methods = (
         METHODS[0],
         *((method, f"{title.split(chr(10), 1)[0]}\n{budget_label}")
