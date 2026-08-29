@@ -180,8 +180,8 @@ def _write_distances_once(data_dir: Path, figures: Path) -> None:
     baseline_rows = _read_rows(data_dir / "pareto_baselines" / "cost_trajectory.csv")
     baseline_rows.extend(_read_rows(data_dir / "qnehvi" / "cost_trajectory.csv"))
     specs = (
-        ("generational_distance", "Generational distance (GD)", "all_methods_20seed_gd.png"),
-        ("inverted_generational_distance", "Inverted generational distance (IGD)", "all_methods_20seed_igd.png"),
+        ("generational_distance", "GD", "all_methods_20seed_gd.png"),
+        ("inverted_generational_distance", "IGD", "all_methods_20seed_igd.png"),
     )
     panels = {field: [] for field, _, _ in specs}
     summary: list[dict[str, object]] = []
@@ -303,8 +303,8 @@ def _write_hv_plot_data(data_dir: Path) -> None:
 def _redraw_saved_distances(data_dir: Path, figures: Path) -> None:
     stop_rows = _read_rows(data_dir / "gittins_seed_results.csv")
     specs = (
-        ("generational_distance", "Generational distance (GD)", "all_methods_20seed_gd.png"),
-        ("inverted_generational_distance", "Inverted generational distance (IGD)", "all_methods_20seed_igd.png"),
+        ("generational_distance", "GD", "all_methods_20seed_gd.png"),
+        ("inverted_generational_distance", "IGD", "all_methods_20seed_igd.png"),
     )
     for field, ylabel, filename in specs:
         grouped: dict[tuple[str, str], list[tuple[float, float, float, int]]] = defaultdict(list)

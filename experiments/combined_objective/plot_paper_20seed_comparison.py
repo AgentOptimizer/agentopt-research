@@ -388,9 +388,9 @@ def write_distance_comparisons(
     baseline_rows = _load_baseline_rows(data_dir)
 
     metric_specs = (
-        ("generational_distance", "Generational distance (GD)",
+        ("generational_distance", "GD",
          "all_methods_20seed_gd.png"),
-        ("inverted_generational_distance", "Inverted generational distance (IGD)",
+        ("inverted_generational_distance", "IGD",
          "all_methods_20seed_igd.png"),
     )
     panels_by_metric = {field: [] for field, _, _ in metric_specs}

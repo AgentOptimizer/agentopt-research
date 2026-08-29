@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Compare Radial-Gittins and both random-search Pareto baselines.
-
-Both figures use the Gittins normalized-desirability hypervolume: accuracy
-together with ``C_ref / (C_ref + cost)``, scored against the Gittins reference
-point. Random search is rescored in that same space.
-
-``radial_gittins_vs_random_search_hv_regret.png`` shows the completed-only
-deployable recommendation (solid) against random search, with provisional
-all-posterior regret retained as a dashed diagnostic overlay.
-"""
+"""Compare Radial-Gittins and Pareto-search baselines."""
 
 from __future__ import annotations
 
@@ -23,6 +14,9 @@ from typing import Dict, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.ticker import FuncFormatter
 
 
 plt.rcParams.update({
@@ -215,19 +209,12 @@ def _radial_regret_series(
 def _draw_stop_markers(ax, stop_mean: float | None, seeds: int) -> None:
     if stop_mean is None:
         return
-    ax.axvspan(
-        stop_mean,
-        1.02,
-        color="#687386",
-        alpha=0.08,
-        label="Post-stop diagnostic region",
-    )
     ax.axvline(
         stop_mean,
         color=GITTINS_COLOR,
         linestyle="--",
-        linewidth=1.8,
-        label="Gittins stop" if seeds == 1 else "Mean Gittins stop",
+        linewidth=2.2,
+        zorder=4,
     )
 
 
@@ -245,6 +232,7 @@ def _plot_regret_line(
     zorder: int = 2,
     linewidth: float = 1.9,
     alpha: float = 1.0,
+    markersize: float = 8.5,
 ) -> None:
     ax.plot(
         xs,
@@ -256,6 +244,7 @@ def _plot_regret_line(
         label=label,
         zorder=zorder,
         alpha=alpha,
+        markersize=markersize,
     )
     if fill:
         ax.fill_between(
@@ -268,19 +257,6 @@ def _plot_regret_line(
         )
 
 
-def _post_stop_series(
-    xs: np.ndarray,
-    ys: np.ndarray,
-    ci95: np.ndarray,
-    stop_fraction: float | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Restrict a deployable series to its meaningful post-stop portion."""
-    if stop_fraction is None:
-        return xs, ys, ci95
-    keep = xs >= stop_fraction - 1e-12
-    return xs[keep], ys[keep], ci95[keep]
-
-
 def write_comparison_figure(
     *,
     out_path: Path,
@@ -289,7 +265,7 @@ def write_comparison_figure(
     seeds: int,
     seed: int,
     x_axis: str,
-    ylabel: str = "Normalized-desirability hypervolume regret",
+    ylabel: str = "Hypervolume Regret",
 ) -> None:
     n_panels = len(panels)
     ncols = 2 if n_panels > 1 else 1
@@ -306,48 +282,37 @@ def write_comparison_figure(
     for ax, panel in zip(axes, panels):
         _draw_stop_markers(ax, panel["stop_mean"], seeds)
         deployable_x, deployable_y, deployable_ci95, _ = panel["deployable"]
-        provisional_x, provisional_y, provisional_ci95, _ = panel["provisional"]
-        deployable_x, deployable_y, deployable_ci95 = _post_stop_series(
-            deployable_x,
-            deployable_y,
-            deployable_ci95,
-            panel["stop_mean"],
-        )
         _plot_regret_line(
             ax,
             deployable_x,
             deployable_y,
             deployable_ci95,
             color=GITTINS_COLOR,
-            label="Gittins completed-only",
+            label="_nolegend_",
             zorder=3,
-            linewidth=2.6,
+            linewidth=2.4,
         )
         if len(deployable_x):
+            recommendation_index = (
+                0
+                if panel["stop_mean"] is None
+                else min(
+                    int(np.searchsorted(
+                        deployable_x, panel["stop_mean"], side="left",
+                    )),
+                    len(deployable_x) - 1,
+                )
+            )
             ax.scatter(
-                [deployable_x[0]],
-                [deployable_y[0]],
-                s=90,
+                [deployable_x[recommendation_index]],
+                [deployable_y[recommendation_index]],
+                s=125,
                 color=GITTINS_COLOR,
                 marker="o",
                 edgecolors="white",
-                linewidths=1.0,
+                linewidths=1.2,
                 zorder=5,
-                label="Recommendation at stop",
             )
-        _plot_regret_line(
-            ax,
-            provisional_x,
-            provisional_y,
-            provisional_ci95,
-            color=GITTINS_COLOR,
-            label="Provisional diagnostic",
-            linestyle="-.",
-            fill=False,
-            zorder=2,
-            linewidth=1.6,
-            alpha=0.55,
-        )
         if panel.get("ucb") is not None:
             ucb_x, ucb_y, ucb_ci95, _ = panel["ucb"]
             _plot_regret_line(
@@ -373,50 +338,90 @@ def write_comparison_figure(
                 color=color,
                 label=plot_label,
                 marker="o",
-                linewidth=1.5,
+                linewidth=1.8,
+                markersize=9.0,
             )
         for method, xs, means, ci95 in panel.get("baselines", []):
             color, label = BASELINE_STYLES.get(method, ("tab:gray", method))
+            # Baseline trajectory summaries store a 1.96-SE interval. Convert
+            # it at display time so every band in the shared paper figure is
+            # exactly ±2 SE, matching the legend and the other methods.
+            two_se = np.asarray(ci95, dtype=np.float64) * 2.0 / 1.96
             _plot_regret_line(
-                ax, xs, means, ci95, color=color, label=label,
-                linewidth=1.7,
+                ax, xs, means, two_se, color=color, label=label,
+                linewidth=2.0,
             )
-        ax.set_title(panel["name"], fontsize=18)
-        ax.tick_params(axis="both", labelsize=11)
+        ax.set_title(panel["name"], fontsize=22)
+        compact_tick = FuncFormatter(lambda value, _: f"{value:g}")
+        ax.xaxis.set_major_formatter(compact_tick)
+        ax.yaxis.set_major_formatter(compact_tick)
+        ax.tick_params(axis="both", labelsize=19)
         ax.set_xlim(0.0, 1.02)
         ax.set_ylim(bottom=0.0)
         ax.grid(True, alpha=0.3)
     handles, labels = axes[0].get_legend_handles_labels()
     unique = dict(zip(labels, handles))
-    diagnostic_label = "Post-stop diagnostic region"
-    if diagnostic_label in unique:
-        diagnostic_handle = unique.pop(diagnostic_label)
-        unique[diagnostic_label] = diagnostic_handle
+    # Keep the Radial Gittins trajectory distinct from the stopping point and
+    # recommendation, while combining the latter two into one compact symbol.
+    paper_handles = {
+        "Radial Gittins": Line2D(
+            [], [], color=GITTINS_COLOR, linestyle="-", linewidth=2.4,
+        ),
+        "Mean Gittins stop": Line2D(
+            [], [], color=GITTINS_COLOR, linestyle="--", linewidth=2.4,
+            marker="o", markersize=10.5, markerfacecolor=GITTINS_COLOR,
+            markeredgecolor="white", markeredgewidth=1.1,
+        ),
+        r"$\pm 2$ SE": Patch(
+            facecolor="#7a7a7a", edgecolor="none", alpha=0.20,
+        ),
+    }
+    unique = {**paper_handles, **unique}
+    # Matplotlib fills multi-row legends column by column. Keep the two
+    # Gittins entries in column 1 and the two random baselines in column 2.
+    legend_order = (
+        "Radial Gittins",
+        "Mean Gittins stop",
+        "Random configurations",
+        "Random questions",
+        "EGE-SH",
+        "APE-k",
+        "qNEHVI",
+        r"$\pm 2$ SE",
+    )
+    ordered = {
+        label: unique[label] for label in legend_order if label in unique
+    }
+    ordered.update(
+        (label, handle) for label, handle in unique.items()
+        if label not in ordered
+    )
     shared_legend = figure.legend(
-        unique.values(),
-        unique.keys(),
+        ordered.values(),
+        ordered.keys(),
         loc="lower center",
         bbox_to_anchor=(0.5, 0.01),
-        ncol=4 if len(unique) <= 8 else 5,
-        fontsize=13,
-        columnspacing=1.2,
-        handletextpad=0.6,
+        ncol=4,
+        fontsize=17,
+        columnspacing=1.25,
+        handletextpad=0.7,
+        markerscale=1.15,
         frameon=False,
     )
     shared_legend.set_in_layout(False)
-    bottom = 0.25 if nrows == 1 else 0.15
+    bottom = 0.26 if nrows == 1 else 0.17
     figure.tight_layout(rect=(0.065, bottom, 0.985, 0.98))
     figure.supxlabel(
         "Cumulative search cost fraction"
         if x_axis == "cost" else "Observed cell-budget fraction",
-        fontsize=17,
+        fontsize=24,
         x=0.54,
-        y=0.18 if nrows == 1 else 0.10,
+        y=0.195 if nrows == 1 else 0.10,
     )
     figure.supylabel(
         ylabel,
-        fontsize=14,
-        x=0.015,
+        fontsize=24,
+        x=0.045,
         y=0.60 if nrows == 1 else 0.55,
     )
     # Use a fixed taller paper canvas even with the shared legend.
