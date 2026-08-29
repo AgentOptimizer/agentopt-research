@@ -111,16 +111,20 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
             compact_tick = FuncFormatter(lambda value, _: f"{value:g}")
             axes[row, col].xaxis.set_major_formatter(compact_tick)
             axes[row, col].yaxis.set_major_formatter(compact_tick)
-            axes[row, col].tick_params(axis="both", labelsize=26)
+            axes[row, col].tick_params(axis="both", labelsize=27)
         mean_cost, _ = _mean_run_fractions(
             method, caches[method], full_search_cost, full_total_evaluations,
         )
         run_details = title.split("\n", 1)[1]
         method_name = title.split("\n", 1)[0]
-        axes[0, col].set_title(
+        column_title = axes[0, col].set_title(
             f"{method_name}\n{run_details}\nSearch cost: {mean_cost:.1%}",
-            fontsize=29, pad=10, linespacing=1.02,
+            fontsize=30, pad=10, linespacing=1.02,
         )
+        if col == n_methods - 2:
+            column_title.set_x(.46)
+        elif col == n_methods - 1:
+            column_title.set_x(.54)
         selected_names = caches[method][seed]["estimated_selected_models"]
         n_normal = _scatter_estimated(axes[0, col], caches[method][seed], **style)
         n_actual = _scatter(axes[1, col], truth, models, selected_names, **style)
@@ -134,7 +138,7 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
         for row, text_value in enumerate((f"{n_normal} recommended", f"{n_actual} recommended",
                                           f"{np.count_nonzero(shown)} unique")):
             axes[row, col].text(.96, .05, text_value, transform=axes[row, col].transAxes,
-                                ha="right", fontsize=27)
+                                ha="right", fontsize=28)
     legend_handles = (
         Line2D([], [], linestyle="none", marker="o", markersize=20,
                markerfacecolor="#d55e00", markeredgecolor="#725b46",
@@ -151,14 +155,14 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
     )
     shared_legend = figure.legend(
         handles=legend_handles, loc="lower center", bbox_to_anchor=(.52, .042),
-        ncol=4, frameon=False, fontsize=31, columnspacing=1.20,
+        ncol=4, frameon=False, fontsize=32, columnspacing=1.20,
         handlelength=2.0, handletextpad=.6,
     )
     shared_xlabel = figure.supxlabel(
-        "Mean deployment cost (USD)", fontsize=34, x=.515, y=.121,
+        "Mean deployment cost (USD)", fontsize=35, x=.515, y=.121,
     )
     shared_ylabel = figure.supylabel(
-        "Mean accuracy", fontsize=34, x=.004, y=.510,
+        "Mean accuracy", fontsize=35, x=.004, y=.510,
     )
     figure.subplots_adjust(
         left=.095, right=.995, bottom=.205, top=.80, wspace=.055, hspace=.14,
@@ -174,9 +178,9 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
         panel_box = axes[row, 0].get_position()
         y = (panel_box.y0 + panel_box.y1) / 2
         figure.text(.041, y, archive_label, rotation=90,
-                    ha="center", va="center", fontsize=28)
+                    ha="center", va="center", fontsize=29)
         figure.text(.057, y, seed_label, rotation=90,
-                    ha="center", va="center", fontsize=28)
+                    ha="center", va="center", fontsize=29)
     cax = figure.add_axes([.095, .020, .900, .018])
     colorbar = figure.colorbar(
         mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
@@ -184,10 +188,10 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
         orientation="horizontal",
     )
     colorbar.ax.set_xlabel(
-        "Recommendation frequency (out of 20 seeds)", fontsize=31, labelpad=7,
+        "Recommendation frequency (out of 20 seeds)", fontsize=33, labelpad=7,
     )
     colorbar.set_ticks([1, 5, 10, 15, 20])
-    colorbar.ax.tick_params(labelsize=27)
+    colorbar.ax.tick_params(labelsize=28)
     title_y = .968 if benchmark == "mathqa" else .976
     main_title = figure.suptitle(
         f"{LABELS[benchmark]}: estimations and actual values of Pareto recommendations",
