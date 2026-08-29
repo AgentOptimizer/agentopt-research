@@ -93,7 +93,7 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
     n_methods = len(methods)
     figure, axes = plt.subplots(3, n_methods, figsize=(4 * n_methods, 13),
                                 sharex=True, sharey=True, squeeze=False)
-    recommendation_size = 190
+    recommendation_size = 215
     style = dict(s=recommendation_size, color="#d55e00", edgecolors="#725b46",
                  linewidths=1.0, zorder=5)
     for col, (method, title) in enumerate(methods):
@@ -104,14 +104,14 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
             axes[row, col].collections[0].set_facecolor("#c4cad2")
             axes[row, col].collections[0].set_alpha(.85)
             axes[row, col].collections[0].set_sizes(
-                np.full(len(truth), 50.0)
+                np.full(len(truth), 58.0)
             )
-            axes[row, col].lines[0].set_markersize(8.5)
+            axes[row, col].lines[0].set_markersize(9.5)
             axes[row, col].lines[0].set_linewidth(2.0)
             compact_tick = FuncFormatter(lambda value, _: f"{value:g}")
             axes[row, col].xaxis.set_major_formatter(compact_tick)
             axes[row, col].yaxis.set_major_formatter(compact_tick)
-            axes[row, col].tick_params(axis="both", labelsize=23)
+            axes[row, col].tick_params(axis="both", labelsize=24)
         mean_cost, _ = _mean_run_fractions(
             method, caches[method], full_search_cost, full_total_evaluations,
         )
@@ -134,19 +134,19 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
         for row, text_value in enumerate((f"{n_normal} recommended", f"{n_actual} recommended",
                                           f"{np.count_nonzero(shown)} unique")):
             axes[row, col].text(.96, .05, text_value, transform=axes[row, col].transAxes,
-                                ha="right", fontsize=24)
+                                ha="right", fontsize=25)
     legend_handles = (
-        Line2D([], [], linestyle="none", marker="o", markersize=18,
+        Line2D([], [], linestyle="none", marker="o", markersize=19,
                markerfacecolor="#d55e00", markeredgecolor="#725b46",
                label=f"Seed {seed}"),
-        Line2D([], [], linestyle="none", marker="o", markersize=18,
+        Line2D([], [], linestyle="none", marker="o", markersize=19,
                markerfacecolor=cmap(norm(4)), markeredgecolor="#725b46",
                label="20 seeds"),
-        Line2D([], [], linestyle="none", marker="o", markersize=18,
+        Line2D([], [], linestyle="none", marker="o", markersize=19,
                markerfacecolor="#c4cad2", markeredgecolor="none",
                label="All configurations"),
         Line2D([], [], color="#3f4854", linewidth=1.7, marker="o",
-               markersize=14, markerfacecolor="white", markeredgewidth=1.5,
+               markersize=15, markerfacecolor="white", markeredgewidth=1.5,
                label="Empirical Pareto frontier"),
     )
     shared_legend = figure.legend(
@@ -174,9 +174,9 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
         panel_box = axes[row, 0].get_position()
         y = (panel_box.y0 + panel_box.y1) / 2
         figure.text(.043, y, archive_label, rotation=90,
-                    ha="center", va="center", fontsize=25)
-        figure.text(.062, y, seed_label, rotation=90,
-                    ha="center", va="center", fontsize=25)
+                    ha="center", va="center", fontsize=26)
+        figure.text(.059, y, seed_label, rotation=90,
+                    ha="center", va="center", fontsize=26)
     cax = figure.add_axes([.095, .020, .900, .018])
     colorbar = figure.colorbar(
         mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
@@ -188,7 +188,7 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
     )
     colorbar.set_ticks([1, 5, 10, 15, 20])
     colorbar.ax.tick_params(labelsize=25)
-    title_y = .975 if benchmark == "mathqa" else .983
+    title_y = .968 if benchmark == "mathqa" else .976
     main_title = figure.suptitle(
         f"{LABELS[benchmark]}: estimations and actual values of Pareto recommendations",
                     fontsize=38, y=title_y)
