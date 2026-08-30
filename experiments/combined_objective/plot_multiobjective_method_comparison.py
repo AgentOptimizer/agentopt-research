@@ -351,7 +351,7 @@ def write_comparison_figure(
                 ax, xs, means, two_se, color=color, label=label,
                 linewidth=2.0,
             )
-        ax.set_title(panel["name"], fontsize=22)
+        ax.set_title(panel["name"], fontsize=20)
         compact_tick = FuncFormatter(lambda value, _: f"{value:g}")
         ax.xaxis.set_major_formatter(compact_tick)
         ax.yaxis.set_major_formatter(compact_tick)
@@ -400,9 +400,9 @@ def write_comparison_figure(
         ordered.values(),
         ordered.keys(),
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.01),
+        bbox_to_anchor=(0.53, -0.01),
         ncol=4,
-        fontsize=17,
+        fontsize=18,
         columnspacing=1.25,
         handletextpad=0.7,
         markerscale=1.15,
@@ -411,21 +411,28 @@ def write_comparison_figure(
     shared_legend.set_in_layout(False)
     bottom = 0.26 if nrows == 1 else 0.17
     figure.tight_layout(rect=(0.065, bottom, 0.985, 0.98))
-    figure.supxlabel(
+    shared_xlabel = figure.supxlabel(
         "Cumulative search cost fraction"
         if x_axis == "cost" else "Observed cell-budget fraction",
-        fontsize=24,
+        fontsize=22,
         x=0.54,
         y=0.195 if nrows == 1 else 0.10,
     )
-    figure.supylabel(
+    shared_ylabel = figure.supylabel(
         ylabel,
-        fontsize=24,
+        fontsize=22,
         x=0.045,
         y=0.60 if nrows == 1 else 0.55,
     )
-    # Use a fixed taller paper canvas even with the shared legend.
-    figure.savefig(out_path, dpi=160)
+    # Crop only the unused outer canvas while preserving safe spacing between
+    # the shared y label and the tick labels.
+    figure.savefig(
+        out_path,
+        dpi=160,
+        bbox_inches="tight",
+        pad_inches=0.14,
+        bbox_extra_artists=(shared_legend, shared_xlabel, shared_ylabel),
+    )
     plt.close(figure)
     print(f"wrote {out_path}")
 
