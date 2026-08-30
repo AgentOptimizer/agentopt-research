@@ -153,10 +153,15 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
                markersize=16, markerfacecolor="white", markeredgewidth=1.5,
                label="Empirical Pareto frontier"),
     )
-    shared_legend = figure.legend(
-        handles=legend_handles, loc="lower center", bbox_to_anchor=(.52, .027),
-        ncol=4, frameon=False, fontsize=34, columnspacing=1.20,
-        handlelength=2.0, handletextpad=.6,
+    shared_legend = (
+        figure.legend(
+            handles=legend_handles, loc="lower center",
+            bbox_to_anchor=(.52, .027), ncol=4, frameon=False,
+            fontsize=34, columnspacing=1.20, handlelength=2.0,
+            handletextpad=.6,
+        )
+        if benchmark == "mathqa"
+        else None
     )
     shared_xlabel = figure.supxlabel(
         "Mean deployment cost (USD)", fontsize=37, x=.515, y=.113,
@@ -181,33 +186,38 @@ def plot_benchmark(benchmark: str, data_dir: Path, output: Path, seed: int,
                     ha="center", va="center", fontsize=31)
         figure.text(.057, y, seed_label, rotation=90,
                     ha="center", va="center", fontsize=31)
-    cax = figure.add_axes([.095, .012, .900, .018])
-    colorbar = figure.colorbar(
-        mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
-        cax=cax,
-        orientation="horizontal",
-    )
-    colorbar.ax.set_xlabel(
-        "Recommendation frequency (out of 20 seeds)", fontsize=35, labelpad=7,
-    )
-    colorbar.set_ticks([1, 5, 10, 15, 20])
-    colorbar.ax.tick_params(labelsize=30)
+    if benchmark == "mathqa":
+        cax = figure.add_axes([.095, .012, .900, .018])
+        colorbar = figure.colorbar(
+            mpl.cm.ScalarMappable(norm=norm, cmap=cmap),
+            cax=cax,
+            orientation="horizontal",
+        )
+        colorbar.ax.set_xlabel(
+            "Recommendation frequency (out of 20 seeds)",
+            fontsize=35,
+            labelpad=7,
+        )
+        colorbar.set_ticks([1, 5, 10, 15, 20])
+        colorbar.ax.tick_params(labelsize=30)
     title_y = .968 if benchmark == "mathqa" else .976
     main_title = figure.suptitle(
         f"{LABELS[benchmark]}: estimations and actual values of Pareto recommendations",
                     fontsize=38, y=title_y)
     output.parent.mkdir(parents=True, exist_ok=True)
+    extra_artists = tuple(
+        artist for artist in (
+            shared_legend, shared_xlabel, shared_ylabel, main_title,
+        )
+        if artist is not None
+    )
     figure.savefig(
         output, dpi=220, bbox_inches="tight", pad_inches=.05,
-        bbox_extra_artists=(
-            shared_legend, shared_xlabel, shared_ylabel, main_title,
-        ),
+        bbox_extra_artists=extra_artists,
     )
     figure.savefig(
         output.with_suffix(".pdf"), bbox_inches="tight", pad_inches=.05,
-        bbox_extra_artists=(
-            shared_legend, shared_xlabel, shared_ylabel, main_title,
-        ),
+        bbox_extra_artists=extra_artists,
     )
     plt.close(figure)
     print(f"wrote {output} and {output.with_suffix('.pdf')}")
