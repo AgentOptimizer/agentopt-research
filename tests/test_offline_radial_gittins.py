@@ -127,6 +127,17 @@ class ParetoMetricTests(unittest.TestCase):
             [2, 4, 9],
         )
 
+    def test_gd_is_zero_on_the_true_front_and_igd_penalizes_missing_points(self):
+        from experiments.combined_objective.offline_radial_gittins import (
+            generational_distance,
+            inverted_generational_distance,
+        )
+        front = np.array([[0.9, 0.2], [0.6, 0.6], [0.2, 0.9]])
+        subset = front[:2]
+        self.assertAlmostEqual(generational_distance(subset, front), 0.0)
+        self.assertGreater(inverted_generational_distance(subset, front), 0.0)
+        self.assertAlmostEqual(inverted_generational_distance(front, front), 0.0)
+
 
 class OfflineRoundRobinTests(unittest.TestCase):
     def test_scripted_round_robin_reuses_posteriors_and_returns_full_archive(self):

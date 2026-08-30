@@ -139,13 +139,18 @@ def run_benchmark(
     eta: float,
     boundary_z_padding_extra: float,
     cache: RadialGittinsBoundaryCache,
+    boundary_margin_cells: int | None = None,
 ) -> Tuple[RadialSimulationResult, np.ndarray, Tuple[int, ...]]:
     models, datapoints, table = load_pickle(pickle_path)
     grid = RadialGittinsGrid(
         z_size=grid_size,
         delta_size=grid_size,
         state_size=grid_size,
-        boundary_margin_cells=max(2, min(4, grid_size // 32)),
+        boundary_margin_cells=(
+            max(2, min(4, grid_size // 32))
+            if boundary_margin_cells is None
+            else boundary_margin_cells
+        ),
     )
     print(f"\n=== {name}: {len(models)} models, seed={seed}, grid={grid_size} ===")
     result = simulate_radial_gittins(
