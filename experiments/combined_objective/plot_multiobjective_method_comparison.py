@@ -64,7 +64,6 @@ RANDOM_STYLES = {
 }
 
 GITTINS_COLOR = "tab:orange"
-UCB_COLOR = "tab:blue"
 BASELINE_STYLES = {
     "ege_sh": ("tab:olive", "EGE-SH"),
     "ape_k": ("tab:blue", "APE-k"),
@@ -312,17 +311,6 @@ def write_comparison_figure(
                 edgecolors="white",
                 linewidths=1.2,
                 zorder=5,
-            )
-        if panel.get("ucb") is not None:
-            ucb_x, ucb_y, ucb_ci95, _ = panel["ucb"]
-            _plot_regret_line(
-                ax,
-                ucb_x,
-                ucb_y,
-                ucb_ci95,
-                color=UCB_COLOR,
-                label="Radial UCB",
-                linewidth=1.7,
             )
         for version, xs, means, ci95 in panel["random"]:
             color, _ = RANDOM_STYLES[version]

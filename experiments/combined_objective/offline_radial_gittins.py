@@ -9,8 +9,7 @@ Everything except the unfinished-arm index is shared infrastructure: the
 uniform warm start, the round-robin direction scheduler, the required-completion
 stopping convention, the budget guards, and the archive/hypervolume/GD/IGD metrics.
 An alternative acquisition rule therefore only has to supply an
-``index_provider``; see :mod:`experiments.combined_objective.offline_radial_ucb`
-for the optimistic radial-UCB baseline built that way.
+``index_provider`` without changing the shared replay engine.
 """
 
 from __future__ import annotations
