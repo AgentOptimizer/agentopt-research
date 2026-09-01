@@ -39,6 +39,7 @@ from experiments.single_objective.offline_selector_sim import (  # noqa: E402
     load_scope,
 )
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
+    front_quality_metrics,
     hypervolume_2d,
     nondominated_indices,
 )
@@ -55,6 +56,10 @@ class MultiObjectiveRandomSearchResult:
     budget_fraction: float
     selected_arm_indices: Tuple[int, ...]
     selected_models: Tuple[str, ...]
+    completed_arm_indices: Tuple[int, ...]
+    completed_models: Tuple[str, ...]
+    completed_pareto_arm_indices: Tuple[int, ...]
+    completed_pareto_models: Tuple[str, ...]
     sampled_arm_indices: Tuple[int, ...]
     sampled_question_ids: Tuple[int, ...]
     total_evaluations: int
@@ -62,6 +67,8 @@ class MultiObjectiveRandomSearchResult:
     hypervolume: float
     ground_truth_hypervolume: float
     hypervolume_regret: float
+    generational_distance: float
+    inverted_generational_distance: float
     true_front_recall: float
     recommendation_precision: float
     false_positive_count: int
@@ -137,6 +144,7 @@ def simulate_multiobjective_random_search(
     budget_fraction: float,
     seed: int = 42,
     evaluation_question_ids: Sequence[int] | None = None,
+    complete_only: bool = False,
 ) -> MultiObjectiveRandomSearchResult:
     """Run one random-search protocol at one observed-cell budget."""
     if version not in VERSIONS:
@@ -157,7 +165,8 @@ def simulate_multiobjective_random_search(
     cost_reference = float(np.median(positive_costs))
     truth_normalized = normalized_truth_vectors(truth_raw, cost_reference)
     true_front = set(pareto_min_cost_indices(truth_raw))
-    ground_truth_hv = hypervolume_2d(truth_normalized[list(true_front)])
+    truth_front_points = truth_normalized[list(true_front)]
+    ground_truth_hv = hypervolume_2d(truth_front_points)
 
     rng = np.random.default_rng(seed)
     n_arms = len(models)
@@ -187,12 +196,33 @@ def simulate_multiobjective_random_search(
         estimated[:] = mean_raw_vectors(models, sampled_questions, table)
         selected_arms = tuple(pareto_min_cost_indices(estimated))
 
+    completed_arms = tuple(
+        arm for arm in sampled_arms if len(sampled_questions) == len(questions)
+    )
+    if completed_arms:
+        local_complete = pareto_min_cost_indices(estimated[list(completed_arms)])
+        completed_pareto = tuple(completed_arms[i] for i in local_complete)
+    else:
+        completed_pareto = ()
+    if complete_only:
+        selected_arms = completed_pareto
+
     total_cost = 0.0
     for arm_index in sampled_arms:
         samples = table[models[arm_index]]
         total_cost += sum(samples[q].cost for q in sampled_questions)
     total_evaluations = len(sampled_arms) * len(sampled_questions)
-    selected_hv = hypervolume_2d(truth_normalized[list(selected_arms)])
+    selected_points = (
+        truth_normalized[list(selected_arms)]
+        if selected_arms
+        else np.empty((0, 2), dtype=np.float64)
+    )
+    quality = front_quality_metrics(
+        selected_points,
+        truth_front_points,
+        (0.0, 0.0),
+        ground_truth_hv,
+    )
     recalled = len(true_front.intersection(selected_arms))
     recall = recalled / len(true_front) if true_front else 1.0
     false_positive_count = len(set(selected_arms) - true_front)
@@ -204,13 +234,19 @@ def simulate_multiobjective_random_search(
         budget_fraction=fraction,
         selected_arm_indices=selected_arms,
         selected_models=tuple(models[i] for i in selected_arms),
+        completed_arm_indices=completed_arms,
+        completed_models=tuple(models[i] for i in completed_arms),
+        completed_pareto_arm_indices=completed_pareto,
+        completed_pareto_models=tuple(models[i] for i in completed_pareto),
         sampled_arm_indices=sampled_arms,
         sampled_question_ids=sampled_questions,
         total_evaluations=total_evaluations,
         total_search_cost_usd=float(total_cost),
-        hypervolume=float(selected_hv),
+        hypervolume=quality.hypervolume,
         ground_truth_hypervolume=float(ground_truth_hv),
-        hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
+        hypervolume_regret=quality.hypervolume_regret,
+        generational_distance=quality.generational_distance,
+        inverted_generational_distance=quality.inverted_generational_distance,
         true_front_recall=float(recall),
         recommendation_precision=float(precision),
         false_positive_count=int(false_positive_count),
@@ -252,7 +288,9 @@ def write_results_csv(
     fields = [
         "version", "seed", "budget_fraction", "total_evaluations",
         "total_search_cost_usd", "n_recommended", "hypervolume",
-        "ground_truth_hypervolume", "hypervolume_regret", "true_front_recall",
+        "ground_truth_hypervolume", "hypervolume_regret",
+        "generational_distance", "inverted_generational_distance",
+        "true_front_recall",
         "recommendation_precision", "false_positive_count", "selected_models",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -271,6 +309,10 @@ def write_results_csv(
                     "hypervolume": result.hypervolume,
                     "ground_truth_hypervolume": result.ground_truth_hypervolume,
                     "hypervolume_regret": result.hypervolume_regret,
+                    "generational_distance": result.generational_distance,
+                    "inverted_generational_distance": (
+                        result.inverted_generational_distance
+                    ),
                     "true_front_recall": result.true_front_recall,
                     "recommendation_precision": result.recommendation_precision,
                     "false_positive_count": result.false_positive_count,

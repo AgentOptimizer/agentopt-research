@@ -19,7 +19,9 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
+    generational_distance,
     hypervolume_2d,
+    inverted_generational_distance,
 )
 from experiments.combined_objective.offline_multiobjective_random_search import (  # noqa: E402
     normalized_truth_vectors,
@@ -185,6 +187,14 @@ def audit_saved_results(ctx: dict, result_csv: Path) -> tuple[list[dict], list[d
         recall = true_positive / len(ctx["front_idx"]) if ctx["front_idx"] else 1.0
         f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
         hv = float(hypervolume_2d(ctx["normalized"][indices])) if indices else 0.0
+        obtained = (
+            ctx["normalized"][indices]
+            if indices
+            else np.empty((0, 2), dtype=float)
+        )
+        truth_front = ctx["normalized"][ctx["front_idx"]]
+        gd = generational_distance(obtained, truth_front)
+        igd = inverted_generational_distance(obtained, truth_front)
         distances = [nearest_front_distance(raw[i], front, ranges) for i in indices]
         violation_count = 0
         for i, name in zip(indices, names):
@@ -219,6 +229,8 @@ def audit_saved_results(ctx: dict, result_csv: Path) -> tuple[list[dict], list[d
                 "hypervolume": hv, "ground_truth_hypervolume": ctx["gt_hv"],
                 "hypervolume_regret": max(0.0, ctx["gt_hv"] - hv),
                 "hypervolume_fraction": hv / ctx["gt_hv"] if ctx["gt_hv"] else 1.0,
+                "generational_distance": gd,
+                "inverted_generational_distance": igd,
                 "mean_distance_to_true_frontier": float(np.mean(distances)) if distances else math.nan,
                 "max_distance_to_true_frontier": float(np.max(distances)) if distances else math.nan,
                 "dominance_violation_count": violation_count,

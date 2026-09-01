@@ -1,21 +1,12 @@
 #!/usr/bin/env python3
-"""Compare Radial-Gittins and both random-search Pareto baselines.
-
-Both figures use the Gittins normalized-desirability hypervolume: accuracy
-together with ``C_ref / (C_ref + cost)``, scored against the Gittins reference
-point. Random search is rescored in that same space.
-
-``radial_gittins_vs_random_search_hv_regret.png`` shows the completed-only
-deployable recommendation (solid) against random search, with provisional
-all-posterior regret retained as a dashed diagnostic overlay.
-"""
+"""Compare Radial-Gittins and Pareto-search baselines."""
 
 from __future__ import annotations
 
 import argparse
 import csv
 import json
-import math
+import pickle
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -23,21 +14,36 @@ from typing import Dict, Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
+from matplotlib.ticker import FuncFormatter
+
+
+plt.rcParams.update({
+    "font.family": "serif",
+    "font.serif": ["Times New Roman", "STIXGeneral"],
+    "mathtext.fontset": "stix",
+    "pdf.fonttype": 42,
+    "ps.fonttype": 42,
+})
 
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
+    BoundaryGridError,
     RadialGittinsBoundaryCache,
 )
+from agentopt.model_selection.radial_gittins import DEFAULT_DIRECTIONS  # noqa: E402
 from experiments.combined_objective.offline_multiobjective_random_search import (  # noqa: E402
     MultiObjectiveRandomSearchResult,
     run_budget_sweep,
 )
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
     RadialSimulationResult,
-    hypervolume_2d,
+    front_quality_metrics,
+    nondominated_indices,
 )
 from experiments.combined_objective.plot.plot_radial_gittins_trajectories import (  # noqa: E402
     run_benchmark,
@@ -45,13 +51,23 @@ from experiments.combined_objective.plot.plot_radial_gittins_trajectories import
 
 
 PICKLES = {
+    "GPQA": ROOT / "experiments/data/lookup/gpqa_lookup.pkl",
+    "BFCL": ROOT / "experiments/data/lookup/bfcl_lookup.pkl",
     "HotpotQA": ROOT / "experiments/data/lookup/hotpotqa_lookup.pkl",
     "MathQA": ROOT / "experiments/data/lookup/mathqa_lookup.pkl",
 }
+DEFAULT_BENCHMARKS = ("HotpotQA", "MathQA")
 
 RANDOM_STYLES = {
-    "random_configurations": ("#7b61a8", "Random configurations"),
-    "random_questions": ("#2a9d8f", "Random shared questions"),
+    "random_configurations": ("tab:brown", "Random configurations"),
+    "random_questions": ("tab:purple", "Random shared questions"),
+}
+
+GITTINS_COLOR = "tab:orange"
+BASELINE_STYLES = {
+    "ege_sh": ("tab:olive", "EGE-SH"),
+    "ape_k": ("tab:blue", "APE-k"),
+    "qnehvi": ("tab:pink", "qNEHVI"),
 }
 
 
@@ -71,18 +87,45 @@ def _gittins_hv_space(
     )
 
 
+def _selected_metric(
+    truth_vectors: np.ndarray,
+    selected_indices: Sequence[int],
+    ground_truth_hv: float,
+    reference: Sequence[float],
+    field: str = "hypervolume_regret",
+) -> float:
+    selected = (
+        truth_vectors[list(selected_indices)]
+        if selected_indices
+        else np.empty((0, 2), dtype=np.float64)
+    )
+    truth_front = (
+        truth_vectors[nondominated_indices(truth_vectors)]
+        if truth_vectors.size
+        else np.empty((0, 2), dtype=np.float64)
+    )
+    quality = front_quality_metrics(
+        selected,
+        truth_front,
+        reference,
+        ground_truth_hv,
+    )
+    return float(getattr(quality, field))
+
+
 def _selected_regret(
     truth_vectors: np.ndarray,
     selected_indices: Sequence[int],
     ground_truth_hv: float,
     reference: Sequence[float],
 ) -> float:
-    selected_hv = (
-        hypervolume_2d(truth_vectors[list(selected_indices)], reference)
-        if selected_indices
-        else 0.0
+    return _selected_metric(
+        truth_vectors,
+        selected_indices,
+        ground_truth_hv,
+        reference,
+        field="hypervolume_regret",
     )
-    return float(max(0.0, ground_truth_hv - selected_hv))
 
 
 def _random_regret_series(
@@ -91,6 +134,7 @@ def _random_regret_series(
     version: str,
     radial_by_seed: Dict[int, RadialSimulationResult],
     x_axis: str,
+    field: str = "hypervolume_regret",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     grouped: Dict[float, list[float]] = defaultdict(list)
     grouped_x: Dict[float, list[float]] = defaultdict(list)
@@ -105,11 +149,12 @@ def _random_regret_series(
         radial = radial_by_seed[result.seed]
         truth_vectors, reference, ground_truth_hv = _gittins_hv_space(radial)
         grouped[result.budget_fraction].append(
-            _selected_regret(
+            _selected_metric(
                 truth_vectors,
                 result.selected_arm_indices,
                 ground_truth_hv,
                 reference,
+                field=field,
             )
         )
         grouped_x[result.budget_fraction].append(
@@ -122,7 +167,7 @@ def _random_regret_series(
     means = np.asarray([np.mean(grouped[x]) for x in checkpoints], dtype=np.float64)
     ci95 = np.asarray(
         [
-            1.96 * np.std(grouped[x], ddof=1) / np.sqrt(len(grouped[x]))
+            2.0 * np.std(grouped[x], ddof=1) / np.sqrt(len(grouped[x]))
             if len(grouped[x]) > 1
             else 0.0
             for x in checkpoints
@@ -153,7 +198,7 @@ def _radial_regret_series(
     for column, count in enumerate(counts):
         if count > 1:
             ci95[column] = (
-                1.96
+                2.0
                 * np.nanstd(aligned[:, column], ddof=1)
                 / np.sqrt(count)
             )
@@ -163,23 +208,12 @@ def _radial_regret_series(
 def _draw_stop_markers(ax, stop_mean: float | None, seeds: int) -> None:
     if stop_mean is None:
         return
-    ax.axvspan(
-        stop_mean,
-        1.02,
-        color="#687386",
-        alpha=0.08,
-        label="forced post-stop diagnostic",
-    )
     ax.axvline(
         stop_mean,
-        color="#c45c26",
+        color=GITTINS_COLOR,
         linestyle="--",
-        linewidth=1.4,
-        label=(
-            f"Gittins stop ({stop_mean:.1%})"
-            if seeds == 1
-            else f"Mean Gittins stop ({stop_mean:.1%})"
-        ),
+        linewidth=2.2,
+        zorder=4,
     )
 
 
@@ -196,6 +230,8 @@ def _plot_regret_line(
     fill: bool = True,
     zorder: int = 2,
     linewidth: float = 1.9,
+    alpha: float = 1.0,
+    markersize: float = 8.5,
 ) -> None:
     ax.plot(
         xs,
@@ -206,6 +242,8 @@ def _plot_regret_line(
         marker=marker,
         label=label,
         zorder=zorder,
+        alpha=alpha,
+        markersize=markersize,
     )
     if fill:
         ax.fill_between(
@@ -218,19 +256,6 @@ def _plot_regret_line(
         )
 
 
-def _post_stop_series(
-    xs: np.ndarray,
-    ys: np.ndarray,
-    ci95: np.ndarray,
-    stop_fraction: float | None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Restrict a deployable series to its meaningful post-stop portion."""
-    if stop_fraction is None:
-        return xs, ys, ci95
-    keep = xs >= stop_fraction - 1e-12
-    return xs[keep], ys[keep], ci95[keep]
-
-
 def write_comparison_figure(
     *,
     out_path: Path,
@@ -239,77 +264,59 @@ def write_comparison_figure(
     seeds: int,
     seed: int,
     x_axis: str,
-    gittins_seeds: int | None = None,
+    ylabel: str = "Hypervolume Regret",
 ) -> None:
-    resolved_gittins_seeds = seeds if gittins_seeds is None else gittins_seeds
-    ncols = 2 if len(panels) <= 2 else 3
-    nrows = math.ceil(len(panels) / ncols)
-    figure, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(5.75 * ncols, 4.2 * nrows),
+    n_panels = len(panels)
+    ncols = 2 if n_panels > 1 else 1
+    nrows = int(np.ceil(n_panels / ncols))
+    figure, axes_grid = plt.subplots(
+        nrows, ncols,
+        figsize=(11.5, 5.0 if nrows == 1 else 8.5),
         sharey=False,
         squeeze=False,
     )
-    flat_axes = axes.ravel()
-    for ax, panel in zip(flat_axes, panels):
-        _draw_stop_markers(ax, panel["stop_mean"], resolved_gittins_seeds)
+    axes = list(axes_grid.flat)
+    for ax in axes[n_panels:]:
+        ax.set_visible(False)
+    for ax, panel in zip(axes, panels):
+        _draw_stop_markers(ax, panel["stop_mean"], seeds)
         deployable_x, deployable_y, deployable_ci95, _ = panel["deployable"]
-        provisional_x, provisional_y, provisional_ci95, _ = panel["provisional"]
-        deployable_x, deployable_y, deployable_ci95 = _post_stop_series(
-            deployable_x,
-            deployable_y,
-            deployable_ci95,
-            panel["stop_mean"],
-        )
         _plot_regret_line(
             ax,
             deployable_x,
             deployable_y,
             deployable_ci95,
-            color="#1f4e79",
-            label=(
-                "deployable completed-only (post-stop)"
-                if resolved_gittins_seeds == 1
-                else (
-                    "deployable completed-only post-stop "
-                    f"(mean, n={resolved_gittins_seeds})"
-                )
-            ),
+            color=GITTINS_COLOR,
+            label="_nolegend_",
             zorder=3,
+            linewidth=2.4,
         )
         if len(deployable_x):
+            recommendation_index = (
+                0
+                if panel["stop_mean"] is None
+                else min(
+                    int(np.searchsorted(
+                        deployable_x, panel["stop_mean"], side="left",
+                    )),
+                    len(deployable_x) - 1,
+                )
+            )
             ax.scatter(
-                [deployable_x[0]],
-                [deployable_y[0]],
-                s=90,
-                color="#1f4e79",
+                [deployable_x[recommendation_index]],
+                [deployable_y[recommendation_index]],
+                s=125,
+                color=GITTINS_COLOR,
                 marker="o",
                 edgecolors="white",
-                linewidths=1.0,
+                linewidths=1.2,
                 zorder=5,
-                label=(
-                    f"deployable regret at stop ({deployable_y[0]:.4f})"
-                    if resolved_gittins_seeds == 1
-                    else f"mean deployable regret at stop ({deployable_y[0]:.4f})"
-                ),
             )
-        _plot_regret_line(
-            ax,
-            provisional_x,
-            provisional_y,
-            provisional_ci95,
-            color="#7a8ca5",
-            label="provisional all-posterior diagnostic",
-            linestyle="--",
-            fill=False,
-            zorder=2,
-            linewidth=1.3,
-        )
         for version, xs, means, ci95 in panel["random"]:
-            color, base_label = RANDOM_STYLES[version]
+            color, _ = RANDOM_STYLES[version]
             plot_label = (
-                f"{base_label} (seed={seed})" if seeds == 1 else base_label
+                "Random questions"
+                if version == "random_questions" else "Random configurations"
             )
             _plot_regret_line(
                 ax,
@@ -319,24 +326,101 @@ def write_comparison_figure(
                 color=color,
                 label=plot_label,
                 marker="o",
-                linewidth=1.5,
+                linewidth=1.8,
+                markersize=9.0,
             )
-        ax.set_title(panel["name"])
-        ax.set_xlabel(
-            "Cumulative search cost fraction"
-            if x_axis == "cost"
-            else "Observed cell-budget fraction"
-        )
-        ax.set_ylabel("Normalized-desirability hypervolume regret")
+        for method, xs, means, ci95 in panel.get("baselines", []):
+            color, label = BASELINE_STYLES.get(method, ("tab:gray", method))
+            # Baseline trajectory summaries store a 1.96-SE interval. Convert
+            # it at display time so every band in the shared paper figure is
+            # exactly ±2 SE, matching the legend and the other methods.
+            two_se = np.asarray(ci95, dtype=np.float64) * 2.0 / 1.96
+            _plot_regret_line(
+                ax, xs, means, two_se, color=color, label=label,
+                linewidth=2.0,
+            )
+        ax.set_title(panel["name"], fontsize=20)
+        compact_tick = FuncFormatter(lambda value, _: f"{value:g}")
+        ax.xaxis.set_major_formatter(compact_tick)
+        ax.yaxis.set_major_formatter(compact_tick)
+        ax.tick_params(axis="both", labelsize=19)
         ax.set_xlim(0.0, 1.02)
         ax.set_ylim(bottom=0.0)
         ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper right", fontsize=7.5)
-    for ax in flat_axes[len(panels):]:
-        ax.remove()
-    figure.suptitle(title, fontsize=13)
-    figure.tight_layout()
-    figure.savefig(out_path, dpi=160, bbox_inches="tight")
+    handles, labels = axes[0].get_legend_handles_labels()
+    unique = dict(zip(labels, handles))
+    # Keep the Radial Gittins trajectory distinct from the stopping point and
+    # recommendation, while combining the latter two into one compact symbol.
+    paper_handles = {
+        "Radial Gittins": Line2D(
+            [], [], color=GITTINS_COLOR, linestyle="-", linewidth=2.4,
+        ),
+        "Mean Gittins stop": Line2D(
+            [], [], color=GITTINS_COLOR, linestyle="--", linewidth=2.4,
+            marker="o", markersize=10.5, markerfacecolor=GITTINS_COLOR,
+            markeredgecolor="white", markeredgewidth=1.1,
+        ),
+        r"$\pm 2$ SE": Patch(
+            facecolor="#7a7a7a", edgecolor="none", alpha=0.20,
+        ),
+    }
+    unique = {**paper_handles, **unique}
+    # Matplotlib fills multi-row legends column by column. Keep the two
+    # Gittins entries in column 1 and the two random baselines in column 2.
+    legend_order = (
+        "Radial Gittins",
+        "Mean Gittins stop",
+        "Random configurations",
+        "Random questions",
+        "EGE-SH",
+        "APE-k",
+        "qNEHVI",
+        r"$\pm 2$ SE",
+    )
+    ordered = {
+        label: unique[label] for label in legend_order if label in unique
+    }
+    ordered.update(
+        (label, handle) for label, handle in unique.items()
+        if label not in ordered
+    )
+    shared_legend = figure.legend(
+        ordered.values(),
+        ordered.keys(),
+        loc="lower center",
+        bbox_to_anchor=(0.53, -0.01),
+        ncol=4,
+        fontsize=18,
+        columnspacing=1.25,
+        handletextpad=0.7,
+        markerscale=1.15,
+        frameon=False,
+    )
+    shared_legend.set_in_layout(False)
+    bottom = 0.26 if nrows == 1 else 0.17
+    figure.tight_layout(rect=(0.065, bottom, 0.985, 0.98))
+    shared_xlabel = figure.supxlabel(
+        "Cumulative search cost fraction"
+        if x_axis == "cost" else "Observed cell-budget fraction",
+        fontsize=22,
+        x=0.54,
+        y=0.195 if nrows == 1 else 0.10,
+    )
+    shared_ylabel = figure.supylabel(
+        ylabel,
+        fontsize=22,
+        x=0.045,
+        y=0.60 if nrows == 1 else 0.55,
+    )
+    # Crop only the unused outer canvas while preserving safe spacing between
+    # the shared y label and the tick labels.
+    figure.savefig(
+        out_path,
+        dpi=160,
+        bbox_inches="tight",
+        pad_inches=0.14,
+        bbox_extra_artists=(shared_legend, shared_xlabel, shared_ylabel),
+    )
     plt.close(figure)
     print(f"wrote {out_path}")
 
@@ -360,7 +444,9 @@ def panels_from_csv(
         key = (row["benchmark"], row["method"])
         grouped[key]["x"].append(float(row["budget_fraction"]))
         grouped[key]["y"].append(float(row["mean_hv_regret"]))
-        grouped[key]["ci"].append(float(row["ci95_half_width"]))
+        # Legacy summaries stored 1.96 SE under this column name. Convert on
+        # read so every paper figure consistently displays exactly ±2 SE.
+        grouped[key]["ci"].append(float(row["ci95_half_width"]) * 2.0 / 1.96)
         grouped[key]["n"].append(float(row["n_runs"]))
         if row.get("stop_axis_fraction"):
             stored_stops[row["benchmark"]] = float(row["stop_axis_fraction"])
@@ -375,7 +461,11 @@ def panels_from_csv(
         return xs, ys, cis, counts
 
     panels = []
-    for benchmark in PICKLES:
+    available_benchmarks = [
+        benchmark for benchmark in PICKLES
+        if (benchmark, "radial_gittins_deployable") in grouped
+    ]
+    for benchmark in available_benchmarks:
         random_curves = []
         for version in RANDOM_STYLES:
             xs, means, ci95, _ = _series(benchmark, version)
@@ -417,6 +507,10 @@ def main() -> None:
     parser.add_argument("--outdir", type=Path, default=Path("analysis/method_comparison"))
     parser.add_argument("--seed", type=int, default=42, help="First run seed.")
     parser.add_argument(
+        "--exclude-seed", type=int, action="append", default=[],
+        help="Skip an invalid seed and extend the range to keep --seeds runs.",
+    )
+    parser.add_argument(
         "--seeds",
         "--random-seeds",
         dest="seeds",
@@ -426,6 +520,11 @@ def main() -> None:
     )
     parser.add_argument("--batch-size", type=int, default=4, choices=(4, 8))
     parser.add_argument("--grid-size", type=int, default=129)
+    parser.add_argument(
+        "--benchmarks", nargs="+", choices=tuple(PICKLES),
+        default=list(DEFAULT_BENCHMARKS),
+        help="Benchmarks to run; defaults to HotpotQA and MathQA.",
+    )
     parser.add_argument(
         "--x-axis",
         choices=("cost", "cells"),
@@ -450,6 +549,8 @@ def main() -> None:
     args = parser.parse_args()
     outdir = args.outdir if args.outdir.is_absolute() else ROOT / args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
+    raw_run_dir = outdir / "raw_runs"
+    raw_run_dir.mkdir(parents=True, exist_ok=True)
 
     if args.from_csv is not None:
         csv_path = args.from_csv if args.from_csv.is_absolute() else ROOT / args.from_csv
@@ -480,22 +581,74 @@ def main() -> None:
 
     cache = RadialGittinsBoundaryCache()
     rows = []
+    seed_rows = []
     panels = []
 
-    for benchmark, pickle_path in PICKLES.items():
-        run_seeds = range(args.seed, args.seed + args.seeds)
+    for benchmark in args.benchmarks:
+        pickle_path = PICKLES[benchmark]
+        excluded = set(args.exclude_seed)
+        run_seeds_list = []
+        candidate_seed = args.seed
+        while len(run_seeds_list) < args.seeds:
+            if candidate_seed not in excluded:
+                run_seeds_list.append(candidate_seed)
+            candidate_seed += 1
+        run_seeds = tuple(run_seeds_list)
         radial_runs = []
         raw_vectors = None
         evaluation_questions = None
         for run_seed in run_seeds:
-            radial, run_vectors, run_questions = run_benchmark(
-                pickle_path=pickle_path,
-                name=benchmark,
-                batch_size=args.batch_size,
-                seed=run_seed,
-                grid_size=args.grid_size,
-                cache=cache,
-            )
+            cache_path = raw_run_dir / f"{benchmark.lower()}_seed-{run_seed}.pkl"
+            if cache_path.exists():
+                with cache_path.open("rb") as handle:
+                    radial, run_vectors, run_questions = pickle.load(handle)
+                print(f"loaded {cache_path}")
+            else:
+                last_error = None
+                for padding_extra in (0.0, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0):
+                    try:
+                        radial, run_vectors, run_questions = run_benchmark(
+                            pickle_path=pickle_path,
+                            name=benchmark,
+                            batch_size=args.batch_size,
+                            seed=run_seed,
+                            grid_size=args.grid_size,
+                            directions=DEFAULT_DIRECTIONS,
+                            eta=1.0,
+                            boundary_z_padding_extra=padding_extra,
+                            cache=cache,
+                        )
+                        break
+                    except BoundaryGridError as error:
+                        last_error = error
+                        print(
+                            f"retry seed={run_seed} with expanded z padding "
+                            f"after: {error}"
+                        )
+                else:
+                    # A wider range can remain edge-limited when represented by
+                    # only 129 cells.  Preserve all policy settings and retry
+                    # with a finer DP discretization for that seed.
+                    assert last_error is not None
+                    print(
+                        f"retry seed={run_seed} with boundary margin=1 after "
+                        f"repeated 129-grid boundary failures"
+                    )
+                    radial, run_vectors, run_questions = run_benchmark(
+                        pickle_path=pickle_path,
+                        name=benchmark,
+                        batch_size=args.batch_size,
+                        seed=run_seed,
+                        grid_size=max(args.grid_size, 513),
+                        directions=DEFAULT_DIRECTIONS,
+                        eta=1.0,
+                        boundary_z_padding_extra=32.0,
+                        cache=cache,
+                        boundary_margin_cells=1,
+                    )
+                with cache_path.open("wb") as handle:
+                    pickle.dump((radial, run_vectors, run_questions), handle)
+                print(f"wrote {cache_path}")
             radial_runs.append(radial)
             if raw_vectors is None:
                 raw_vectors = run_vectors
@@ -505,8 +658,39 @@ def main() -> None:
         assert raw_vectors is not None and evaluation_questions is not None
         radial_by_seed = {run.seed: run for run in radial_runs}
         cost_reference = float(radial_runs[0].cost_reference_usd)
+        for radial in radial_runs:
+            stop_points = [
+                point for point in radial.recommendation_trajectory
+                if point.event == "gittins_stop"
+            ]
+            stop_point = stop_points[0] if stop_points else next(
+                (
+                    point for point in radial.recommendation_trajectory
+                    if point.is_deployable
+                ),
+                radial.recommendation_trajectory[-1],
+            )
+            seed_rows.append(
+                {
+                    "benchmark": benchmark,
+                    "seed": radial.seed,
+                    "gittins_stop_budget_fraction": radial.gittins_stop_budget_fraction,
+                    "gittins_stop_cost_usd": radial.gittins_stop_cost_usd,
+                    "gittins_stop_cost_fraction": (
+                        radial.gittins_stop_cost_usd
+                        / radial.recommendation_trajectory[-1].cumulative_search_cost_usd
+                        if radial.gittins_stop_cost_usd is not None else ""
+                    ),
+                    "stop_hv_regret": stop_point.hypervolume_regret,
+                    "n_recommended": len(stop_point.online_raw_archive_models),
+                    "selected_arm_indices": json.dumps(
+                        list(stop_point.online_raw_archive_arm_indices)
+                    ),
+                    "selected_models": json.dumps(list(stop_point.online_raw_archive_models)),
+                }
+            )
 
-        def _series_from_field(field: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        def _series_from_scope(scope: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
             trajectories = []
             for radial in radial_runs:
                 if args.x_axis == "cost":
@@ -521,17 +705,31 @@ def main() -> None:
                     run_x = np.asarray(
                         [point.budget_fraction for point in radial.recommendation_trajectory]
                     )
-                run_y = np.asarray(
-                    [getattr(point, field) for point in radial.recommendation_trajectory]
-                )
+                if scope == "deployable":
+                    run_y = np.asarray(
+                        [point.hypervolume_regret for point in radial.recommendation_trajectory]
+                    )
+                else:
+                    truth_vectors, reference, ground_truth_hv = _gittins_hv_space(radial)
+                    run_y = np.asarray(
+                        [
+                            _selected_regret(
+                                truth_vectors,
+                                point.posterior_archive_arm_indices,
+                                ground_truth_hv,
+                                reference,
+                            )
+                            for point in radial.recommendation_trajectory
+                        ]
+                    )
                 trajectories.append((run_x, run_y))
             return _radial_regret_series(trajectories)
 
         deployable_x, deployable_y, deployable_ci95, deployable_counts = (
-            _series_from_field("deployable_hypervolume_regret")
+            _series_from_scope("deployable")
         )
         provisional_x, provisional_y, provisional_ci95, provisional_counts = (
-            _series_from_field("hypervolume_regret")
+            _series_from_scope("provisional")
         )
 
         stop_fractions = np.asarray([
@@ -608,13 +806,20 @@ def main() -> None:
                     }
                 )
 
-        ax.set_title(benchmark)
-        ax.set_xlabel("Fraction of brute-force search cost")
-        ax.set_ylabel("Hypervolume regret")
-        ax.set_xlim(0.0, 1.02)
-        ax.set_ylim(bottom=0.0)
-        ax.grid(True, alpha=0.3)
-        ax.legend(loc="upper right", fontsize=7.5)
+        panels.append(
+            {
+                "name": benchmark,
+                "stop_mean": stop_mean,
+                "deployable": (
+                    deployable_x, deployable_y, deployable_ci95, deployable_counts
+                ),
+                "provisional": (
+                    provisional_x, provisional_y, provisional_ci95,
+                    provisional_counts,
+                ),
+                "random": random_curves,
+            }
+        )
 
     write_comparison_output(
         outdir=outdir,
@@ -630,6 +835,35 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(rows)
     print(f"wrote {csv_path}")
+
+    seed_csv_path = outdir / "gittins_seed_results.csv"
+    with seed_csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(seed_rows[0]))
+        writer.writeheader()
+        writer.writerows(seed_rows)
+    print(f"wrote {seed_csv_path}")
+
+    metadata_path = outdir / "run_metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "first_seed": args.seed,
+                "n_seeds_per_method": args.seeds,
+                "excluded_seeds": sorted(set(args.exclude_seed)),
+                "effective_seeds": list(run_seeds),
+                "batch_size": args.batch_size,
+                "grid_size": args.grid_size,
+                "eta": 1.0,
+                "directions": [list(direction) for direction in DEFAULT_DIRECTIONS],
+                "x_axis": args.x_axis,
+                "random_and_gittins_use_identical_seeds": True,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print(f"wrote {metadata_path}")
 
 
 def load_table_from_pickle(pickle_path: Path):

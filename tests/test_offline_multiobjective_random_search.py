@@ -99,6 +99,8 @@ class MultiObjectiveRandomSearchTests(unittest.TestCase):
             )
             self.assertEqual(set(result.selected_arm_indices), {0, 1, 2})
             self.assertAlmostEqual(result.hypervolume_regret, 0.0)
+            self.assertAlmostEqual(result.generational_distance, 0.0)
+            self.assertAlmostEqual(result.inverted_generational_distance, 0.0)
             self.assertAlmostEqual(result.true_front_recall, 1.0)
             self.assertAlmostEqual(result.recommendation_precision, 1.0)
             self.assertEqual(result.false_positive_count, 0)
