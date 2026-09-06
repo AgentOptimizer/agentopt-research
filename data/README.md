@@ -21,3 +21,37 @@ pickles present locally:
 ```bash
 PYTHONPATH=. .venv/bin/python data/extract_response_matrices.py
 ```
+
+## SCOPE matrices
+
+`data/scope/` contains the same five matrices for each SCOPE benchmark, plus
+`configs.json` and compressed cell-level `records.csv.gz`. Regenerate them from
+the adjacent SCOPE checkout with:
+
+```bash
+.venv/bin/python data/extract_scope_matrices.py \
+  --scope-root /path/to/SCOPE-LLM-optimizer
+```
+
+The extractor reads prices already defined by SCOPE and supplements historical
+or experiment-specific model aliases from `data/scope_supplemental_prices.json`.
+It refuses to write a dataset if any workflow model remains unpriced.
+
+Supplemental prices are standard input/output token rates in USD per million
+tokens. Native CNY prices for Doubao are converted using the documented fixed
+rate in the supplemental file so regenerated matrices remain reproducible.
+Gemini names ending in `flash1` and `flash3` are experiment-replicate aliases
+for `gemini-3-flash-preview`, not distinct model SKUs.
+
+`data/scope_sparse/` has the identical directory and file layout, but also
+includes configurations that evaluated only some benchmark questions. Empty
+matrix cells are missing observations, never zero. Each `configs.json` entry
+records `observed_count`, `coverage_fraction`, and `is_complete`. Regenerate it
+with:
+
+```bash
+.venv/bin/python data/extract_scope_matrices.py \
+  --scope-root /path/to/SCOPE-LLM-optimizer \
+  --output-root data/scope_sparse \
+  --include-partial
+```

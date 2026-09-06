@@ -14,5 +14,8 @@
   "included_configurations": 23,
   "excluded_configurations": 0,
   "excluded_missing_price_models": [],
-  "excluded_config_ids": []
+  "excluded_config_ids": [],
+  "supplemental_pricing_as_of": "2026-09-01",
+  "supplemental_price_models_used": [],
+  "supplemental_pricing_file": "/scratch/yh6415/project/agentopt-research/data/scope_supplemental_prices.json"
 }

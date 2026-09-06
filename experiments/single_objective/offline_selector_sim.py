@@ -190,7 +190,9 @@ def load_scope(path: str) -> Tuple[List[str], List[int], LookupTable]:
         if not matrix_path.is_file():
             raise ValueError(f"missing SCOPE matrix: {matrix_path}")
 
-    def read_matrix(matrix_path: Path) -> Tuple[List[str], List[int], Dict[str, List[float]]]:
+    def read_matrix(
+        matrix_path: Path,
+    ) -> Tuple[List[str], List[int], Dict[str, List[Optional[float]]]]:
         with matrix_path.open(newline="", encoding="utf-8") as handle:
             reader = csv.reader(handle)
             try:
@@ -219,7 +221,7 @@ def load_scope(path: str) -> Tuple[List[str], List[int], LookupTable]:
                 raise ValueError(f"duplicate question IDs in {matrix_path}")
 
             models: List[str] = []
-            values: Dict[str, List[float]] = {}
+            values: Dict[str, List[Optional[float]]] = {}
             for line_number, row in enumerate(reader, start=2):
                 if len(row) != len(header):
                     raise ValueError(
@@ -233,12 +235,12 @@ def load_scope(path: str) -> Tuple[List[str], List[int], LookupTable]:
                         f"{matrix_path}:{line_number}"
                     )
                 try:
-                    parsed = [float(value) for value in row[1:]]
+                    parsed = [float(value) if value != "" else None for value in row[1:]]
                 except ValueError as exc:
                     raise ValueError(
                         f"non-numeric value at {matrix_path}:{line_number}"
                     ) from exc
-                if not all(math.isfinite(value) for value in parsed):
+                if not all(value is None or math.isfinite(value) for value in parsed):
                     raise ValueError(
                         f"non-finite value at {matrix_path}:{line_number}"
                     )
@@ -261,6 +263,12 @@ def load_scope(path: str) -> Tuple[List[str], List[int], LookupTable]:
         for column, question_id in enumerate(datapoints):
             score = accuracies[model_name][column]
             cost = costs[model_name][column]
+            if (score is None) != (cost is None):
+                raise ValueError(
+                    "SCOPE accuracy and cost matrices have different missing cells"
+                )
+            if score is None or cost is None:
+                continue
             if not 0.0 <= score <= 1.0:
                 raise ValueError(
                     f"accuracy outside [0, 1] for {model_name}, question {question_id}"

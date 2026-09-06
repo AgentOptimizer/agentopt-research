@@ -18,6 +18,33 @@
     }
   },
   {
+    "model_name": "restaurant_valid|config_id=3",
+    "config_id": 3,
+    "config": {
+      "data_parsing": "gpt-5-mini",
+      "prompt_engineering": "Qwen3-235B-A22B",
+      "imputation": "claude-4.5-haiku"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=4",
+    "config_id": 4,
+    "config": {
+      "data_parsing": "claude-4.5-haiku",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=5",
+    "config_id": 5,
+    "config": {
+      "data_parsing": "claude-3-haiku",
+      "prompt_engineering": "Qwen3-235B-A22B",
+      "imputation": "claude-4.5-haiku"
+    }
+  },
+  {
     "model_name": "restaurant_valid|config_id=6",
     "config_id": 6,
     "config": {
@@ -99,6 +126,15 @@
     }
   },
   {
+    "model_name": "restaurant_valid|config_id=15",
+    "config_id": 15,
+    "config": {
+      "data_parsing": "gemma-3-27b",
+      "prompt_engineering": "claude-3-haiku",
+      "imputation": "claude-4.5-haiku"
+    }
+  },
+  {
     "model_name": "restaurant_valid|config_id=16",
     "config_id": 16,
     "config": {
@@ -177,6 +213,15 @@
       "data_parsing": "gemma-3-12b",
       "prompt_engineering": "gpt-4.1-nano",
       "imputation": "deepseek-v3.1"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=25",
+    "config_id": 25,
+    "config": {
+      "data_parsing": "gemini-2.5-flash-lite",
+      "prompt_engineering": "claude-4.5-haiku",
+      "imputation": "claude-4.5-haiku"
     }
   },
   {
@@ -288,6 +333,15 @@
     }
   },
   {
+    "model_name": "restaurant_valid|config_id=38",
+    "config_id": 38,
+    "config": {
+      "data_parsing": "claude-3-5-haiku",
+      "prompt_engineering": "gemma-3-4b",
+      "imputation": "claude-4.5-haiku"
+    }
+  },
+  {
     "model_name": "restaurant_valid|config_id=39",
     "config_id": 39,
     "config": {
@@ -321,6 +375,15 @@
       "data_parsing": "deepseek-v3.1",
       "prompt_engineering": "deepseek-v3.2",
       "imputation": "claude-3-5-haiku"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=43",
+    "config_id": 43,
+    "config": {
+      "data_parsing": "gpt-4.1-mini",
+      "prompt_engineering": "claude-4.5-haiku",
+      "imputation": "deepseek-v3.2"
     }
   },
   {
@@ -500,6 +563,33 @@
     "config": {
       "data_parsing": "gpt-5-mini",
       "prompt_engineering": "gpt-4.1-nano",
+      "imputation": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=64",
+    "config_id": 64,
+    "config": {
+      "data_parsing": "claude-4.5-haiku",
+      "prompt_engineering": "Qwen3-Next-80B-A3B",
+      "imputation": "gpt-5-mini"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=134",
+    "config_id": 134,
+    "config": {
+      "data_parsing": "claude-4.5-haiku",
+      "prompt_engineering": "gpt-5.2",
+      "imputation": "Qwen3-Next-80B-A3B"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=135",
+    "config_id": 135,
+    "config": {
+      "data_parsing": "claude-4.5-haiku",
+      "prompt_engineering": "gpt-5.2",
       "imputation": "gpt-5.2"
     }
   },
@@ -690,6 +780,24 @@
       "data_parsing": "gemini-2.0-flash-lite",
       "prompt_engineering": "Qwen3-235B-A22B",
       "imputation": "gpt-5.2"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=157",
+    "config_id": 157,
+    "config": {
+      "data_parsing": "claude-4.5-haiku",
+      "prompt_engineering": "Qwen3-235B-A22B",
+      "imputation": "claude-4.5-haiku"
+    }
+  },
+  {
+    "model_name": "restaurant_valid|config_id=158",
+    "config_id": 158,
+    "config": {
+      "data_parsing": "gpt-5-mini",
+      "prompt_engineering": "gpt-4.1-mini",
+      "imputation": "claude-4.5-haiku"
     }
   },
   {

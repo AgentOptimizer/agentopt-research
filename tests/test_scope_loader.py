@@ -45,6 +45,37 @@ class ScopeLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "different model rows"):
                 load_scope(directory)
 
+    def test_loads_sparse_rows_and_omits_blank_cells(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_matrix(
+                directory,
+                "accuracy_matrix.csv",
+                [["config-a", 1, ""], ["config-b", "", 0.5]],
+            )
+            self._write_matrix(
+                directory,
+                "cost_matrix_usd.csv",
+                [["config-a", 0.1, ""], ["config-b", "", 0.02]],
+            )
+
+            models, datapoints, table = load_scope(directory)
+
+            self.assertEqual(models, ["config-a", "config-b"])
+            self.assertEqual(datapoints, [2, 7])
+            self.assertEqual(set(table["config-a"]), {2})
+            self.assertEqual(set(table["config-b"]), {7})
+
+    def test_rejects_misaligned_missing_cells(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_matrix(
+                directory, "accuracy_matrix.csv", [["config-a", 1, ""]]
+            )
+            self._write_matrix(
+                directory, "cost_matrix_usd.csv", [["config-a", 0.1, 0.2]]
+            )
+            with self.assertRaisesRegex(ValueError, "different missing cells"):
+                load_scope(directory)
+
 
 if __name__ == "__main__":
     unittest.main()
