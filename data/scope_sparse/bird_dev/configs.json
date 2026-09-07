@@ -1,0 +1,3577 @@
+[
+  {
+    "model_name": "bird_dev|config_id=2044",
+    "config_id": 2044,
+    "config": {
+      "classification": "Doubao-lite",
+      "debug": "Doubao-lite",
+      "schema_linking": "Doubao-lite",
+      "execution": "Doubao-lite"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2045",
+    "config_id": 2045,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-seed-1.6",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2046",
+    "config_id": 2046,
+    "config": {
+      "classification": "Doubao-seed-1.6-flash",
+      "debug": "Doubao-seed-1.6-flash",
+      "schema_linking": "Doubao-seed-1.6-flash",
+      "execution": "Doubao-seed-1.6-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2047",
+    "config_id": 2047,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-seed-1.6-flash",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2048",
+    "config_id": 2048,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-lite",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2049",
+    "config_id": 2049,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-seed-1.6-flash",
+      "execution": "Doubao-seed-1.6-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2050",
+    "config_id": 2050,
+    "config": {
+      "classification": "Doubao-lite",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-seed-1.6",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 671,
+    "coverage_fraction": 0.43741851368970014,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2051",
+    "config_id": 2051,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-lite",
+      "schema_linking": "Doubao-seed-1.6",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2052",
+    "config_id": 2052,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-seed-1.6-flash",
+      "schema_linking": "Doubao-seed-1.6",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2053",
+    "config_id": 2053,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-seed-1.6-flash",
+      "schema_linking": "Doubao-lite",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2054",
+    "config_id": 2054,
+    "config": {
+      "classification": "Doubao-seed-1.6-flash",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-seed-1.6",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2055",
+    "config_id": 2055,
+    "config": {
+      "classification": "Doubao-seed-1.6-flash",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-lite",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2056",
+    "config_id": 2056,
+    "config": {
+      "classification": "Doubao-seed-1.6-flash",
+      "debug": "Doubao-seed-1.6-flash",
+      "schema_linking": "Doubao-seed-1.6",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2057",
+    "config_id": 2057,
+    "config": {
+      "classification": "Doubao-seed-1.6-flash",
+      "debug": "Doubao-lite",
+      "schema_linking": "Doubao-seed-1.6",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2059",
+    "config_id": 2059,
+    "config": {
+      "classification": "Doubao-lite",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-seed-1.6-flash",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2060",
+    "config_id": 2060,
+    "config": {
+      "classification": "Doubao-lite",
+      "debug": "Doubao-lite",
+      "schema_linking": "Doubao-seed-1.6-flash",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 154,
+    "coverage_fraction": 0.10039113428943937,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2061",
+    "config_id": 2061,
+    "config": {
+      "classification": "Doubao-lite",
+      "debug": "Doubao-seed-1.6",
+      "schema_linking": "Doubao-lite",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2062",
+    "config_id": 2062,
+    "config": {
+      "classification": "Doubao-seed-1.6",
+      "debug": "Doubao-seed-1.6-flash",
+      "schema_linking": "Doubao-seed-1.6-flash",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 154,
+    "coverage_fraction": 0.10039113428943937,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2064",
+    "config_id": 2064,
+    "config": {
+      "classification": "Doubao-lite",
+      "debug": "Doubao-lite",
+      "schema_linking": "Doubao-lite",
+      "execution": "Doubao-seed-1.6"
+    },
+    "observed_count": 140,
+    "coverage_fraction": 0.09126466753585398,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2071",
+    "config_id": 2071,
+    "config": {
+      "classification": "gpt-4.1",
+      "debug": "gpt-4.1",
+      "execution": "gpt-4.1",
+      "schema_linking": "gpt-4.1"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2072",
+    "config_id": 2072,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2076",
+    "config_id": 2076,
+    "config": {
+      "classification": "gpt-4.1-mini",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 416,
+    "coverage_fraction": 0.2711864406779661,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2077",
+    "config_id": 2077,
+    "config": {
+      "classification": "gpt-4.1-nano",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 1092,
+    "coverage_fraction": 0.711864406779661,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2078",
+    "config_id": 2078,
+    "config": {
+      "classification": "qwen-max",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 137,
+    "coverage_fraction": 0.08930899608865711,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2079",
+    "config_id": 2079,
+    "config": {
+      "classification": "qwen-plus",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 263,
+    "coverage_fraction": 0.1714471968709257,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2083",
+    "config_id": 2083,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "gpt-4.1-mini",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 831,
+    "coverage_fraction": 0.5417209908735332,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2084",
+    "config_id": 2084,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "gpt-4.1-nano",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 787,
+    "coverage_fraction": 0.5130378096479792,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2085",
+    "config_id": 2085,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-max",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 109,
+    "coverage_fraction": 0.0710560625814863,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2086",
+    "config_id": 2086,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-plus",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 604,
+    "coverage_fraction": 0.39374185136897,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2090",
+    "config_id": 2090,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "gpt-4.1-mini",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 137,
+    "coverage_fraction": 0.08930899608865711,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2091",
+    "config_id": 2091,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "gpt-4.1-nano",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 132,
+    "coverage_fraction": 0.08604954367666232,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2092",
+    "config_id": 2092,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-max",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 88,
+    "coverage_fraction": 0.05736636245110821,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2093",
+    "config_id": 2093,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-plus",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 88,
+    "coverage_fraction": 0.05736636245110821,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2097",
+    "config_id": 2097,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "gpt-4.1-mini"
+    },
+    "observed_count": 133,
+    "coverage_fraction": 0.08670143415906127,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2098",
+    "config_id": 2098,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "gpt-4.1-nano"
+    },
+    "observed_count": 138,
+    "coverage_fraction": 0.08996088657105607,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2099",
+    "config_id": 2099,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-max"
+    },
+    "observed_count": 134,
+    "coverage_fraction": 0.08735332464146023,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2100",
+    "config_id": 2100,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-plus"
+    },
+    "observed_count": 136,
+    "coverage_fraction": 0.08865710560625815,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2101",
+    "config_id": 2101,
+    "config": {
+      "classification": "gpt-4.1-nano",
+      "debug": "gpt-4.1-nano",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 660,
+    "coverage_fraction": 0.4302477183833116,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2144",
+    "config_id": 2144,
+    "config": {
+      "classification": "gpt-4.1",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 134,
+    "coverage_fraction": 0.08735332464146023,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2152",
+    "config_id": 2152,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "gpt-4.1",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2160",
+    "config_id": 2160,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "gpt-4.1",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 138,
+    "coverage_fraction": 0.08996088657105607,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2168",
+    "config_id": 2168,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "gpt-4.1"
+    },
+    "observed_count": 118,
+    "coverage_fraction": 0.07692307692307693,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2173",
+    "config_id": 2173,
+    "config": {
+      "classification": "claude-3-5-haiku",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 20,
+    "coverage_fraction": 0.01303780964797914,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2174",
+    "config_id": 2174,
+    "config": {
+      "classification": "claude-3-haiku",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 20,
+    "coverage_fraction": 0.01303780964797914,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2175",
+    "config_id": 2175,
+    "config": {
+      "classification": "claude-4-sonnet",
+      "debug": "qwen-turbo",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 20,
+    "coverage_fraction": 0.01303780964797914,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2179",
+    "config_id": 2179,
+    "config": {
+      "classification": "gpt-4.1-nano",
+      "debug": "gpt-4.1-nano",
+      "execution": "gpt-4.1-nano",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 140,
+    "coverage_fraction": 0.09126466753585398,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2254",
+    "config_id": 2254,
+    "config": {
+      "classification": "gpt-4.1",
+      "debug": "gpt-4.1",
+      "execution": "gpt-4.1",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 614,
+    "coverage_fraction": 0.4002607561929596,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2258",
+    "config_id": 2258,
+    "config": {
+      "classification": "gpt-4.1-nano",
+      "debug": "gpt-4.1-mini",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 307,
+    "coverage_fraction": 0.2001303780964798,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2261",
+    "config_id": 2261,
+    "config": {
+      "classification": "qwen-turbo",
+      "debug": "gpt-4.1",
+      "execution": "gpt-4.1",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 614,
+    "coverage_fraction": 0.4002607561929596,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2340",
+    "config_id": 2340,
+    "config": {
+      "classification": "gpt-4.1-nano",
+      "debug": "gpt-4.1",
+      "execution": "qwen-turbo",
+      "schema_linking": "qwen-turbo"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2366",
+    "config_id": 2366,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1",
+      "execution": "gpt-4.1",
+      "debug": "gpt-4.1-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2381",
+    "config_id": 2381,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-4.1-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2386",
+    "config_id": 2386,
+    "config": {
+      "schema_linking": "qwen-turbo",
+      "classification": "gpt-4.1-mini",
+      "execution": "qwen-turbo",
+      "debug": "gpt-4.1"
+    },
+    "observed_count": 307,
+    "coverage_fraction": 0.2001303780964798,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2388",
+    "config_id": 2388,
+    "config": {
+      "schema_linking": "qwen-turbo",
+      "classification": "gpt-4.1",
+      "execution": "qwen-turbo",
+      "debug": "gpt-4.1-nano"
+    },
+    "observed_count": 307,
+    "coverage_fraction": 0.2001303780964798,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2391",
+    "config_id": 2391,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1-mini",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-4.1-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2422",
+    "config_id": 2422,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2424",
+    "config_id": 2424,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2425",
+    "config_id": 2425,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2426",
+    "config_id": 2426,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2427",
+    "config_id": 2427,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2429",
+    "config_id": 2429,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2498",
+    "config_id": 2498,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2500",
+    "config_id": 2500,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2501",
+    "config_id": 2501,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2502",
+    "config_id": 2502,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2504",
+    "config_id": 2504,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2505",
+    "config_id": 2505,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2506",
+    "config_id": 2506,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o-mini",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2507",
+    "config_id": 2507,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2508",
+    "config_id": 2508,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o-mini",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2509",
+    "config_id": 2509,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4o",
+      "execution": "gpt-4o",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2788",
+    "config_id": 2788,
+    "config": {
+      "schema_linking": "gpt-5",
+      "classification": "gpt-5",
+      "execution": "gpt-5",
+      "debug": "gpt-5"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2789",
+    "config_id": 2789,
+    "config": {
+      "schema_linking": "gemini-2.5-flash",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4.1-nano",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2790",
+    "config_id": 2790,
+    "config": {
+      "schema_linking": "claude-4.5-sonnet",
+      "classification": "claude-4.5-sonnet",
+      "execution": "claude-4.5-sonnet",
+      "debug": "claude-4.5-sonnet"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2791",
+    "config_id": 2791,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2792",
+    "config_id": 2792,
+    "config": {
+      "schema_linking": "gpt-5",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2793",
+    "config_id": 2793,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2794",
+    "config_id": 2794,
+    "config": {
+      "schema_linking": "gpt-4.1-mini",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 58,
+    "coverage_fraction": 0.03780964797913951,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2795",
+    "config_id": 2795,
+    "config": {
+      "schema_linking": "gpt-4.1-nano",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2796",
+    "config_id": 2796,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 60,
+    "coverage_fraction": 0.03911342894393742,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2797",
+    "config_id": 2797,
+    "config": {
+      "schema_linking": "gpt-4o-mini",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 44,
+    "coverage_fraction": 0.028683181225554105,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2798",
+    "config_id": 2798,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2799",
+    "config_id": 2799,
+    "config": {
+      "schema_linking": "gemini-2.5-flash",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 29,
+    "coverage_fraction": 0.018904823989569754,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2800",
+    "config_id": 2800,
+    "config": {
+      "schema_linking": "gemini-2.5-pro",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2801",
+    "config_id": 2801,
+    "config": {
+      "schema_linking": "claude-4.5-sonnet",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2802",
+    "config_id": 2802,
+    "config": {
+      "schema_linking": "claude-3-5-haiku",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2803",
+    "config_id": 2803,
+    "config": {
+      "schema_linking": "claude-3-haiku",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2804",
+    "config_id": 2804,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2805",
+    "config_id": 2805,
+    "config": {
+      "schema_linking": "Qwen3-Next-80B-A3B",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 59,
+    "coverage_fraction": 0.038461538461538464,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2806",
+    "config_id": 2806,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 60,
+    "coverage_fraction": 0.03911342894393742,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2807",
+    "config_id": 2807,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 60,
+    "coverage_fraction": 0.03911342894393742,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2808",
+    "config_id": 2808,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 59,
+    "coverage_fraction": 0.038461538461538464,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2809",
+    "config_id": 2809,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2810",
+    "config_id": 2810,
+    "config": {
+      "schema_linking": "Mistral-Small-3.2-24B-Instruct-2506",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2811",
+    "config_id": 2811,
+    "config": {
+      "schema_linking": "gemma-3-27b",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2812",
+    "config_id": 2812,
+    "config": {
+      "schema_linking": "gemma-3-12b",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 44,
+    "coverage_fraction": 0.028683181225554105,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2813",
+    "config_id": 2813,
+    "config": {
+      "schema_linking": "gemma-3-4b",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2814",
+    "config_id": 2814,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-5",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2815",
+    "config_id": 2815,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-4.1",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2816",
+    "config_id": 2816,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-4.1-mini",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2817",
+    "config_id": 2817,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-4.1-nano",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2818",
+    "config_id": 2818,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-4o",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2819",
+    "config_id": 2819,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-4o-mini",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2820",
+    "config_id": 2820,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 29,
+    "coverage_fraction": 0.018904823989569754,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2821",
+    "config_id": 2821,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.5-flash",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2822",
+    "config_id": 2822,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.5-pro",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2823",
+    "config_id": 2823,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "claude-4.5-sonnet",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2824",
+    "config_id": 2824,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "claude-3-5-haiku",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2825",
+    "config_id": 2825,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "claude-3-haiku",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2826",
+    "config_id": 2826,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "deepseek-v3.1",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2827",
+    "config_id": 2827,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "Qwen3-Next-80B-A3B",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 44,
+    "coverage_fraction": 0.028683181225554105,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2828",
+    "config_id": 2828,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "deepseek-v3.2",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2829",
+    "config_id": 2829,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "Qwen3-235B-A22B",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 43,
+    "coverage_fraction": 0.02803129074315515,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2830",
+    "config_id": 2830,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 57,
+    "coverage_fraction": 0.037157757496740544,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2831",
+    "config_id": 2831,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "Mistral-Small-3-24B-Instruct-2501",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2832",
+    "config_id": 2832,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "Mistral-Small-3.2-24B-Instruct-2506",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2833",
+    "config_id": 2833,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemma-3-27b",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2834",
+    "config_id": 2834,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemma-3-12b",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2876",
+    "config_id": 2876,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemma-3-4b",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2877",
+    "config_id": 2877,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4.1",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2878",
+    "config_id": 2878,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4.1-mini",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2879",
+    "config_id": 2879,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4.1-nano",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2880",
+    "config_id": 2880,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4o",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2881",
+    "config_id": 2881,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4o-mini",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2882",
+    "config_id": 2882,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2883",
+    "config_id": 2883,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.5-flash",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2884",
+    "config_id": 2884,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.5-pro",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2885",
+    "config_id": 2885,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "claude-4.5-sonnet",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2886",
+    "config_id": 2886,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "claude-3-5-haiku",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2887",
+    "config_id": 2887,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "claude-3-haiku",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2888",
+    "config_id": 2888,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "deepseek-v3.1",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2889",
+    "config_id": 2889,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 29,
+    "coverage_fraction": 0.018904823989569754,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2890",
+    "config_id": 2890,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "deepseek-v3.2",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2891",
+    "config_id": 2891,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "Qwen3-235B-A22B",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2892",
+    "config_id": 2892,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "Mistral-Nemo-Instruct-2407",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2893",
+    "config_id": 2893,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "Mistral-Small-3-24B-Instruct-2501",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2894",
+    "config_id": 2894,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "Mistral-Small-3.2-24B-Instruct-2506",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2895",
+    "config_id": 2895,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemma-3-27b",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 29,
+    "coverage_fraction": 0.018904823989569754,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2896",
+    "config_id": 2896,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemma-3-12b",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2897",
+    "config_id": 2897,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemma-3-4b",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2898",
+    "config_id": 2898,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-4.1"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2899",
+    "config_id": 2899,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-4.1-mini"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2900",
+    "config_id": 2900,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-4.1-nano"
+    },
+    "observed_count": 29,
+    "coverage_fraction": 0.018904823989569754,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2901",
+    "config_id": 2901,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-4o"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2902",
+    "config_id": 2902,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2903",
+    "config_id": 2903,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.5-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2904",
+    "config_id": 2904,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.5-flash"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2905",
+    "config_id": 2905,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.5-pro"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2906",
+    "config_id": 2906,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "claude-4.5-sonnet"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2907",
+    "config_id": 2907,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "claude-3-5-haiku"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2908",
+    "config_id": 2908,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "claude-3-haiku"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2909",
+    "config_id": 2909,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "deepseek-v3.1"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2910",
+    "config_id": 2910,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "Qwen3-Next-80B-A3B"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2911",
+    "config_id": 2911,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "deepseek-v3.2"
+    },
+    "observed_count": 29,
+    "coverage_fraction": 0.018904823989569754,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2912",
+    "config_id": 2912,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "Qwen3-235B-A22B"
+    },
+    "observed_count": 29,
+    "coverage_fraction": 0.018904823989569754,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2913",
+    "config_id": 2913,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "Mistral-Nemo-Instruct-2407"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2914",
+    "config_id": 2914,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "Mistral-Small-3-24B-Instruct-2501"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2915",
+    "config_id": 2915,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "Mistral-Small-3.2-24B-Instruct-2506"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2916",
+    "config_id": 2916,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemma-3-27b"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2917",
+    "config_id": 2917,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemma-3-12b"
+    },
+    "observed_count": 45,
+    "coverage_fraction": 0.029335071707953065,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2918",
+    "config_id": 2918,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemma-3-4b"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2919",
+    "config_id": 2919,
+    "config": {
+      "schema_linking": "gemini-2.5-pro",
+      "classification": "gemma-3-27b",
+      "execution": "gpt-4o",
+      "debug": "gemini-2.5-flash"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2920",
+    "config_id": 2920,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "gemma-3-27b",
+      "debug": "gemini-2.5-flash"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2921",
+    "config_id": 2921,
+    "config": {
+      "schema_linking": "claude-4.5-sonnet",
+      "classification": "claude-3-5-haiku",
+      "execution": "gpt-4o-mini",
+      "debug": "gemma-3-12b"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2922",
+    "config_id": 2922,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gpt-4.1-mini",
+      "execution": "claude-3-5-haiku",
+      "debug": "gemma-3-27b"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2923",
+    "config_id": 2923,
+    "config": {
+      "schema_linking": "gemini-2.5-pro",
+      "classification": "gemma-3-27b",
+      "execution": "gemini-2.5-pro",
+      "debug": "Mistral-Small-3.2-24B-Instruct-2506"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2924",
+    "config_id": 2924,
+    "config": {
+      "schema_linking": "claude-3-5-haiku",
+      "classification": "gpt-4.1",
+      "execution": "Mistral-Small-3-24B-Instruct-2501",
+      "debug": "gemma-3-27b"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2925",
+    "config_id": 2925,
+    "config": {
+      "schema_linking": "claude-4.5-sonnet",
+      "classification": "claude-4.5-sonnet",
+      "execution": "claude-3-5-haiku",
+      "debug": "claude-4.5-sonnet"
+    },
+    "observed_count": 576,
+    "coverage_fraction": 0.3754889178617992,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2926",
+    "config_id": 2926,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "claude-3-5-haiku",
+      "execution": "Mistral-Small-3-24B-Instruct-2501",
+      "debug": "gpt-4.1-mini"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2927",
+    "config_id": 2927,
+    "config": {
+      "schema_linking": "gemini-2.5-flash",
+      "classification": "gemini-2.5-pro",
+      "execution": "Qwen3-235B-A22B",
+      "debug": "gemini-2.5-pro"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2928",
+    "config_id": 2928,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "Qwen3-Next-80B-A3B",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "deepseek-v3.1"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2929",
+    "config_id": 2929,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.5-pro",
+      "execution": "Mistral-Small-3-24B-Instruct-2501",
+      "debug": "claude-3-haiku"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2930",
+    "config_id": 2930,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "claude-3-5-haiku",
+      "execution": "claude-4.5-sonnet",
+      "debug": "gpt-4.1-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2931",
+    "config_id": 2931,
+    "config": {
+      "schema_linking": "gpt-4.1-nano",
+      "classification": "Qwen3-Next-80B-A3B",
+      "execution": "gpt-4.1-nano",
+      "debug": "Mistral-Nemo-Instruct-2407"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2938",
+    "config_id": 2938,
+    "config": {
+      "schema_linking": "claude-4.5-haiku",
+      "classification": "claude-4.5-haiku",
+      "execution": "claude-4.5-haiku",
+      "debug": "claude-4.5-haiku"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2952",
+    "config_id": 2952,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "claude-4.5-haiku",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2962",
+    "config_id": 2962,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2963",
+    "config_id": 2963,
+    "config": {
+      "schema_linking": "Qwen3-Next-80B-A3B",
+      "classification": "gpt-4.1",
+      "execution": "claude-3-haiku",
+      "debug": "gpt-4o-mini"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2964",
+    "config_id": 2964,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-4.1",
+      "debug": "claude-3-haiku"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2965",
+    "config_id": 2965,
+    "config": {
+      "schema_linking": "gpt-4.1-mini",
+      "classification": "gemma-3-12b",
+      "execution": "claude-3-haiku",
+      "debug": "Mistral-Small-3-24B-Instruct-2501"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2966",
+    "config_id": 2966,
+    "config": {
+      "schema_linking": "Mistral-Small-3.2-24B-Instruct-2506",
+      "classification": "gemini-2.5-flash",
+      "execution": "gpt-5.2",
+      "debug": "gemma-3-27b"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2967",
+    "config_id": 2967,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gemma-3-27b"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2968",
+    "config_id": 2968,
+    "config": {
+      "schema_linking": "gpt-4.1-nano",
+      "classification": "gpt-4.1-nano",
+      "execution": "gpt-4.1-nano",
+      "debug": "gpt-4.1-nano"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2969",
+    "config_id": 2969,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "gpt-4.1-nano",
+      "execution": "gpt-4.1-nano",
+      "debug": "gpt-4.1-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2970",
+    "config_id": 2970,
+    "config": {
+      "schema_linking": "gpt-4o",
+      "classification": "gpt-4.1-nano",
+      "execution": "gpt-4.1-nano",
+      "debug": "gpt-4.1-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2971",
+    "config_id": 2971,
+    "config": {
+      "schema_linking": "gpt-4.1-nano",
+      "classification": "gemma-3-27b",
+      "execution": "gpt-4.1-nano",
+      "debug": "gpt-4.1-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2972",
+    "config_id": 2972,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=2973",
+    "config_id": 2973,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2974",
+    "config_id": 2974,
+    "config": {
+      "schema_linking": "gpt-4.1-mini",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2975",
+    "config_id": 2975,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gemma-3-27b",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2976",
+    "config_id": 2976,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "Qwen3-235B-A22B",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2977",
+    "config_id": 2977,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "deepseek-v3.1",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2978",
+    "config_id": 2978,
+    "config": {
+      "schema_linking": "gemma-3-12b",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2979",
+    "config_id": 2979,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2980",
+    "config_id": 2980,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2981",
+    "config_id": 2981,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gemma-3-27b",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2982",
+    "config_id": 2982,
+    "config": {
+      "schema_linking": "gpt-4.1-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2983",
+    "config_id": 2983,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gemma-3-12b"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2984",
+    "config_id": 2984,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "deepseek-v3.2"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2985",
+    "config_id": 2985,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gemini-3-flash",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2986",
+    "config_id": 2986,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gemma-3-4b"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2987",
+    "config_id": 2987,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2988",
+    "config_id": 2988,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2989",
+    "config_id": 2989,
+    "config": {
+      "schema_linking": "gpt-5-mini",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2990",
+    "config_id": 2990,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gemma-3-27b"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2991",
+    "config_id": 2991,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2992",
+    "config_id": 2992,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gemini-2.5-flash",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2993",
+    "config_id": 2993,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2994",
+    "config_id": 2994,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2995",
+    "config_id": 2995,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "Mistral-Small-3.2-24B-Instruct-2506",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2996",
+    "config_id": 2996,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gemini-2.5-flash",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2997",
+    "config_id": 2997,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2998",
+    "config_id": 2998,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "Mistral-Small-3-24B-Instruct-2501"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=2999",
+    "config_id": 2999,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gemma-3-4b",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3000",
+    "config_id": 3000,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "Mistral-Nemo-Instruct-2407"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3001",
+    "config_id": 3001,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3002",
+    "config_id": 3002,
+    "config": {
+      "schema_linking": "Qwen3-Next-80B-A3B",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3003",
+    "config_id": 3003,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "Qwen3-Next-80B-A3B"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3004",
+    "config_id": 3004,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gemini-2.5-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3005",
+    "config_id": 3005,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-4.1",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3006",
+    "config_id": 3006,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3007",
+    "config_id": 3007,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3008",
+    "config_id": 3008,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "Qwen3-235B-A22B"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3009",
+    "config_id": 3009,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-5-nano",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3010",
+    "config_id": 3010,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gpt-5-nano",
+      "execution": "gpt-5-nano",
+      "debug": "gpt-5-nano"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3011",
+    "config_id": 3011,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-5.2",
+      "execution": "gemma-3-12b",
+      "debug": "Qwen3-235B-A22B"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3012",
+    "config_id": 3012,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "gemini-3-flash",
+      "execution": "gpt-4.1",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3013",
+    "config_id": 3013,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1",
+      "execution": "deepseek-v3.1",
+      "debug": "Mistral-Small-3-24B-Instruct-2501"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3014",
+    "config_id": 3014,
+    "config": {
+      "schema_linking": "Qwen3-Next-80B-A3B",
+      "classification": "Mistral-Small-3-24B-Instruct-2501",
+      "execution": "gemini-2.5-flash",
+      "debug": "Mistral-Nemo-Instruct-2407"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3015",
+    "config_id": 3015,
+    "config": {
+      "schema_linking": "Qwen3-Next-80B-A3B",
+      "classification": "gpt-4.1-nano",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "Mistral-Small-3-24B-Instruct-2501"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3016",
+    "config_id": 3016,
+    "config": {
+      "schema_linking": "gemma-3-4b",
+      "classification": "Mistral-Small-3-24B-Instruct-2501",
+      "execution": "gemma-3-27b",
+      "debug": "gpt-5-mini"
+    },
+    "observed_count": 126,
+    "coverage_fraction": 0.08213820078226858,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3017",
+    "config_id": 3017,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3018",
+    "config_id": 3018,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 576,
+    "coverage_fraction": 0.3754889178617992,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3023",
+    "config_id": 3023,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 672,
+    "coverage_fraction": 0.4380704041720991,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3028",
+    "config_id": 3028,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3032",
+    "config_id": 3032,
+    "config": {
+      "schema_linking": "gpt-4.1-nano",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3044",
+    "config_id": 3044,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-3-flash",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3047",
+    "config_id": 3047,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gpt-5.2",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3048",
+    "config_id": 3048,
+    "config": {
+      "schema_linking": "gpt-5-mini",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3059",
+    "config_id": 3059,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3063",
+    "config_id": 3063,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-5-nano",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 15,
+    "coverage_fraction": 0.009778357235984355,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3069",
+    "config_id": 3069,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-5.2",
+      "execution": "Mistral-Small-3-24B-Instruct-2501",
+      "debug": "Mistral-Small-3.2-24B-Instruct-2506"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3070",
+    "config_id": 3070,
+    "config": {
+      "schema_linking": "gpt-4.1",
+      "classification": "gpt-4.1",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gemma-3-27b"
+    },
+    "observed_count": 126,
+    "coverage_fraction": 0.08213820078226858,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3071",
+    "config_id": 3071,
+    "config": {
+      "schema_linking": "Qwen3-Next-80B-A3B",
+      "classification": "gpt-4.1-nano",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "Mistral-Nemo-Instruct-2407"
+    },
+    "observed_count": 30,
+    "coverage_fraction": 0.01955671447196871,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3072",
+    "config_id": 3072,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemma-3-27b",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3073",
+    "config_id": 3073,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "Mistral-Small-3-24B-Instruct-2501",
+      "execution": "gemma-3-27b",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3075",
+    "config_id": 3075,
+    "config": {
+      "schema_linking": "deepseek-v3.2",
+      "classification": "gemini-3-flash",
+      "execution": "gpt-4.1",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 192,
+    "coverage_fraction": 0.12516297262059975,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3078",
+    "config_id": 3078,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gemini-3-flash",
+      "execution": "gpt-5.2",
+      "debug": "gemini-2.0-flash-lite"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3079",
+    "config_id": 3079,
+    "config": {
+      "schema_linking": "Qwen3-Next-80B-A3B",
+      "classification": "gpt-5.2",
+      "execution": "gemma-3-27b",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3080",
+    "config_id": 3080,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "gpt-5.2",
+      "execution": "gpt-4.1-nano",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 192,
+    "coverage_fraction": 0.12516297262059975,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=3082",
+    "config_id": 3082,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=3087",
+    "config_id": 3087,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 96,
+    "coverage_fraction": 0.06258148631029987,
+    "is_complete": false
+  },
+  {
+    "model_name": "bird_dev|config_id=10885",
+    "config_id": 10885,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemma-3-27b",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=10886",
+    "config_id": 10886,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gpt-5.2",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=10887",
+    "config_id": 10887,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gemini-3-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=10893",
+    "config_id": 10893,
+    "config": {
+      "schema_linking": "gemini-3-flash",
+      "classification": "gemma-3-12b",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "Qwen3-235B-A22B"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=10894",
+    "config_id": 10894,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-3-flash",
+      "debug": "gemini-2.5-flash-lite"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=10900",
+    "config_id": 10900,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=10902",
+    "config_id": 10902,
+    "config": {
+      "schema_linking": "gemini-2.5-flash-lite",
+      "classification": "gpt-5-mini",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=10907",
+    "config_id": 10907,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gemma-3-12b",
+      "execution": "gemini-2.5-flash",
+      "debug": "Qwen3-Next-80B-A3B"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13801",
+    "config_id": 13801,
+    "config": {
+      "schema_linking": "gemini-3-flash",
+      "classification": "gpt-4.1-mini",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13802",
+    "config_id": 13802,
+    "config": {
+      "schema_linking": "gemma-3-12b",
+      "classification": "gpt-5.2",
+      "execution": "gpt-4.1",
+      "debug": "deepseek-v3.1"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13803",
+    "config_id": 13803,
+    "config": {
+      "schema_linking": "gpt-5-nano",
+      "classification": "gpt-4.1",
+      "execution": "gpt-5.2",
+      "debug": "claude-3-haiku"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13804",
+    "config_id": 13804,
+    "config": {
+      "schema_linking": "gemini-2.0-flash-lite",
+      "classification": "gpt-5.2",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13805",
+    "config_id": 13805,
+    "config": {
+      "schema_linking": "gemini-3-flash",
+      "classification": "Qwen3-Next-80B-A3B",
+      "execution": "Qwen3-Next-80B-A3B",
+      "debug": "claude-3-5-haiku"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13806",
+    "config_id": 13806,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "Mistral-Nemo-Instruct-2407",
+      "debug": "gemini-3-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13807",
+    "config_id": 13807,
+    "config": {
+      "schema_linking": "Mistral-Small-3.2-24B-Instruct-2506",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gemini-2.0-flash-lite",
+      "debug": "gemini-3-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13808",
+    "config_id": 13808,
+    "config": {
+      "schema_linking": "deepseek-v3.1",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gpt-4.1-mini",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13809",
+    "config_id": 13809,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "gemma-3-27b",
+      "execution": "gemma-3-12b",
+      "debug": "gemini-3-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13810",
+    "config_id": 13810,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "Mistral-Nemo-Instruct-2407",
+      "debug": "gemini-3-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13811",
+    "config_id": 13811,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "claude-3-haiku",
+      "debug": "Qwen3-235B-A22B"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13812",
+    "config_id": 13812,
+    "config": {
+      "schema_linking": "gpt-5.2",
+      "classification": "gemini-2.5-flash-lite",
+      "execution": "gpt-5.2",
+      "debug": "gpt-5.2"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13813",
+    "config_id": 13813,
+    "config": {
+      "schema_linking": "Qwen3-235B-A22B",
+      "classification": "gemini-2.0-flash-lite",
+      "execution": "gemini-3-flash",
+      "debug": "gpt-4.1"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13814",
+    "config_id": 13814,
+    "config": {
+      "schema_linking": "Mistral-Nemo-Instruct-2407",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "gemini-2.5-flash-lite",
+      "debug": "gemini-3-flash"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "bird_dev|config_id=13815",
+    "config_id": 13815,
+    "config": {
+      "schema_linking": "Mistral-Small-3-24B-Instruct-2501",
+      "classification": "Mistral-Nemo-Instruct-2407",
+      "execution": "gemini-3-flash",
+      "debug": "gemini-2.5-flash-lite"
+    },
+    "observed_count": 1534,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  }
+]

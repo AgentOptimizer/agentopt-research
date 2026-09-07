@@ -1,0 +1,111 @@
+{
+  "unit": "USD per 1 million tokens",
+  "as_of": "2026-09-01",
+  "cny_per_usd": 6.7809,
+  "exchange_rate_source": "https://guangdong.chinatax.gov.cn/gdsw/lvxx/2026-09/01/content_58d1e4ccd4504e3fb5abe9a7a345916a.shtml",
+  "models": {
+    "Doubao-lite": {
+      "input_price": 0.0442413233,
+      "output_price": 0.0884826467,
+      "native_currency": "CNY",
+      "native_input_price": 0.3,
+      "native_output_price": 0.6,
+      "assumption": "The legacy bare alias is treated as Doubao-lite-32k.",
+      "source": "https://developer.volcengine.com/articles/7387625501768024102"
+    },
+    "Doubao-seed-1.6": {
+      "input_price": 0.1179781442,
+      "output_price": 0.2949453619,
+      "native_currency": "CNY",
+      "native_input_price": 0.8,
+      "native_output_price": 2.0,
+      "assumption": "Standard prompt and completion rates from the official model-activation API example.",
+      "source": "https://api.volcengine.com/api-explorer/?action=GetModelActivation&groupName=%E6%A8%A1%E5%9E%8B%E6%BF%80%E6%B4%BB&serviceCode=ark&version=2024-01-01"
+    },
+    "Doubao-seed-1.6-flash": {
+      "input_price": 0.0221209562,
+      "output_price": 0.2212095617,
+      "native_currency": "CNY",
+      "native_input_price": 0.15,
+      "native_output_price": 1.5,
+      "assumption": "Standard 0-32K text-token tier.",
+      "source": "https://developer.volcengine.com/articles/7533460184351146010"
+    },
+    "claude-4.5-haiku": {
+      "input_price": 1.0,
+      "output_price": 5.0,
+      "canonical_model": "claude-haiku-4.5",
+      "source": "https://www.anthropic.com/news/claude-haiku-4-5"
+    },
+    "claude-4.5-sonnet": {
+      "input_price": 3.0,
+      "output_price": 15.0,
+      "canonical_model": "claude-sonnet-4.5",
+      "source": "https://www-cdn.anthropic.com/files/4zrzovbb/website/5678bc2f5978e5bcd4f1fe7c14b2c72284dcf9f8.pdf"
+    },
+    "claude-4-sonnet": {
+      "input_price": 3.0,
+      "output_price": 15.0,
+      "canonical_model": "claude-sonnet-4",
+      "source": "https://www.anthropic.com/news/claude-4"
+    },
+    "gemini-2.5-pro": {
+      "input_price": 1.25,
+      "output_price": 10.0,
+      "pricing_tier": "prompts up to and including 200K tokens",
+      "assumption": "Cached benchmark calls use the standard <=200K-token tier.",
+      "source": "https://ai.google.dev/gemini-api/docs/pricing"
+    },
+    "gemini-3-flash1": {
+      "input_price": 0.5,
+      "output_price": 3.0,
+      "canonical_model": "gemini-3-flash-preview",
+      "assumption": "Experiment replicate alias 1.",
+      "source": "https://ai.google.dev/gemini-api/docs/gemini-3"
+    },
+    "gemini-3-flash3": {
+      "input_price": 0.5,
+      "output_price": 3.0,
+      "canonical_model": "gemini-3-flash-preview",
+      "assumption": "Experiment replicate alias 3.",
+      "source": "https://ai.google.dev/gemini-api/docs/gemini-3"
+    },
+    "gpt-4o": {
+      "input_price": 2.5,
+      "output_price": 10.0,
+      "source": "https://developers.openai.com/api/docs/models/gpt-4o-mini"
+    },
+    "gpt-4o-mini": {
+      "input_price": 0.15,
+      "output_price": 0.6,
+      "source": "https://developers.openai.com/api/docs/models/gpt-4o-mini"
+    },
+    "gpt-5": {
+      "input_price": 1.25,
+      "output_price": 10.0,
+      "source": "https://openai.com/index/introducing-gpt-5-for-developers/"
+    },
+    "qwen-turbo": {
+      "input_price": 0.044,
+      "output_price": 0.087,
+      "region": "China (Beijing)",
+      "mode": "non-thinking",
+      "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing"
+    },
+    "qwen-max": {
+      "input_price": 0.345,
+      "output_price": 1.377,
+      "region": "China (Beijing) / Chinese mainland deployment",
+      "mode": "non-thinking",
+      "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing"
+    },
+    "qwen-plus": {
+      "input_price": 0.115,
+      "output_price": 0.287,
+      "region": "China (Beijing) / Chinese mainland deployment",
+      "mode": "non-thinking",
+      "assumption": "Historical bare alias is priced at the documented non-tiered mainland rate.",
+      "source": "https://www.alibabacloud.com/help/en/model-studio/model-pricing"
+    }
+  }
+}

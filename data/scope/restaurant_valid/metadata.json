@@ -1,0 +1,23 @@
+{
+  "benchmark": "restaurant_valid",
+  "source": "/scratch/yh6415/project/SCOPE-LLM-optimizer/matrices/restaurant_valid_972x156_configs.json",
+  "source_database": "workspace/unidm_di_results/unidmdataimputationbenchmark_cache.db",
+  "shape": [
+    972,
+    156
+  ],
+  "orientation": "rows=workflow configurations; columns=question IDs",
+  "accuracy_definition": "SCOPE performance_score (0/1 per query)",
+  "cost_definition": "sum(module input tokens * model input price + module output tokens * model output price)",
+  "records_file": "records.csv.gz",
+  "original_configurations": 972,
+  "included_configurations": 972,
+  "excluded_configurations": 0,
+  "excluded_missing_price_models": [],
+  "excluded_config_ids": [],
+  "supplemental_pricing_as_of": "2026-09-01",
+  "supplemental_price_models_used": [
+    "claude-4.5-haiku"
+  ],
+  "supplemental_pricing_file": "/scratch/yh6415/project/agentopt-research/data/scope_supplemental_prices.json"
+}

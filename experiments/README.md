@@ -10,6 +10,21 @@ This repo is multi-objective. The main replay is `combined_objective/offline_rad
 
 Shared inputs live in `data/` (gitignored — keep them locally). Selector outputs live with the scripts that produce them.
 
+Repo-root SCOPE benchmark directories can be passed directly to Radial
+Gittins and both multi-objective random baselines:
+
+```bash
+python experiments/combined_objective/offline_radial_gittins.py \
+    --scope data/scope/bird_mini_dev --budget-fraction 0.1
+
+python experiments/combined_objective/offline_multiobjective_random_search.py \
+    --scope data/scope/bird_mini_dev --seeds 1 \
+    --output experiments/results/scope_bird_mini_dev_random.csv
+```
+
+The random command runs `random_configurations` (complete sampled rows) and
+`random_questions` (shared sampled columns) across the budget sweep.
+
 This is `experiments/data/`, not the repo-root `data/`. The latter holds the
 committed accuracy / cost / token matrices extracted from these pickles; see
 `../data/README.md`.
@@ -113,7 +128,7 @@ fewer than `batch_size` questions remain; Gittins tables still plan every stage
 as a full batch. `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
 
-`combined_objective/plot_radial_gittins_trajectories.py` writes one raw-archive
+`combined_objective/plot/plot_radial_gittins_trajectories.py` writes one raw-archive
 comparison per benchmark, with each snapshot panel labelled by the scope its
 checkpoint recorded. Its hypervolume, generational-distance, and inverted-generational-distance
 series are each a single trajectory: a dashed
@@ -127,8 +142,8 @@ outcomes back into the selector. The replay after the marked endogenous stop
 is forced only to show counterfactual later-budget diagnostics; it is not the
 policy's terminal output.
 
-`combined_objective/plot_multiobjective_random_search.py` plots the random-search
-budget sweep and `combined_objective/plot_multiobjective_method_comparison.py`
+`combined_objective/plot/plot_multiobjective_random_search.py` plots the random-search
+budget sweep and `combined_objective/plot/plot_multiobjective_method_comparison.py`
 plots radial-Gittins against it. `combined_objective/audit_multiobjective_results.py`
 re-checks dominance, distance to the front, hypervolume, GD and IGD against the
 brute-force frontier.

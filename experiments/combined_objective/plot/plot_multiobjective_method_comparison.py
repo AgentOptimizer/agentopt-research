@@ -28,7 +28,7 @@ plt.rcParams.update({
 })
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
@@ -45,7 +45,7 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
     front_quality_metrics,
     nondominated_indices,
 )
-from experiments.combined_objective.plot_radial_gittins_trajectories import (  # noqa: E402
+from experiments.combined_objective.plot.plot_radial_gittins_trajectories import (  # noqa: E402
     run_benchmark,
 )
 

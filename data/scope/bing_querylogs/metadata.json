@@ -1,0 +1,21 @@
+{
+  "benchmark": "bing_querylogs",
+  "source": "/scratch/yh6415/project/SCOPE-LLM-optimizer/matrices/bing_querylogs_1681x102_configs.json",
+  "source_database": "workspace/unidm_dt_results/unidmdatatransformationbenchmark_cache.db",
+  "shape": [
+    1681,
+    102
+  ],
+  "orientation": "rows=workflow configurations; columns=question IDs",
+  "accuracy_definition": "SCOPE performance_score (0/1 per query)",
+  "cost_definition": "sum(module input tokens * model input price + module output tokens * model output price)",
+  "records_file": "records.csv.gz",
+  "original_configurations": 1681,
+  "included_configurations": 1681,
+  "excluded_configurations": 0,
+  "excluded_missing_price_models": [],
+  "excluded_config_ids": [],
+  "supplemental_pricing_as_of": "2026-09-01",
+  "supplemental_price_models_used": [],
+  "supplemental_pricing_file": "/scratch/yh6415/project/agentopt-research/data/scope_supplemental_prices.json"
+}

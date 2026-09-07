@@ -52,7 +52,7 @@ def _save_rgb_png(figure, output_path: Path, *, dpi: int = 160) -> None:
     Image.open(buffer).convert("RGB").save(output_path, format="PNG")
     print(f"wrote {output_path}")
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT)]
 
 from agentopt.model_selection.radial_gittins import (  # noqa: E402

@@ -176,6 +176,117 @@ def load_pickle(path: str) -> Tuple[List[str], List[int], LookupTable]:
     return models, datapoints, table
 
 
+def load_scope(path: str) -> Tuple[List[str], List[int], LookupTable]:
+    """Load a SCOPE benchmark directory from paired accuracy/cost matrices.
+
+    The directory must contain ``accuracy_matrix.csv`` and
+    ``cost_matrix_usd.csv``. Both files use rows as workflow configurations,
+    columns named ``question_<id>``, and a leading ``model_name`` column.
+    """
+    scope_dir = Path(path)
+    accuracy_path = scope_dir / "accuracy_matrix.csv"
+    cost_path = scope_dir / "cost_matrix_usd.csv"
+    for matrix_path in (accuracy_path, cost_path):
+        if not matrix_path.is_file():
+            raise ValueError(f"missing SCOPE matrix: {matrix_path}")
+
+    def read_matrix(
+        matrix_path: Path,
+    ) -> Tuple[List[str], List[int], Dict[str, List[Optional[float]]]]:
+        with matrix_path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.reader(handle)
+            try:
+                header = next(reader)
+            except StopIteration as exc:
+                raise ValueError(f"empty SCOPE matrix: {matrix_path}") from exc
+            if not header or header[0] != "model_name":
+                raise ValueError(
+                    f"{matrix_path} must start with a model_name column"
+                )
+            try:
+                question_ids = [
+                    int(column.removeprefix("question_"))
+                    for column in header[1:]
+                    if column.startswith("question_")
+                ]
+            except ValueError as exc:
+                raise ValueError(
+                    f"invalid question column in {matrix_path}"
+                ) from exc
+            if len(question_ids) != len(header) - 1 or not question_ids:
+                raise ValueError(
+                    f"{matrix_path} requires question_<id> columns"
+                )
+            if len(set(question_ids)) != len(question_ids):
+                raise ValueError(f"duplicate question IDs in {matrix_path}")
+
+            models: List[str] = []
+            values: Dict[str, List[Optional[float]]] = {}
+            for line_number, row in enumerate(reader, start=2):
+                if len(row) != len(header):
+                    raise ValueError(
+                        f"{matrix_path}:{line_number} has {len(row)} columns; "
+                        f"expected {len(header)}"
+                    )
+                model_name = row[0]
+                if not model_name or model_name in values:
+                    raise ValueError(
+                        f"missing or duplicate model_name at "
+                        f"{matrix_path}:{line_number}"
+                    )
+                try:
+                    parsed = [float(value) if value != "" else None for value in row[1:]]
+                except ValueError as exc:
+                    raise ValueError(
+                        f"non-numeric value at {matrix_path}:{line_number}"
+                    ) from exc
+                if not all(value is None or math.isfinite(value) for value in parsed):
+                    raise ValueError(
+                        f"non-finite value at {matrix_path}:{line_number}"
+                    )
+                models.append(model_name)
+                values[model_name] = parsed
+        if not models:
+            raise ValueError(f"SCOPE matrix has no configurations: {matrix_path}")
+        return models, question_ids, values
+
+    models, datapoints, accuracies = read_matrix(accuracy_path)
+    cost_models, cost_datapoints, costs = read_matrix(cost_path)
+    if cost_models != models:
+        raise ValueError("SCOPE accuracy and cost matrices have different model rows")
+    if cost_datapoints != datapoints:
+        raise ValueError("SCOPE accuracy and cost matrices have different questions")
+
+    table: LookupTable = {}
+    for model_name in models:
+        table[model_name] = {}
+        for column, question_id in enumerate(datapoints):
+            score = accuracies[model_name][column]
+            cost = costs[model_name][column]
+            if (score is None) != (cost is None):
+                raise ValueError(
+                    "SCOPE accuracy and cost matrices have different missing cells"
+                )
+            if score is None or cost is None:
+                continue
+            if not 0.0 <= score <= 1.0:
+                raise ValueError(
+                    f"accuracy outside [0, 1] for {model_name}, question {question_id}"
+                )
+            if cost < 0.0:
+                raise ValueError(
+                    f"negative cost for {model_name}, question {question_id}"
+                )
+            table[model_name][question_id] = SampleResult(
+                score=score,
+                latency_seconds=0.0,
+                input_tokens={},
+                output_tokens={},
+                cost=cost,
+            )
+    return models, datapoints, table
+
+
 def _require_data_path(path: str) -> str:
     """Fail clearly when gitignored benchmark data is missing locally."""
     p = Path(path)

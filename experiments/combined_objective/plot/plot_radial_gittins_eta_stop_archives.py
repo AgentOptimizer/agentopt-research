@@ -11,7 +11,7 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ETAS = (0.2, 0.4, 0.7, 1.0)
 BENCHMARKS = (("hotpotqa", "HotpotQA"), ("mathqa", "MathQA"))
 

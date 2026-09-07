@@ -1,0 +1,324 @@
+[
+  {
+    "model_name": "stackoverflow|config_id=11155",
+    "config_id": 11155,
+    "config": {
+      "pattern_summary": "gpt-5-nano",
+      "task_extraction": "deepseek-v3.1",
+      "pattern_merge": "Qwen3-Next-80B-A3B",
+      "prompt_engineering": "gemma-3-12b",
+      "transformation": "gpt-5-mini"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11160",
+    "config_id": 11160,
+    "config": {
+      "pattern_summary": "gemini-2.0-flash-lite",
+      "task_extraction": "deepseek-v3.1",
+      "pattern_merge": "Qwen3-235B-A22B",
+      "prompt_engineering": "Mistral-Small-3.2-24B-Instruct-2506",
+      "transformation": "Qwen3-235B-A22B"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11162",
+    "config_id": 11162,
+    "config": {
+      "pattern_summary": "gpt-5.2",
+      "task_extraction": "gpt-5.2",
+      "pattern_merge": "gpt-5.2",
+      "prompt_engineering": "gpt-5.2",
+      "transformation": "gpt-5.2"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11163",
+    "config_id": 11163,
+    "config": {
+      "pattern_summary": "gemma-3-27b",
+      "task_extraction": "gemma-3-27b",
+      "pattern_merge": "Qwen3-235B-A22B",
+      "prompt_engineering": "Mistral-Small-3.2-24B-Instruct-2506",
+      "transformation": "Qwen3-235B-A22B"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11164",
+    "config_id": 11164,
+    "config": {
+      "pattern_summary": "gemini-2.5-flash",
+      "task_extraction": "gpt-4.1-mini",
+      "pattern_merge": "gpt-4.1",
+      "prompt_engineering": "gpt-4.1-mini",
+      "transformation": "deepseek-v3.2"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11165",
+    "config_id": 11165,
+    "config": {
+      "pattern_summary": "gemma-3-27b",
+      "task_extraction": "Mistral-Small-3.2-24B-Instruct-2506",
+      "pattern_merge": "gpt-5-mini",
+      "prompt_engineering": "Mistral-Small-3.2-24B-Instruct-2506",
+      "transformation": "Qwen3-235B-A22B"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11166",
+    "config_id": 11166,
+    "config": {
+      "pattern_summary": "gemma-3-27b",
+      "task_extraction": "Mistral-Small-3.2-24B-Instruct-2506",
+      "pattern_merge": "gpt-5-mini",
+      "prompt_engineering": "Mistral-Small-3.2-24B-Instruct-2506",
+      "transformation": "Qwen3-Next-80B-A3B"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11167",
+    "config_id": 11167,
+    "config": {
+      "pattern_summary": "gemini-2.0-flash-lite",
+      "task_extraction": "gemini-2.0-flash-lite",
+      "pattern_merge": "gemini-2.0-flash-lite",
+      "prompt_engineering": "gemini-2.0-flash-lite",
+      "transformation": "gemini-3-flash"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11168",
+    "config_id": 11168,
+    "config": {
+      "pattern_summary": "gemma-3-12b",
+      "task_extraction": "Mistral-Small-3.2-24B-Instruct-2506",
+      "pattern_merge": "gpt-5-nano",
+      "prompt_engineering": "Mistral-Small-3-24B-Instruct-2501",
+      "transformation": "deepseek-v3.1"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11169",
+    "config_id": 11169,
+    "config": {
+      "pattern_summary": "gemma-3-4b",
+      "task_extraction": "gemini-2.5-flash-lite",
+      "pattern_merge": "deepseek-v3.1",
+      "prompt_engineering": "gemma-3-12b",
+      "transformation": "Qwen3-Next-80B-A3B"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11170",
+    "config_id": 11170,
+    "config": {
+      "pattern_summary": "claude-3-haiku",
+      "task_extraction": "Mistral-Small-3.2-24B-Instruct-2506",
+      "pattern_merge": "gemini-2.0-flash-lite",
+      "prompt_engineering": "Mistral-Small-3.2-24B-Instruct-2506",
+      "transformation": "Qwen3-Next-80B-A3B"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11171",
+    "config_id": 11171,
+    "config": {
+      "pattern_summary": "deepseek-v3.2",
+      "task_extraction": "gpt-4.1-mini",
+      "pattern_merge": "deepseek-v3.2",
+      "prompt_engineering": "gpt-4.1-mini",
+      "transformation": "deepseek-v3.2"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11172",
+    "config_id": 11172,
+    "config": {
+      "pattern_summary": "claude-3-haiku",
+      "task_extraction": "gemma-3-27b",
+      "pattern_merge": "gemma-3-12b",
+      "prompt_engineering": "gemini-3-flash",
+      "transformation": "gpt-4.1"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11173",
+    "config_id": 11173,
+    "config": {
+      "pattern_summary": "deepseek-v3.2",
+      "task_extraction": "gemma-3-12b",
+      "pattern_merge": "Qwen3-235B-A22B",
+      "prompt_engineering": "gemini-3-flash",
+      "transformation": "gemini-3-flash"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11174",
+    "config_id": 11174,
+    "config": {
+      "pattern_summary": "gemini-2.5-flash-lite",
+      "task_extraction": "gemini-2.5-flash-lite",
+      "pattern_merge": "gpt-5-nano",
+      "prompt_engineering": "Qwen3-Next-80B-A3B",
+      "transformation": "gemini-3-flash"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11175",
+    "config_id": 11175,
+    "config": {
+      "pattern_summary": "Mistral-Small-3-24B-Instruct-2501",
+      "task_extraction": "gpt-4.1",
+      "pattern_merge": "gpt-4.1-mini",
+      "prompt_engineering": "Mistral-Small-3.2-24B-Instruct-2506",
+      "transformation": "gemini-3-flash"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11176",
+    "config_id": 11176,
+    "config": {
+      "pattern_summary": "claude-3-5-haiku",
+      "task_extraction": "gpt-5.2",
+      "pattern_merge": "deepseek-v3.2",
+      "prompt_engineering": "gpt-5.2",
+      "transformation": "gpt-5.2"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11177",
+    "config_id": 11177,
+    "config": {
+      "pattern_summary": "deepseek-v3.1",
+      "task_extraction": "Mistral-Small-3-24B-Instruct-2501",
+      "pattern_merge": "gemini-2.5-flash-lite",
+      "prompt_engineering": "deepseek-v3.1",
+      "transformation": "gpt-5.2"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11178",
+    "config_id": 11178,
+    "config": {
+      "pattern_summary": "deepseek-v3.2",
+      "task_extraction": "gpt-4.1",
+      "pattern_merge": "gpt-4.1-mini",
+      "prompt_engineering": "gemini-2.0-flash-lite",
+      "transformation": "deepseek-v3.2"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11179",
+    "config_id": 11179,
+    "config": {
+      "pattern_summary": "gemma-3-4b",
+      "task_extraction": "Mistral-Small-3.2-24B-Instruct-2506",
+      "pattern_merge": "gemini-2.5-flash-lite",
+      "prompt_engineering": "Mistral-Small-3-24B-Instruct-2501",
+      "transformation": "gemini-3-flash"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11180",
+    "config_id": 11180,
+    "config": {
+      "pattern_summary": "deepseek-v3.2",
+      "task_extraction": "gpt-4.1",
+      "pattern_merge": "Qwen3-235B-A22B",
+      "prompt_engineering": "claude-3-haiku",
+      "transformation": "deepseek-v3.1"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11181",
+    "config_id": 11181,
+    "config": {
+      "pattern_summary": "gpt-5-nano",
+      "task_extraction": "Qwen3-Next-80B-A3B",
+      "pattern_merge": "gpt-5-nano",
+      "prompt_engineering": "Qwen3-235B-A22B",
+      "transformation": "gemini-3-flash"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  },
+  {
+    "model_name": "stackoverflow|config_id=11182",
+    "config_id": 11182,
+    "config": {
+      "pattern_summary": "gpt-5-nano",
+      "task_extraction": "gemini-3-flash",
+      "pattern_merge": "gemma-3-27b",
+      "prompt_engineering": "gemma-3-12b",
+      "transformation": "gemini-3-flash"
+    },
+    "observed_count": 710,
+    "coverage_fraction": 1.0,
+    "is_complete": true
+  }
+]
