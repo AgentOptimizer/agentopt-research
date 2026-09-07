@@ -185,6 +185,26 @@ separable FFT convolution with exact Gaussian integration of the grid's linear
 basis; this prevents late, sub-grid posterior transitions from collapsing to
 zero learning.
 
+The radial replay keeps exact per-arm indices and terminal utilities lazily:
+only the arm updated by the latest batch is invalidated. When the two objective
+variance/noise schedules are identical and the grids are exact reflections,
+objective-swap symmetry reduces the nine defaults to five direction-specific
+2D solves for each shared cost/horizon/grid family (the default symmetric
+reference and grids satisfy this condition). The offline CLI and both radial
+plotting entry points persist the resulting compact boundary schedules under
+`combined_objective/results/cache_radial_gittins_boundaries/`, so later
+processes reuse them without storing the large 2D work arrays. Use
+`--no-boundary-disk-cache` for memory-only operation, `--boundary-cache-dir`
+for another location, or set `AGENTOPT_RADIAL_GITTINS_CACHE_DIR`. Cache keys
+include every explicit solver input plus schema and manually maintained solver
+versions; invalid or version-mismatched entries are ignored and rebuilt.
+Trajectory plotting records every tenth adaptive pull by default because a
+full Pareto/archive diagnostic at every pull can dominate warm-cache runtime;
+`--trajectory-checkpoint-interval 1` restores every-pull curves. Warm-start,
+the first Gittins stop, and final state are always recorded. Stopping and
+deployable archives still follow the completed-arms required-completion
+contract.
+
 ## Benchmarks
 
 | Benchmark | Samples | Combos | Architecture |

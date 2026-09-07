@@ -41,6 +41,7 @@ from experiments.combined_objective.offline_multiobjective_random_search import 
     run_budget_sweep,
 )
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
+    DEFAULT_RADIAL_BOUNDARY_CACHE_DIR,
     RadialSimulationResult,
     front_quality_metrics,
     nondominated_indices,
@@ -521,6 +522,29 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=4, choices=(4, 8))
     parser.add_argument("--grid-size", type=int, default=129)
     parser.add_argument(
+        "--boundary-cache-dir",
+        type=Path,
+        default=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR,
+        help=(
+            "Persistent DP-boundary cache directory (default: %(default)s; "
+            "override with AGENTOPT_RADIAL_GITTINS_CACHE_DIR)"
+        ),
+    )
+    parser.add_argument(
+        "--no-boundary-disk-cache",
+        action="store_true",
+        help="Use only the in-process boundary cache",
+    )
+    parser.add_argument(
+        "--trajectory-checkpoint-interval",
+        type=int,
+        default=10,
+        help=(
+            "Record an ordinary radial trajectory point every N adaptive "
+            "pulls; stop and final points are always kept (default: 10)"
+        ),
+    )
+    parser.add_argument(
         "--benchmarks", nargs="+", choices=tuple(PICKLES),
         default=list(DEFAULT_BENCHMARKS),
         help="Benchmarks to run; defaults to HotpotQA and MathQA.",
@@ -579,7 +603,11 @@ def main() -> None:
         )
         return
 
-    cache = RadialGittinsBoundaryCache()
+    cache = RadialGittinsBoundaryCache(
+        cache_dir=(
+            None if args.no_boundary_disk_cache else args.boundary_cache_dir
+        )
+    )
     rows = []
     seed_rows = []
     panels = []
@@ -617,6 +645,9 @@ def main() -> None:
                             eta=1.0,
                             boundary_z_padding_extra=padding_extra,
                             cache=cache,
+                            trajectory_checkpoint_interval=(
+                                args.trajectory_checkpoint_interval
+                            ),
                         )
                         break
                     except BoundaryGridError as error:
@@ -645,6 +676,9 @@ def main() -> None:
                         boundary_z_padding_extra=32.0,
                         cache=cache,
                         boundary_margin_cells=1,
+                        trajectory_checkpoint_interval=(
+                            args.trajectory_checkpoint_interval
+                        ),
                     )
                 with cache_path.open("wb") as handle:
                     pickle.dump((radial, run_vectors, run_questions), handle)
@@ -773,6 +807,9 @@ def main() -> None:
                         "cost_reference_usd": cost_reference,
                         "x_axis": args.x_axis,
                         "stop_axis_fraction": stop_mean,
+                        "trajectory_checkpoint_interval": (
+                            args.trajectory_checkpoint_interval
+                        ),
                     }
                 )
 
@@ -803,6 +840,9 @@ def main() -> None:
                         "cost_reference_usd": cost_reference,
                         "x_axis": args.x_axis,
                         "stop_axis_fraction": stop_mean,
+                        "trajectory_checkpoint_interval": (
+                            args.trajectory_checkpoint_interval
+                        ),
                     }
                 )
 

@@ -1,8 +1,12 @@
 import math
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
+from agentopt.model_selection.radial_gittins import DEFAULT_DIRECTIONS
 from agentopt.model_selection.radial_gittins_dp import (
     BoundaryGridError,
     RadialGittinsBoundaryCache,
@@ -27,6 +31,19 @@ TEST_GRID = RadialGittinsGrid(
     state_halo=5.0,
     boundary_margin_cells=2,
     monotonicity_tolerance=1e-6,
+)
+
+MIRROR_TEST_GRID = RadialGittinsGrid(
+    z_min=-4.0,
+    z_max=4.0,
+    z_size=41,
+    delta_min=-3.0,
+    delta_max=3.0,
+    delta_size=41,
+    state_size=41,
+    state_halo=5.0,
+    boundary_margin_cells=2,
+    monotonicity_tolerance=1e-5,
 )
 
 
@@ -227,6 +244,266 @@ class BoundaryTableTests(unittest.TestCase):
         cache.get(**{**kwargs, "effective_pull_cost": 0.06})
         cache.get(**{**kwargs, "horizon": 2})
         self.assertEqual(len(cache), 3)
+
+    def test_radial_disk_cache_round_trip_avoids_rebuild(self):
+        kwargs = dict(
+            direction=(0.5, 0.5),
+            effective_pull_cost=0.05,
+            initial_var=(0.04, 0.04),
+            obs_noise_var=(0.0625, 0.0625),
+            horizon=1,
+            grid=MIRROR_TEST_GRID,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            first_cache = RadialGittinsBoundaryCache(cache_dir=directory)
+            first = first_cache.get(**kwargs)
+            self.assertEqual(first_cache.stats.builds, 1)
+            self.assertEqual(first_cache.stats.disk_misses, 1)
+            self.assertEqual(len(list(Path(directory).rglob("*.npz"))), 1)
+
+            second_cache = RadialGittinsBoundaryCache(cache_dir=directory)
+            with patch(
+                "agentopt.model_selection.radial_gittins_dp."
+                "build_radial_gittins_boundary_table",
+                side_effect=AssertionError("disk hit must not rebuild"),
+            ):
+                second = second_cache.get(**kwargs)
+
+            np.testing.assert_array_equal(second.boundaries, first.boundaries)
+            self.assertEqual(second.direction, first.direction)
+            self.assertEqual(second.grid, first.grid)
+            self.assertFalse(second.boundaries.flags.writeable)
+            self.assertEqual(second_cache.stats.disk_hits, 1)
+            self.assertEqual(second_cache.stats.builds, 0)
+
+    def test_mirrored_direction_can_reuse_disk_source(self):
+        direction = (0.3, 0.7)
+        swapped = (0.7, 0.3)
+        grid = direction_aware_grid(direction, base_grid=TEST_GRID)
+        swapped_grid = direction_aware_grid(swapped, base_grid=TEST_GRID)
+        shared = dict(
+            effective_pull_cost=0.05,
+            initial_var=0.04,
+            obs_noise_var=0.0625,
+            horizon=1,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = RadialGittinsBoundaryCache(cache_dir=directory).get(
+                direction=direction,
+                grid=grid,
+                **shared,
+            )
+            cache = RadialGittinsBoundaryCache(cache_dir=directory)
+            with patch(
+                "agentopt.model_selection.radial_gittins_dp."
+                "build_radial_gittins_boundary_table",
+                side_effect=AssertionError("mirror disk hit must not rebuild"),
+            ):
+                mirrored = cache.get(
+                    direction=swapped,
+                    grid=swapped_grid,
+                    **shared,
+                )
+
+            np.testing.assert_array_equal(
+                mirrored.boundaries,
+                source.boundaries[:, ::-1],
+            )
+            self.assertEqual(cache.stats.disk_hits, 1)
+            self.assertEqual(cache.stats.builds, 0)
+            self.assertEqual(len(cache), 1)
+
+    def test_corrupt_radial_disk_entry_is_rebuilt_and_replaced(self):
+        kwargs = dict(
+            direction=(0.5, 0.5),
+            effective_pull_cost=0.05,
+            initial_var=0.04,
+            obs_noise_var=0.0625,
+            horizon=1,
+            grid=MIRROR_TEST_GRID,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            RadialGittinsBoundaryCache(cache_dir=directory).get(**kwargs)
+            path = next(Path(directory).rglob("*.npz"))
+            path.write_bytes(b"truncated")
+
+            cache = RadialGittinsBoundaryCache(cache_dir=directory)
+            with self.assertWarns(RuntimeWarning):
+                rebuilt = cache.get(**kwargs)
+            self.assertEqual(cache.stats.corruptions, 1)
+            self.assertEqual(cache.stats.builds, 1)
+
+            fresh = RadialGittinsBoundaryCache(cache_dir=directory)
+            loaded = fresh.get(**kwargs)
+            np.testing.assert_array_equal(loaded.boundaries, rebuilt.boundaries)
+            self.assertEqual(fresh.stats.disk_hits, 1)
+
+    def test_disk_write_failure_is_best_effort_and_cleans_temp_file(self):
+        kwargs = dict(
+            direction=(0.5, 0.5),
+            effective_pull_cost=0.05,
+            initial_var=0.04,
+            obs_noise_var=0.0625,
+            horizon=1,
+            grid=MIRROR_TEST_GRID,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            cache = RadialGittinsBoundaryCache(cache_dir=directory)
+            with patch(
+                "agentopt.model_selection.radial_gittins_dp.os.replace",
+                side_effect=OSError("simulated publish failure"),
+            ), self.assertWarns(RuntimeWarning):
+                table = cache.get(**kwargs)
+
+            self.assertEqual(table.boundaries.shape, (2, 41))
+            self.assertEqual(cache.stats.builds, 1)
+            self.assertEqual(cache.stats.write_failures, 1)
+            self.assertEqual(list(Path(directory).rglob("*.tmp")), [])
+            self.assertEqual(list(Path(directory).rglob("*.npz")), [])
+
+    def test_cache_builds_only_five_tables_for_nine_symmetric_directions(self):
+        cache = RadialGittinsBoundaryCache()
+
+        with patch(
+            "agentopt.model_selection.radial_gittins_dp."
+            "build_radial_gittins_boundary_table",
+            wraps=build_radial_gittins_boundary_table,
+        ) as builder:
+            tables = [
+                cache.get(
+                    direction=direction,
+                    effective_pull_cost=0.05,
+                    initial_var=0.04,
+                    obs_noise_var=0.0625,
+                    horizon=1,
+                    grid=MIRROR_TEST_GRID,
+                )
+                for direction in DEFAULT_DIRECTIONS
+            ]
+
+        self.assertEqual(builder.call_count, 5)
+        self.assertEqual(len(cache), 5)
+        self.assertEqual(
+            [table.direction for table in tables],
+            list(DEFAULT_DIRECTIONS),
+        )
+
+    def test_mirrored_cache_view_matches_a_direct_swapped_build(self):
+        direction = (0.3, 0.7)
+        swapped_direction = (0.7, 0.3)
+        grid = direction_aware_grid(direction, base_grid=TEST_GRID)
+        swapped_grid = direction_aware_grid(
+            swapped_direction,
+            base_grid=TEST_GRID,
+        )
+        kwargs = dict(
+            effective_pull_cost=0.05,
+            initial_var=(0.04, 0.04),
+            obs_noise_var=(0.0625, 0.0625),
+            horizon=2,
+        )
+        cache = RadialGittinsBoundaryCache()
+        original = cache.get(direction=direction, grid=grid, **kwargs)
+        mirrored = cache.get(
+            direction=swapped_direction,
+            grid=swapped_grid,
+            **kwargs,
+        )
+        direct = build_radial_gittins_boundary_table(
+            direction=swapped_direction,
+            grid=swapped_grid,
+            **kwargs,
+        )
+
+        self.assertEqual(len(cache), 1)
+        self.assertIs(
+            mirrored,
+            cache.get(
+                direction=swapped_direction,
+                grid=swapped_grid,
+                **kwargs,
+            ),
+        )
+        self.assertEqual(mirrored.direction, swapped_direction)
+        self.assertEqual(mirrored.initial_var, kwargs["initial_var"])
+        self.assertEqual(mirrored.obs_noise_var, kwargs["obs_noise_var"])
+        self.assertEqual(mirrored.grid, swapped_grid)
+        np.testing.assert_array_equal(
+            mirrored.boundaries,
+            original.boundaries[:, ::-1],
+        )
+        np.testing.assert_allclose(
+            mirrored.boundaries,
+            direct.boundaries,
+            atol=2e-12,
+            rtol=0.0,
+        )
+        for stage in range(kwargs["horizon"] + 1):
+            for delta in (-2.0, -1.0, 0.0, 0.5, 1.0):
+                self.assertAlmostEqual(
+                    mirrored.boundary(stage, delta),
+                    original.boundary(stage, -delta),
+                    places=14,
+                )
+
+    def test_mirror_reuse_falls_back_for_asymmetric_posterior_parameters(self):
+        cases = (
+            ((0.04, 0.05), (0.0625, 0.0625)),
+            ((0.04, 0.04), (0.05, 0.07)),
+        )
+        for initial_var, obs_noise_var in cases:
+            with self.subTest(
+                initial_var=initial_var,
+                obs_noise_var=obs_noise_var,
+            ):
+                cache = RadialGittinsBoundaryCache()
+                with patch(
+                    "agentopt.model_selection.radial_gittins_dp."
+                    "build_radial_gittins_boundary_table",
+                    wraps=build_radial_gittins_boundary_table,
+                ) as builder:
+                    for direction in ((0.3, 0.7), (0.7, 0.3)):
+                        cache.get(
+                            direction=direction,
+                            effective_pull_cost=0.05,
+                            initial_var=initial_var,
+                            obs_noise_var=obs_noise_var,
+                            horizon=1,
+                            grid=MIRROR_TEST_GRID,
+                        )
+
+                self.assertEqual(builder.call_count, 2)
+                self.assertEqual(len(cache), 2)
+
+    def test_mirror_reuse_falls_back_for_asymmetric_reference_grids(self):
+        cache = RadialGittinsBoundaryCache()
+        directions = ((0.3, 0.7), (0.7, 0.3))
+        grids = tuple(
+            direction_aware_grid(
+                direction,
+                base_grid=TEST_GRID,
+                reference=(0.1, 0.2),
+            )
+            for direction in directions
+        )
+
+        with patch(
+            "agentopt.model_selection.radial_gittins_dp."
+            "build_radial_gittins_boundary_table",
+            wraps=build_radial_gittins_boundary_table,
+        ) as builder:
+            for direction, grid in zip(directions, grids):
+                cache.get(
+                    direction=direction,
+                    effective_pull_cost=0.05,
+                    initial_var=0.04,
+                    obs_noise_var=0.0625,
+                    horizon=1,
+                    grid=grid,
+                )
+
+        self.assertEqual(builder.call_count, 2)
+        self.assertEqual(len(cache), 2)
 
     def test_boundary_interpolation_rejects_out_of_grid_delta(self):
         table = build_radial_gittins_boundary_table(

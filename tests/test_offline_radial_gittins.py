@@ -1,11 +1,15 @@
 import json
 import math
+import tempfile
 import unittest
 from unittest import mock
 
 import numpy as np
 
-from agentopt.model_selection.radial_gittins_dp import RadialGittinsGrid
+from agentopt.model_selection.radial_gittins_dp import (
+    RadialGittinsBoundaryCache,
+    RadialGittinsGrid,
+)
 from experiments.combined_objective import offline_radial_gittins as radial_replay
 from experiments.combined_objective.offline_radial_gittins import (
     _jsonable_result,
@@ -140,6 +144,208 @@ class ParetoMetricTests(unittest.TestCase):
 
 
 class OfflineRoundRobinTests(unittest.TestCase):
+    @staticmethod
+    def _constant_problem(n_arms=3, n_datapoints=10):
+        models = [f"M{arm_index}" for arm_index in range(n_arms)]
+        datapoints = list(range(n_datapoints))
+        table = {
+            model: {
+                question_id: _sample(0.5, 0.1)
+                for question_id in datapoints
+            }
+            for model in models
+        }
+        return models, datapoints, table
+
+    @staticmethod
+    def _recording_zero_boundary_cache():
+        class ZeroBoundary:
+            def boundary(self, *args):
+                return 0.0
+
+        class RecordingCache:
+            def __init__(self):
+                self.radial_get_calls = 0
+                self.boundary = ZeroBoundary()
+
+            def __len__(self):
+                return 0
+
+            def get(self, **kwargs):
+                self.radial_get_calls += 1
+                return self.boundary
+
+        return RecordingCache()
+
+    def test_online_indices_recompute_only_arms_changed_since_task_visit(self):
+        models, datapoints, table = self._constant_problem()
+        boundary_cache = self._recording_zero_boundary_cache()
+
+        with mock.patch.object(
+            radial_replay,
+            "radial_posterior_coordinates",
+            wraps=radial_replay.radial_posterior_coordinates,
+        ) as coordinates:
+            result = simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                batch_size=1,
+                directions=((0.2, 0.8), (0.8, 0.2)),
+                max_total_question_evaluations=10,
+                boundary_cache=boundary_cache,
+                seed=1,
+            )
+
+        visits = [
+            event
+            for event in result.trace
+            if event["event"] == "direction_visit"
+            and event["selected_arm"] is not None
+        ]
+        self.assertEqual([event["selected_arm"] for event in visits], [0] * 7)
+        # First visits to each of the two directions evaluate all three arms.
+        # On later visits, only arm 0 has changed, so the other two values are
+        # cache hits. A full rescan would make 21 radial table requests here.
+        self.assertEqual(boundary_cache.radial_get_calls, 11)
+        self.assertEqual(coordinates.call_count, 11)
+        online_stats = result.params["online_index_cache"]["stats"]
+        self.assertGreater(online_stats["hits"], 0)
+        self.assertEqual(online_stats["invalidations"], 7)
+
+    def test_terminal_utilities_are_shared_by_policy_and_trajectory(self):
+        models, datapoints, table = self._constant_problem()
+        original = radial_replay.terminal_expected_radial_utility
+
+        with mock.patch.object(
+            radial_replay,
+            "terminal_expected_radial_utility",
+            wraps=original,
+        ) as terminal_utility:
+            result = simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                batch_size=1,
+                directions=((0.5, 0.5),),
+                max_total_question_evaluations=6,
+                index_provider=lambda context, arm_index: (
+                    10.0 if arm_index == 0 else -10.0
+                ),
+                halt_on_gittins_stop=False,
+                record_recommendation_trajectory=True,
+                seed=1,
+            )
+
+        self.assertEqual(result.total_evaluations, 6)
+        self.assertEqual(len(result.recommendation_trajectory), 5)
+        # Three warm-started arms are evaluated once, then only the pulled arm
+        # is recomputed after each of three updates. Policy status, adaptive
+        # checkpoints, final winners, and the final checkpoint share values.
+        self.assertEqual(terminal_utility.call_count, 6)
+
+    def test_trajectory_checkpoint_interval_only_downsamples_diagnostics(self):
+        models, datapoints, table = self._constant_problem(
+            n_arms=1,
+            n_datapoints=6,
+        )
+        kwargs = dict(
+            batch_size=1,
+            directions=((0.5, 0.5),),
+            index_provider=lambda context, arm_index: 10.0,
+            halt_on_gittins_stop=False,
+            record_recommendation_trajectory=True,
+            seed=1,
+        )
+        every_pull = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            recommendation_checkpoint_interval=1,
+            **kwargs,
+        )
+        downsampled = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            recommendation_checkpoint_interval=2,
+            **kwargs,
+        )
+
+        self.assertEqual(every_pull.trace, downsampled.trace)
+        self.assertEqual(
+            [point.event for point in downsampled.recommendation_trajectory],
+            ["after_warm_start", "adaptive_pull", "adaptive_pull", "final"],
+        )
+        self.assertEqual(
+            [
+                point.cumulative_evaluations
+                for point in downsampled.recommendation_trajectory
+            ],
+            [1, 3, 5, 6],
+        )
+        self.assertEqual(
+            downsampled.selected_models,
+            every_pull.selected_models,
+        )
+        self.assertEqual(
+            downsampled.direction_winners,
+            every_pull.direction_winners,
+        )
+        self.assertEqual(downsampled.model_results, every_pull.model_results)
+        self.assertEqual(downsampled.stop_reason, every_pull.stop_reason)
+
+    def test_incremental_cache_is_event_for_event_equivalent_to_no_reuse(self):
+        models, datapoints, table = self._constant_problem()
+        kwargs = dict(
+            batch_size=1,
+            directions=((0.2, 0.8), (0.8, 0.2)),
+            max_total_question_evaluations=10,
+            halt_on_gittins_stop=False,
+            record_recommendation_trajectory=True,
+            seed=1,
+        )
+        cached = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            boundary_cache=self._recording_zero_boundary_cache(),
+            **kwargs,
+        )
+
+        class NoReuseArmValueCache:
+            def __init__(self, n_arms):
+                pass
+
+            def invalidate(self, arm_index):
+                pass
+
+            def get_or_compute(self, namespace, arm_index, compute):
+                return float(compute(arm_index))
+
+        with mock.patch.object(
+            radial_replay,
+            "_VersionedArmValueCache",
+            NoReuseArmValueCache,
+        ):
+            uncached = simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                boundary_cache=self._recording_zero_boundary_cache(),
+                **kwargs,
+            )
+
+        self.assertEqual(cached.trace, uncached.trace)
+        self.assertEqual(cached.observed_cells, uncached.observed_cells)
+        self.assertEqual(cached.stop_reason, uncached.stop_reason)
+        self.assertEqual(cached.direction_winners, uncached.direction_winners)
+        self.assertEqual(cached.model_results, uncached.model_results)
+        self.assertEqual(
+            cached.recommendation_trajectory,
+            uncached.recommendation_trajectory,
+        )
+
     def test_scripted_round_robin_reuses_posteriors_and_returns_full_archive(self):
         models, datapoints, table = _toy_frontier()
         result = simulate_radial_gittins(
@@ -838,6 +1044,66 @@ class OfflineRoundRobinTests(unittest.TestCase):
 
 
 class OfflineActualDPTests(unittest.TestCase):
+    def test_persistent_boundary_cache_reports_build_then_disk_hit(self):
+        models = ["A"]
+        datapoints = [0, 1]
+        table = {
+            "A": {
+                question_id: _sample(0.6, 1.0)
+                for question_id in datapoints
+            }
+        }
+        grid = RadialGittinsGrid(
+            z_min=-3.0,
+            z_max=3.0,
+            z_size=65,
+            delta_min=-3.0,
+            delta_max=3.0,
+            delta_size=65,
+            state_size=65,
+            state_halo=4.0,
+            boundary_margin_cells=2,
+        )
+
+        with tempfile.TemporaryDirectory() as cache_dir:
+            first_metadata = {}
+            first = simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                batch_size=1,
+                directions=((0.5, 0.5),),
+                search_cost_scale_eta=0.1,
+                seed=1,
+                boundary_grid=grid,
+                boundary_cache=RadialGittinsBoundaryCache(cache_dir),
+                run_metadata=first_metadata,
+            )
+            second_metadata = {}
+            second = simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                batch_size=1,
+                directions=((0.5, 0.5),),
+                search_cost_scale_eta=0.1,
+                seed=1,
+                boundary_grid=grid,
+                boundary_cache=RadialGittinsBoundaryCache(cache_dir),
+                run_metadata=second_metadata,
+            )
+
+        self.assertEqual(first.trace, second.trace)
+        self.assertEqual(first.selected_models, second.selected_models)
+        self.assertEqual(first_metadata["boundary_tables_built"], 1)
+        self.assertEqual(first_metadata["boundary_tables_loaded_from_disk"], 0)
+        self.assertEqual(second_metadata["boundary_tables_built"], 0)
+        self.assertEqual(second_metadata["boundary_tables_loaded_from_disk"], 1)
+        self.assertEqual(
+            second.params["boundary_cache"]["stats"]["disk_hits"],
+            1,
+        )
+
     def test_high_cost_required_completion_expands_root_search_band(self):
         models = ["A"]
         datapoints = [0, 1, 2, 3]

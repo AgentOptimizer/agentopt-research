@@ -10,10 +10,17 @@ online ``b_n(delta)`` boundary table.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
-from dataclasses import dataclass, replace
+import os
+import tempfile
+import warnings
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
-from typing import Dict, Sequence, Tuple, Union
+from pathlib import Path
+from typing import Any, Dict, Mapping, Sequence, Tuple, Union
+from zipfile import BadZipFile
 
 import numpy as np
 
@@ -21,6 +28,14 @@ from .radial_gittins import expected_min_of_two_normals
 
 
 VectorLike = Union[float, Sequence[float], np.ndarray]
+
+
+# These versions deliberately do not follow the package version.  Bump the
+# schema version for an incompatible file-layout change, and the solver version
+# whenever the numerical recurrence or its interpretation changes.
+RADIAL_BOUNDARY_CACHE_SCHEMA_VERSION = 1
+RADIAL_BOUNDARY_SOLVER_VERSION = 1
+_CACHE_ARRAY_DTYPE = np.dtype("<f8")
 
 
 class BoundaryGridError(RuntimeError):
@@ -215,8 +230,23 @@ class RadialGittinsBoundaryTable:
     grid: RadialGittinsGrid
     boundaries: np.ndarray
     max_monotonicity_violation: float = 0.0
+    # Objective exchange sends ``delta`` to ``-delta``.  A cache alias keeps
+    # the caller-facing metadata and sampled boundary row in that orientation,
+    # while delegating scalar queries to the table that was actually solved.
+    # Excluding this implementation detail from repr/equality preserves the
+    # public value semantics of a boundary table.
+    _mirrored_source: "RadialGittinsBoundaryTable | None" = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
+        violation = float(self.max_monotonicity_violation)
+        if not math.isfinite(violation) or violation < 0.0:
+            raise ValueError(
+                "max_monotonicity_violation must be finite and nonnegative"
+            )
         array = np.asarray(self.boundaries, dtype=np.float64).copy()
         expected_shape = (self.horizon + 1, self.grid.delta_size)
         if array.shape != expected_shape:
@@ -226,6 +256,7 @@ class RadialGittinsBoundaryTable:
         if not np.all(np.isfinite(array)):
             raise ValueError("boundaries must be finite")
         array.setflags(write=False)
+        object.__setattr__(self, "max_monotonicity_violation", violation)
         object.__setattr__(self, "boundaries", array)
 
     @property
@@ -243,9 +274,12 @@ class RadialGittinsBoundaryTable:
                 f"delta={delta:.6g} lies outside configured grid "
                 f"[{self.grid.delta_min}, {self.grid.delta_max}]"
             )
+        if self._mirrored_source is not None:
+            return self._mirrored_source.boundary(stage, -delta)
         return float(
             np.interp(delta, self.delta_grid, self.boundaries[int(stage)])
         )
+
 
 
 def posterior_variance_schedule(
@@ -733,11 +767,405 @@ def build_radial_gittins_boundary_table(
     )
 
 
-class RadialGittinsBoundaryCache:
-    """In-process cache keyed by every setting that changes a DP table."""
+@dataclass(frozen=True)
+class BoundaryCacheStats:
+    """Immutable counters for one boundary-cache instance."""
 
-    def __init__(self) -> None:
+    builds: int = 0
+    memory_hits: int = 0
+    disk_hits: int = 0
+    disk_misses: int = 0
+    corruptions: int = 0
+    read_failures: int = 0
+    write_failures: int = 0
+
+
+class _BoundaryCacheDataError(ValueError):
+    """An on-disk entry failed validation and may be safely regenerated."""
+
+
+def _cache_float(value: float) -> str:
+    """Return an exact, JSON-stable representation of a finite float."""
+    resolved = float(value)
+    if not math.isfinite(resolved):
+        raise ValueError("cache-key floats must be finite")
+    if resolved == 0.0:
+        resolved = 0.0  # Treat -0.0 like the existing tuple cache does.
+    return resolved.hex()
+
+
+def _grid_cache_payload(grid: RadialGittinsGrid) -> Dict[str, object]:
+    return {
+        "z_min": _cache_float(grid.z_min),
+        "z_max": _cache_float(grid.z_max),
+        "z_size": int(grid.z_size),
+        "delta_min": _cache_float(grid.delta_min),
+        "delta_max": _cache_float(grid.delta_max),
+        "delta_size": int(grid.delta_size),
+        "state_size": int(grid.state_size),
+        "state_halo": _cache_float(grid.state_halo),
+        "kernel_stddevs": _cache_float(grid.kernel_stddevs),
+        "boundary_margin_cells": int(grid.boundary_margin_cells),
+        "monotonicity_tolerance": _cache_float(
+            grid.monotonicity_tolerance
+        ),
+    }
+
+
+def _canonical_json_bytes(value: Mapping[str, object]) -> bytes:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _cache_array(value: np.ndarray) -> np.ndarray:
+    return np.ascontiguousarray(value, dtype=_CACHE_ARRAY_DTYPE)
+
+
+def _array_manifest(value: np.ndarray) -> Dict[str, object]:
+    array = _cache_array(value)
+    return {
+        "dtype": array.dtype.str,
+        "shape": list(array.shape),
+        "sha256": hashlib.sha256(array.tobytes(order="C")).hexdigest(),
+    }
+
+
+class RadialGittinsBoundaryCache:
+    """Memory cache with optional validated, versioned disk persistence.
+
+    Disk entries contain only the compact online boundary schedules, never the
+    two-dimensional DP work arrays.  Publishing is atomic, and disk failures
+    are treated as cache misses so caching cannot make a valid solve fail.
+
+    When both objective posteriors have identical variance schedules, swapping
+    the objectives is an exact symmetry of the retirement DP.  A table for
+    ``(d1, d2)`` can then serve ``(d2, d1)`` on the reflected delta grid via
+    ``b_swapped(delta) = b_original(-delta)``.  Mirrored caller-facing tables
+    are aliases and do not count as additional DP builds in :meth:`__len__`.
+
+    Counters describe logical ``get`` requests: a reflected-file load is one
+    disk hit, and a reflected in-memory alias is one memory hit. Instances are
+    intended for the single-threaded replay scripts; separate threads should
+    use separate cache instances that share the same atomic disk cache.
+    """
+
+    def __init__(
+        self,
+        cache_dir: str | os.PathLike[str] | None = None,
+        *,
+        disk_read: bool = True,
+        disk_write: bool = True,
+    ) -> None:
+        self.cache_dir = (
+            None if cache_dir is None else Path(cache_dir).expanduser()
+        )
+        self.disk_read = bool(disk_read and self.cache_dir is not None)
+        self.disk_write = bool(disk_write and self.cache_dir is not None)
         self._tables: Dict[Tuple[object, ...], RadialGittinsBoundaryTable] = {}
+        self._mirrored_tables: Dict[
+            Tuple[object, ...], RadialGittinsBoundaryTable
+        ] = {}
+        self._stats: Dict[str, int] = {
+            name: 0 for name in BoundaryCacheStats.__dataclass_fields__
+        }
+        self._warned: set[str] = set()
+
+    @property
+    def stats(self) -> BoundaryCacheStats:
+        """Return a point-in-time copy of the cache counters."""
+        return BoundaryCacheStats(**self._stats)
+
+    def stats_snapshot(self) -> BoundaryCacheStats:
+        """Method-form alias useful when taking before/after snapshots."""
+        return self.stats
+
+    def _increment(self, name: str) -> None:
+        self._stats[name] += 1
+
+    def _warn_once(self, category: str, message: str) -> None:
+        if category not in self._warned:
+            self._warned.add(category)
+            warnings.warn(message, RuntimeWarning, stacklevel=3)
+
+    @staticmethod
+    def _radial_key(
+        direction: Tuple[float, float],
+        effective_pull_cost: float,
+        initial_var: Tuple[float, float],
+        obs_noise_var: Tuple[float, float],
+        horizon: int,
+        grid: RadialGittinsGrid,
+    ) -> Tuple[object, ...]:
+        return (
+            direction,
+            effective_pull_cost,
+            initial_var,
+            obs_noise_var,
+            horizon,
+            grid,
+        )
+
+
+    @staticmethod
+    def _radial_disk_key(key: Tuple[object, ...]) -> Dict[str, object]:
+        direction, cost, initial, noise, horizon, grid = key
+        assert isinstance(grid, RadialGittinsGrid)
+        return {
+            "format": "agentopt.radial-gittins-boundary",
+            "schema_version": RADIAL_BOUNDARY_CACHE_SCHEMA_VERSION,
+            "solver_version": RADIAL_BOUNDARY_SOLVER_VERSION,
+            "kind": "radial",
+            "direction": [_cache_float(x) for x in direction],
+            "effective_pull_cost": _cache_float(cost),
+            "initial_var": [_cache_float(x) for x in initial],
+            "obs_noise_var": [_cache_float(x) for x in noise],
+            "horizon": int(horizon),
+            "grid": _grid_cache_payload(grid),
+            "output_dtype": _CACHE_ARRAY_DTYPE.str,
+        }
+
+
+    def _entry_path(
+        self,
+        kind: str,
+        disk_key: Mapping[str, object],
+    ) -> Tuple[Path, str]:
+        if self.cache_dir is None:
+            raise RuntimeError("a disk-cache path requires cache_dir")
+        digest = hashlib.sha256(
+            b"agentopt-radial-boundary-key\0"
+            + _canonical_json_bytes(disk_key)
+        ).hexdigest()
+        path = (
+            self.cache_dir
+            / f"schema-{RADIAL_BOUNDARY_CACHE_SCHEMA_VERSION}"
+            / f"solver-{RADIAL_BOUNDARY_SOLVER_VERSION}"
+            / kind
+            / digest[:2]
+            / f"{digest}.npz"
+        )
+        return path, digest
+
+    def _record_corruption(self, path: Path, error: Exception) -> None:
+        self._increment("corruptions")
+        self._warn_once(
+            "corruption",
+            f"Ignoring invalid radial-Gittins cache entry {path}: {error}",
+        )
+
+    def _read_entry(
+        self,
+        *,
+        kind: str,
+        disk_key: Mapping[str, object],
+        expected_boundary_shape: Tuple[int, ...],
+    ) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]] | None:
+        if not self.disk_read:
+            return None
+        path, digest = self._entry_path(kind, disk_key)
+        try:
+            with np.load(path, allow_pickle=False) as archive:
+                required = {"manifest", "boundaries"}
+                if set(archive.files) != required:
+                    raise _BoundaryCacheDataError(
+                        f"expected members {sorted(required)}, got "
+                        f"{sorted(archive.files)}"
+                    )
+                encoded_manifest = np.asarray(archive["manifest"])
+                if encoded_manifest.dtype != np.dtype(np.uint8) or (
+                    encoded_manifest.ndim != 1
+                ):
+                    raise _BoundaryCacheDataError(
+                        "manifest must be a one-dimensional uint8 array"
+                    )
+                manifest = json.loads(
+                    encoded_manifest.tobytes().decode("utf-8")
+                )
+                if not isinstance(manifest, dict):
+                    raise _BoundaryCacheDataError("manifest must be an object")
+                if manifest.get("key") != disk_key:
+                    raise _BoundaryCacheDataError("cache key mismatch")
+                if manifest.get("key_sha256") != digest:
+                    raise _BoundaryCacheDataError("cache digest mismatch")
+                array_specs = manifest.get("arrays")
+                if not isinstance(array_specs, dict):
+                    raise _BoundaryCacheDataError("missing array manifest")
+
+                arrays: Dict[str, np.ndarray] = {}
+                for name in required - {"manifest"}:
+                    array = np.asarray(archive[name])
+                    if array.dtype.str != _CACHE_ARRAY_DTYPE.str:
+                        raise _BoundaryCacheDataError(
+                            f"{name} has unexpected dtype {array.dtype.str}"
+                        )
+                    expected_spec = _array_manifest(array)
+                    if array_specs.get(name) != expected_spec:
+                        raise _BoundaryCacheDataError(
+                            f"{name} failed shape or checksum validation"
+                        )
+                    if not np.all(np.isfinite(array)):
+                        raise _BoundaryCacheDataError(
+                            f"{name} contains non-finite values"
+                        )
+                    arrays[name] = np.array(array, dtype=np.float64, copy=True)
+
+            if arrays["boundaries"].shape != expected_boundary_shape:
+                raise _BoundaryCacheDataError(
+                    "boundaries have the wrong shape for the cache key"
+                )
+            return arrays, manifest
+        except FileNotFoundError:
+            return None
+        except (OSError, PermissionError) as error:
+            self._increment("read_failures")
+            self._warn_once(
+                "read",
+                f"Cannot read radial-Gittins disk cache {path}: {error}",
+            )
+            return None
+        except (
+            BadZipFile,
+            EOFError,
+            KeyError,
+            TypeError,
+            UnicodeError,
+            ValueError,
+        ) as error:
+            self._record_corruption(path, error)
+            return None
+
+    def _write_entry(
+        self,
+        *,
+        kind: str,
+        disk_key: Mapping[str, object],
+        arrays: Mapping[str, np.ndarray],
+        extra_manifest: Mapping[str, object] | None = None,
+    ) -> None:
+        if not self.disk_write:
+            return
+        path, digest = self._entry_path(kind, disk_key)
+        normalized_arrays = {
+            name: _cache_array(value) for name, value in arrays.items()
+        }
+        manifest: Dict[str, object] = {
+            "key": dict(disk_key),
+            "key_sha256": digest,
+            "arrays": {
+                name: _array_manifest(value)
+                for name, value in normalized_arrays.items()
+            },
+        }
+        if extra_manifest:
+            manifest.update(extra_manifest)
+        encoded_manifest = np.frombuffer(
+            _canonical_json_bytes(manifest), dtype=np.uint8
+        )
+        temp_path: Path | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w+b",
+                dir=path.parent,
+                prefix=f".{digest}.",
+                suffix=".tmp",
+                delete=False,
+            ) as output:
+                temp_path = Path(output.name)
+                # Boundary schedules are already compact. Avoid compression
+                # and durability fsyncs here: on cloud-synced filesystems they
+                # can cost more than the DP solve itself. Closing before the
+                # atomic replace keeps concurrent readers safe; a machine
+                # crash can at worst leave a missing/corrupt cache entry,
+                # which the validated read path rebuilds.
+                np.savez(
+                    output,
+                    manifest=encoded_manifest,
+                    **normalized_arrays,
+                )
+            os.replace(temp_path, path)
+            temp_path = None
+        except Exception as error:
+            self._increment("write_failures")
+            self._warn_once(
+                "write",
+                f"Cannot write radial-Gittins disk cache {path}: {error}",
+            )
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _reflected_grid(grid: RadialGittinsGrid) -> RadialGittinsGrid:
+        """Return the grid induced by exchanging objective coordinates."""
+        return replace(
+            grid,
+            delta_min=-grid.delta_max,
+            delta_max=-grid.delta_min,
+        )
+
+    @staticmethod
+    def _mirrored_table(
+        source: RadialGittinsBoundaryTable,
+        *,
+        direction: Tuple[float, float],
+        initial_var: Tuple[float, float],
+        obs_noise_var: Tuple[float, float],
+        grid: RadialGittinsGrid,
+    ) -> RadialGittinsBoundaryTable:
+        """Return a metadata-correct objective-swapped view of ``source``."""
+        return RadialGittinsBoundaryTable(
+            direction=direction,
+            effective_pull_cost=source.effective_pull_cost,
+            initial_var=initial_var,
+            obs_noise_var=obs_noise_var,
+            horizon=source.horizon,
+            grid=grid,
+            boundaries=source.boundaries[:, ::-1],
+            max_monotonicity_violation=source.max_monotonicity_violation,
+            _mirrored_source=source,
+        )
+
+    def _load_radial(
+        self,
+        key: Tuple[object, ...],
+    ) -> RadialGittinsBoundaryTable | None:
+        direction, cost, initial, noise, horizon, grid = key
+        assert isinstance(grid, RadialGittinsGrid)
+        disk_key = self._radial_disk_key(key)
+        loaded = self._read_entry(
+            kind="radial",
+            disk_key=disk_key,
+            expected_boundary_shape=(int(horizon) + 1, grid.delta_size),
+        )
+        if loaded is None:
+            return None
+        arrays, manifest = loaded
+        try:
+            violation = float.fromhex(str(manifest["max_monotonicity_violation"]))
+            return RadialGittinsBoundaryTable(
+                direction=direction,
+                effective_pull_cost=float(cost),
+                initial_var=initial,
+                obs_noise_var=noise,
+                horizon=int(horizon),
+                grid=grid,
+                boundaries=arrays["boundaries"],
+                max_monotonicity_violation=violation,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            path, _ = self._entry_path("radial", disk_key)
+            self._record_corruption(path, error)
+            return None
+
 
     def get(
         self,
@@ -752,33 +1180,115 @@ class RadialGittinsBoundaryCache:
         direction_array = _direction(direction)
         initial = _two_vector(initial_var, "initial_var", positive=True)
         noise = _two_vector(obs_noise_var, "obs_noise_var", positive=True)
-        key = (
-            tuple(float(x) for x in direction_array),
-            float(effective_pull_cost),
-            tuple(float(x) for x in initial),
-            tuple(float(x) for x in noise),
-            int(horizon),
+        direction_key = tuple(float(x) for x in direction_array)
+        initial_key = tuple(float(x) for x in initial)
+        noise_key = tuple(float(x) for x in noise)
+        cost_key = float(effective_pull_cost)
+        if not math.isfinite(cost_key) or cost_key <= 0.0:
+            raise ValueError("effective_pull_cost must be finite and strictly positive")
+        if int(horizon) != horizon or horizon <= 0:
+            raise ValueError("horizon must be a positive integer")
+        horizon_key = int(horizon)
+        key = self._radial_key(
+            direction_key,
+            cost_key,
+            initial_key,
+            noise_key,
+            horizon_key,
             grid,
         )
         table = self._tables.get(key)
-        if table is None:
-            table = build_radial_gittins_boundary_table(
-                direction=direction_array,
-                effective_pull_cost=effective_pull_cost,
-                initial_var=initial,
-                obs_noise_var=noise,
-                horizon=horizon,
-                grid=grid,
+        if table is not None:
+            self._increment("memory_hits")
+            return table
+        table = self._mirrored_tables.get(key)
+        if table is not None:
+            self._increment("memory_hits")
+            return table
+
+        # Exact equality is intentional: treating merely close posterior
+        # variances as exchangeable would make this optimization approximate.
+        exchangeable = (
+            initial_key[0] == initial_key[1]
+            and noise_key[0] == noise_key[1]
+            and direction_key[0] != direction_key[1]
+        )
+        reflected_key: Tuple[object, ...] | None = None
+        if exchangeable:
+            reflected_key = self._radial_key(
+                (direction_key[1], direction_key[0]),
+                cost_key,
+                initial_key,
+                noise_key,
+                horizon_key,
+                self._reflected_grid(grid),
             )
+            source = self._tables.get(reflected_key)
+            if source is not None:
+                table = self._mirrored_table(
+                    source,
+                    direction=direction_key,
+                    initial_var=initial_key,
+                    obs_noise_var=noise_key,
+                    grid=grid,
+                )
+                self._mirrored_tables[key] = table
+                self._increment("memory_hits")
+                return table
+
+        table = self._load_radial(key)
+        if table is not None:
             self._tables[key] = table
+            self._increment("disk_hits")
+            return table
+        if reflected_key is not None:
+            source = self._load_radial(reflected_key)
+            if source is not None:
+                self._tables[reflected_key] = source
+                table = self._mirrored_table(
+                    source,
+                    direction=direction_key,
+                    initial_var=initial_key,
+                    obs_noise_var=noise_key,
+                    grid=grid,
+                )
+                self._mirrored_tables[key] = table
+                self._increment("disk_hits")
+                return table
+        if self.disk_read:
+            self._increment("disk_misses")
+
+        table = build_radial_gittins_boundary_table(
+            direction=direction_array,
+            effective_pull_cost=cost_key,
+            initial_var=initial,
+            obs_noise_var=noise,
+            horizon=horizon_key,
+            grid=grid,
+        )
+        self._tables[key] = table
+        self._increment("builds")
+        self._write_entry(
+            kind="radial",
+            disk_key=self._radial_disk_key(key),
+            arrays={"boundaries": table.boundaries},
+            extra_manifest={
+                "max_monotonicity_violation": _cache_float(
+                    table.max_monotonicity_violation
+                )
+            },
+        )
         return table
+
 
     def __len__(self) -> int:
         return len(self._tables)
 
-
 __all__ = [
+    "BoundaryCacheStats",
     "BoundaryGridError",
+    "RADIAL_BOUNDARY_CACHE_SCHEMA_VERSION",
+    "RADIAL_BOUNDARY_SOLVER_VERSION",
     "RadialGittinsBoundaryCache",
     "RadialGittinsBoundaryTable",
     "RadialGittinsGrid",
