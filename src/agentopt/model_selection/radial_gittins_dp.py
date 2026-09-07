@@ -1273,6 +1273,7 @@ class RadialGittinsBoundaryCache:
             disk_key=self._radial_disk_key(key),
             arrays={"boundaries": table.boundaries},
             extra_manifest={
+                "builder_backend": "scipy",
                 "max_monotonicity_violation": _cache_float(
                     table.max_monotonicity_violation
                 )

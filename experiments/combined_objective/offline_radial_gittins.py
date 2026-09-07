@@ -71,10 +71,16 @@ from agentopt.model_selection.radial_gittins import (
 )
 from agentopt.model_selection.radial_gittins_dp import (
     RadialGittinsBoundaryCache,
+    RadialGittinsBoundaryTable,
     RadialGittinsGrid,
     direction_aware_grid,
     radial_posterior_coordinates,
     terminal_expected_radial_utility,
+)
+from agentopt.model_selection.radial_gittins_prewarm import (
+    RadialGittinsPrewarmRequest,
+    RadialGittinsPrewarmStats,
+    prewarm_radial_gittins_boundaries,
 )
 
 
@@ -107,6 +113,14 @@ _BOUNDARY_CACHE_STAT_FIELDS = (
     "read_failures",
     "write_failures",
 )
+_BOUNDARY_PREWARM_STAT_FIELDS = tuple(
+    RadialGittinsPrewarmStats.__dataclass_fields__
+)
+# On CPU, XLA compilation dominates one-off small grids. This conservative
+# proxy routes the production 513-point, seven-cost/H=47 families to JAX while
+# keeping the common 129/257-point plotting grids on the faster SciPy cold path.
+# Explicit `boundary_build_backend="jax"` always overrides the heuristic.
+_AUTO_JAX_MIN_CELL_STAGES = 50_000_000
 
 
 def _boundary_cache_stats_snapshot(cache: Any) -> Optional[Dict[str, int]]:
@@ -1121,6 +1135,8 @@ def simulate_radial_gittins(
     run_metadata: Optional[Dict[str, Any]] = None,
     boundary_grid: Optional[RadialGittinsGrid] = None,
     boundary_cache: Optional[RadialGittinsBoundaryCache] = None,
+    boundary_build_backend: str = "auto",
+    boundary_jax_min_batch_size: int = 4,
     index_provider: Optional[IndexProvider] = None,
     question_universe: str = "common",
     halt_on_gittins_stop: bool = True,
@@ -1155,6 +1171,13 @@ def simulate_radial_gittins(
     retains one ordinary checkpoint after every N adaptive pulls. Warm-start,
     first Gittins-stop, and final checkpoints are always retained; this changes
     diagnostic curve resolution only, never acquisition or stopping.
+
+    With a real :class:`RadialGittinsBoundaryCache`, table construction is
+    direction-lazy: the first visit to a direction deduplicates that direction's
+    unfinished-arm table requests and batches sufficiently large cold groups
+    through JAX. ``boundary_build_backend='auto'`` falls back to SciPy if JAX
+    is absent or fails; ``'jax'`` is strict, and ``'scipy'`` disables JAX.
+    Online indices remain exact per-arm lazy values after this cold prewarm.
     """
     wall_start = time.perf_counter()
     batch_size = _positive_integer(batch_size, "batch_size")
@@ -1163,6 +1186,15 @@ def simulate_radial_gittins(
     recommendation_checkpoint_interval = _positive_integer(
         recommendation_checkpoint_interval,
         "recommendation_checkpoint_interval",
+    )
+    boundary_build_backend = str(boundary_build_backend).lower()
+    if boundary_build_backend not in {"auto", "jax", "scipy"}:
+        raise ValueError(
+            "boundary_build_backend must be 'auto', 'jax', or 'scipy'"
+        )
+    boundary_jax_min_batch_size = _positive_integer(
+        boundary_jax_min_batch_size,
+        "boundary_jax_min_batch_size",
     )
     if not models or len(set(models)) != len(models):
         raise ValueError("models must be nonempty and unique")
@@ -1446,9 +1478,107 @@ def simulate_radial_gittins(
         if boundary_cache is not None
         else RadialGittinsBoundaryCache()
     )
+    optimized_boundary_cache = type(cache) is RadialGittinsBoundaryCache
+    if (
+        index_provider is None
+        and boundary_build_backend == "jax"
+        and not optimized_boundary_cache
+    ):
+        raise TypeError(
+            "boundary_build_backend='jax' requires a concrete "
+            "RadialGittinsBoundaryCache"
+        )
     cache_size_before = len(cache)
     cache_stats_before = _boundary_cache_stats_snapshot(cache)
     online_value_cache = _VersionedArmValueCache(n_arms)
+    direction_boundary_tables: Dict[
+        Tuple[float, float],
+        Dict[int, RadialGittinsBoundaryTable],
+    ] = {}
+    boundary_prewarm_stats = {
+        name: 0 for name in _BOUNDARY_PREWARM_STAT_FIELDS
+    }
+    auto_jax_disabled = False
+    auto_jax_workload_skips = 0
+
+    def _prewarm_direction_boundaries(
+        direction: Tuple[float, float],
+        unfinished_arms: Sequence[int],
+    ) -> None:
+        """Build one direction's unique cold tables, at most once per run."""
+        nonlocal auto_jax_disabled, auto_jax_workload_skips
+        if direction in direction_boundary_tables:
+            return
+        # Test doubles and third-party cache-like objects retain the historical
+        # scalar `get` protocol. The optimized adapter intentionally relies on
+        # the concrete cache's validated probe/publish machinery.
+        if not optimized_boundary_cache:
+            return
+
+        arm_indices = tuple(int(arm_index) for arm_index in unfinished_arms)
+        requests = tuple(
+            RadialGittinsPrewarmRequest(
+                direction=direction,
+                effective_pull_cost=float(effective_pull_costs[arm_index]),
+                initial_var=initial_var,
+                obs_noise_var=noise_var,
+                horizon=int(planning_horizons[arm_index]),
+                grid=grid_for_arm(direction, arm_index),
+            )
+            for arm_index in arm_indices
+        )
+        explicit_jax = boundary_build_backend == "jax"
+        unique_requests = tuple(dict.fromkeys(requests))
+        estimated_cell_stages = sum(
+            request.horizon * request.grid.state_size**2
+            for request in unique_requests
+        )
+        auto_workload_eligible = (
+            estimated_cell_stages >= _AUTO_JAX_MIN_CELL_STAGES
+        )
+        jax_available: bool | None
+        if (
+            boundary_build_backend == "scipy"
+            or auto_jax_disabled
+            or (
+                boundary_build_backend == "auto"
+                and not auto_workload_eligible
+            )
+        ):
+            jax_available = False
+        elif explicit_jax:
+            jax_available = True
+        else:
+            jax_available = None
+        result = prewarm_radial_gittins_boundaries(
+            requests,
+            cache=cache,
+            jax_min_batch_size=(
+                1 if explicit_jax else boundary_jax_min_batch_size
+            ),
+            jax_available=jax_available,
+            fallback_on_jax_error=boundary_build_backend == "auto",
+        )
+        if (
+            boundary_build_backend == "auto"
+            and not auto_jax_disabled
+            and not auto_workload_eligible
+            and result.stats.cold_misses
+        ):
+            auto_jax_workload_skips += 1
+        if (
+            boundary_build_backend == "auto"
+            and result.stats.jax_fallback_groups
+        ):
+            # A backend/import/device failure is normally persistent for this
+            # process. Avoid paying for the same failed JAX attempt on every
+            # later direction; SciPy remains exact and available.
+            auto_jax_disabled = True
+        direction_boundary_tables[direction] = dict(
+            zip(arm_indices, result.tables)
+        )
+        for name in _BOUNDARY_PREWARM_STAT_FIELDS:
+            boundary_prewarm_stats[name] += int(getattr(result.stats, name))
 
     def _compute_radial_terminal_utility(
         direction_index: int,
@@ -1664,16 +1794,23 @@ def simulate_radial_gittins(
                     index_provider(context, arm_index)
                 )
         else:
+            _prewarm_direction_boundaries(direction, unfinished)
 
             def compute_radial_index(arm_index: int) -> float:
-                table_for_arm = cache.get(
-                    direction=direction,
-                    effective_pull_cost=float(effective_pull_costs[arm_index]),
-                    initial_var=initial_var,
-                    obs_noise_var=noise_var,
-                    horizon=int(planning_horizons[arm_index]),
-                    grid=grid_for_arm(direction, arm_index),
-                )
+                table_for_arm = direction_boundary_tables.get(
+                    direction, {}
+                ).get(arm_index)
+                if table_for_arm is None:
+                    table_for_arm = cache.get(
+                        direction=direction,
+                        effective_pull_cost=float(
+                            effective_pull_costs[arm_index]
+                        ),
+                        initial_var=initial_var,
+                        obs_noise_var=noise_var,
+                        horizon=int(planning_horizons[arm_index]),
+                        grid=grid_for_arm(direction, arm_index),
+                    )
                 u, delta, _ = radial_posterior_coordinates(
                     posteriors[arm_index].mean,
                     posteriors[arm_index].var,
@@ -2134,6 +2271,47 @@ def simulate_radial_gittins(
             "disk_write": cache_disk_write,
             "stats": dict(cache_stats),
         },
+        "boundary_table_build": {
+            "mode": (
+                "disabled_external_index_provider"
+                if index_provider is not None
+                else (
+                    "direction_lazy_hybrid"
+                    if optimized_boundary_cache
+                    else "scalar_cache_protocol"
+                )
+            ),
+            "requested_backend": boundary_build_backend,
+            "backend_scope": (
+                "not_applicable"
+                if index_provider is not None
+                else (
+                    "cold_cache_misses"
+                    if optimized_boundary_cache
+                    else "external_cache_protocol"
+                )
+            ),
+            "cache_backend_policy": (
+                "not_applicable"
+                if index_provider is not None
+                else (
+                    "backend_neutral"
+                    if optimized_boundary_cache
+                    else "external_cache_defined"
+                )
+            ),
+            "jax_min_batch_size": boundary_jax_min_batch_size,
+            "effective_jax_min_batch_size": (
+                1
+                if boundary_build_backend == "jax"
+                else boundary_jax_min_batch_size
+            ),
+            "auto_jax_disabled_after_failure": auto_jax_disabled,
+            "auto_jax_min_cell_stages": _AUTO_JAX_MIN_CELL_STAGES,
+            "auto_jax_workload_skips": auto_jax_workload_skips,
+            "prewarmed_directions": len(direction_boundary_tables),
+            "stats": dict(boundary_prewarm_stats),
+        },
         "online_index_cache": {
             "mode": "per_arm_generation_lazy_invalidation",
             "stats": online_cache_stats,
@@ -2406,6 +2584,21 @@ def main() -> None:
         help="Use only the in-process boundary cache",
     )
     parser.add_argument(
+        "--boundary-build-backend",
+        choices=("auto", "jax", "scipy"),
+        default="auto",
+        help=(
+            "Cold boundary-table builder: auto batches large miss groups with "
+            "JAX and falls back to SciPy (default: auto)"
+        ),
+    )
+    parser.add_argument(
+        "--boundary-jax-min-batch-size",
+        type=int,
+        default=4,
+        help="Minimum cold miss group routed to JAX in auto mode (default: 4)",
+    )
+    parser.add_argument(
         "--trajectory-checkpoint-interval",
         type=int,
         default=1,
@@ -2462,6 +2655,8 @@ def main() -> None:
             seed=args.base_seed + offset,
             boundary_grid=grid,
             boundary_cache=cache,
+            boundary_build_backend=args.boundary_build_backend,
+            boundary_jax_min_batch_size=args.boundary_jax_min_batch_size,
             question_universe=("per_arm" if args.ragged_diagnostic else "common"),
             recommendation_checkpoint_interval=(
                 args.trajectory_checkpoint_interval

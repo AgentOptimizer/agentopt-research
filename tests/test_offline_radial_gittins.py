@@ -10,6 +10,10 @@ from agentopt.model_selection.radial_gittins_dp import (
     RadialGittinsBoundaryCache,
     RadialGittinsGrid,
 )
+from agentopt.model_selection.radial_gittins_prewarm import (
+    RadialGittinsPrewarmResult,
+    RadialGittinsPrewarmStats,
+)
 from experiments.combined_objective import offline_radial_gittins as radial_replay
 from experiments.combined_objective.offline_radial_gittins import (
     _jsonable_result,
@@ -212,6 +216,125 @@ class OfflineRoundRobinTests(unittest.TestCase):
         online_stats = result.params["online_index_cache"]["stats"]
         self.assertGreater(online_stats["hits"], 0)
         self.assertEqual(online_stats["invalidations"], 7)
+
+    def test_boundary_prewarm_is_lazy_and_disables_failed_auto_jax(self):
+        models, datapoints, table = self._constant_problem(
+            n_arms=3,
+            n_datapoints=8,
+        )
+
+        class ZeroBoundary:
+            def boundary(self, *args):
+                return 0.0
+
+        prewarm_calls = []
+
+        def fake_prewarm(requests, **kwargs):
+            requests = tuple(requests)
+            fallback_groups = int(not prewarm_calls)
+            prewarm_calls.append((requests, kwargs))
+            return RadialGittinsPrewarmResult(
+                tables=tuple(ZeroBoundary() for _ in requests),
+                stats=RadialGittinsPrewarmStats(
+                    requested=len(requests),
+                    unique_requests=1,
+                    canonical_requests=1,
+                    cold_misses=1,
+                    scipy_tables=1,
+                    jax_fallback_groups=fallback_groups,
+                ),
+            )
+
+        with mock.patch.object(
+            radial_replay,
+            "_AUTO_JAX_MIN_CELL_STAGES",
+            0,
+        ), mock.patch.object(
+            radial_replay,
+            "prewarm_radial_gittins_boundaries",
+            side_effect=fake_prewarm,
+        ):
+            result = simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                batch_size=1,
+                directions=((0.2, 0.8), (0.8, 0.2)),
+                max_total_question_evaluations=7,
+                boundary_cache=RadialGittinsBoundaryCache(),
+                seed=1,
+            )
+
+        self.assertEqual(len(prewarm_calls), 2)
+        self.assertEqual(
+            [call[0][0].direction for call in prewarm_calls],
+            [(0.2, 0.8), (0.8, 0.2)],
+        )
+        self.assertEqual(
+            [call[1]["jax_available"] for call in prewarm_calls],
+            [None, False],
+        )
+        build = result.params["boundary_table_build"]
+        self.assertEqual(build["mode"], "direction_lazy_hybrid")
+        self.assertTrue(build["auto_jax_disabled_after_failure"])
+        self.assertEqual(build["prewarmed_directions"], 2)
+        self.assertEqual(build["stats"]["requested"], 6)
+        self.assertEqual(build["stats"]["scipy_tables"], 2)
+        self.assertEqual(build["stats"]["jax_fallback_groups"], 1)
+
+    def test_strict_jax_rejects_external_cache_protocol(self):
+        models, datapoints, table = self._constant_problem()
+        cache = self._recording_zero_boundary_cache()
+
+        with self.assertRaisesRegex(TypeError, "concrete.*BoundaryCache"):
+            simulate_radial_gittins(
+                models,
+                datapoints,
+                table,
+                batch_size=1,
+                directions=((0.5, 0.5),),
+                max_total_question_evaluations=4,
+                boundary_cache=cache,
+                boundary_build_backend="jax",
+                seed=1,
+            )
+
+    def test_cache_subclass_override_keeps_scalar_protocol(self):
+        models, datapoints, table = self._constant_problem()
+
+        class ZeroBoundary:
+            def boundary(self, *args):
+                return 0.0
+
+        class LegacySubclass(RadialGittinsBoundaryCache):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def __len__(self):
+                return 0
+
+            def get(self, **kwargs):
+                self.calls += 1
+                return ZeroBoundary()
+
+        cache = LegacySubclass()
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=1,
+            directions=((0.5, 0.5),),
+            max_total_question_evaluations=4,
+            boundary_cache=cache,
+            seed=1,
+        )
+
+        self.assertGreater(cache.calls, 0)
+        self.assertEqual(
+            result.params["boundary_table_build"]["mode"],
+            "scalar_cache_protocol",
+        )
 
     def test_terminal_utilities_are_shared_by_policy_and_trajectory(self):
         models, datapoints, table = self._constant_problem()
