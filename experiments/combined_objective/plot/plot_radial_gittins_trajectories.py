@@ -63,6 +63,7 @@ from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
     RadialGittinsGrid,
 )
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
+    DEFAULT_RADIAL_BOUNDARY_CACHE_DIR,
     RadialSimulationResult,
     RecommendationCheckpoint,
     _full_raw_objective_vectors,
@@ -140,6 +141,7 @@ def run_benchmark(
     boundary_z_padding_extra: float,
     cache: RadialGittinsBoundaryCache,
     boundary_margin_cells: int | None = None,
+    trajectory_checkpoint_interval: int = 10,
 ) -> Tuple[RadialSimulationResult, np.ndarray, Tuple[int, ...]]:
     models, datapoints, table = load_pickle(pickle_path)
     grid = RadialGittinsGrid(
@@ -167,6 +169,7 @@ def run_benchmark(
         boundary_cache=cache,
         halt_on_gittins_stop=False,
         record_recommendation_trajectory=True,
+        recommendation_checkpoint_interval=trajectory_checkpoint_interval,
         question_universe="common",
     )
     eval_dps = tuple(
@@ -594,6 +597,29 @@ def main() -> None:
         help="Boundary DP grid resolution (129 is much faster than production 513)",
     )
     parser.add_argument(
+        "--boundary-cache-dir",
+        type=Path,
+        default=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR,
+        help=(
+            "Persistent DP-boundary cache directory (default: %(default)s; "
+            "override with AGENTOPT_RADIAL_GITTINS_CACHE_DIR)"
+        ),
+    )
+    parser.add_argument(
+        "--no-boundary-disk-cache",
+        action="store_true",
+        help="Use only the in-process boundary cache",
+    )
+    parser.add_argument(
+        "--trajectory-checkpoint-interval",
+        type=int,
+        default=10,
+        help=(
+            "Record an ordinary trajectory point every N adaptive pulls; "
+            "warm-start, stop, and final points are always kept (default: 10)"
+        ),
+    )
+    parser.add_argument(
         "--benchmarks",
         nargs="+",
         default=["hotpotqa", "mathqa"],
@@ -607,7 +633,11 @@ def main() -> None:
         for direction in args.extra_direction
     )
 
-    cache = RadialGittinsBoundaryCache()
+    cache = RadialGittinsBoundaryCache(
+        cache_dir=(
+            None if args.no_boundary_disk_cache else args.boundary_cache_dir
+        )
+    )
     results: Dict[str, RadialSimulationResult] = {}
     raw_by_name: Dict[str, np.ndarray] = {}
     summary = {}
@@ -628,6 +658,9 @@ def main() -> None:
             eta=args.eta,
             boundary_z_padding_extra=args.boundary_z_padding_extra,
             cache=cache,
+            trajectory_checkpoint_interval=(
+                args.trajectory_checkpoint_interval
+            ),
         )
         results[display] = result
         raw_by_name[display] = raw_vectors
@@ -646,6 +679,9 @@ def main() -> None:
             "eta": args.eta,
             "directions": [list(direction) for direction in directions],
             "boundary_z_padding_extra": args.boundary_z_padding_extra,
+            "trajectory_checkpoint_interval": (
+                args.trajectory_checkpoint_interval
+            ),
             "stop_reason": result.stop_reason,
             "gittins_stop_budget_fraction": result.gittins_stop_budget_fraction,
             "gittins_stop_evaluations": result.gittins_stop_evaluations,

@@ -179,11 +179,48 @@ can overshoot when the realized batch is more expensive; the result reports that
 overshoot. Supplying a defensible `--guaranteed-batch-cost` makes the dollar cap
 hard and validates the claimed bound against every replayed batch.
 
-Scalar Gittins needs `jax` / `jaxtyping` / `torch`. Radial-Gittins uses NumPy
-and SciPy. Its production path uses direction-aware 513-point grids and
-separable FFT convolution with exact Gaussian integration of the grid's linear
-basis; this prevents late, sub-grid posterior transitions from collapsing to
-zero learning.
+Scalar Gittins needs `jax` / `jaxtyping` / `torch`. Radial-Gittins always
+supports the NumPy/SciPy reference backend; install `.[radial-jax]` for its
+optional batched backend. Its production path uses direction-aware 513-point
+grids and separable FFT convolution with exact Gaussian integration of the
+grid's linear basis; this prevents late, sub-grid posterior transitions from
+collapsing to zero learning.
+
+The radial replay keeps exact per-arm indices and terminal utilities lazily:
+only the arm updated by the latest batch is invalidated. Boundary construction
+is also lazy by direction. On a direction's first visit, duplicate arm
+cost/horizon requests are removed and sufficiently large cold groups are
+vectorized in one JAX call; small groups and automatic failure recovery use
+SciPy. JAX carries only the current padded 2D value batch through
+`lax.scan`, retaining boundary rows rather than the full 2D history. Use
+`--boundary-build-backend {auto,jax,scipy}` and
+`--boundary-jax-min-batch-size` to control routing. Auto mode also keeps
+small one-off workloads on SciPy because CPU JIT compilation can dominate
+them; explicit `jax` bypasses that workload heuristic. These choices control
+only cold misses. A valid warm table is intentionally backend-neutral and is
+reused because the JAX and SciPy implementations solve the same discretized
+DP within the policy's numerical tolerance. For backend-isolated numerical
+experiments, use separate cache directories (and a positive stop tolerance).
+
+When the two objective variance/noise schedules are identical and the grids
+are exact reflections, objective-swap symmetry further reduces the nine
+defaults to five direction-specific batched solves for each shared
+cost/horizon family (the default symmetric reference and grids satisfy this
+condition). The offline CLI and trajectory plotting entry point persist the
+resulting compact boundary schedules under
+`combined_objective/results/cache_radial_gittins_boundaries/`, so later
+processes reuse them without storing the large 2D work arrays. Use
+`--no-boundary-disk-cache` for memory-only operation, `--boundary-cache-dir`
+for another location, or set `AGENTOPT_RADIAL_GITTINS_CACHE_DIR`. Cache keys
+include every explicit solver input plus schema and manually maintained solver
+versions; invalid or version-mismatched entries are ignored and rebuilt.
+The scope-comparison plot currently shares a memory cache within one process.
+Trajectory plotting records every tenth adaptive pull by default because a
+full Pareto/archive diagnostic at every pull can dominate warm-cache runtime;
+`--trajectory-checkpoint-interval 1` restores every-pull curves. Warm-start,
+the first Gittins stop, and final state are always recorded. Stopping and
+deployable archives still follow the completed-arms required-completion
+contract.
 
 ## Benchmarks
 

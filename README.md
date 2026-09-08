@@ -25,14 +25,15 @@ so 3.9 fails on import.
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e ".[dev]"   # core + radial-Gittins + plots + pytest
+.venv/bin/pip install -e ".[dev]"   # radial JAX/SciPy + plots + pytest
 .venv/bin/python -m pytest          # no PYTHONPATH needed
 ```
 
 `import agentopt` itself needs only `numpy` and `pydantic`. Heavier selector
 stacks are extras, matching the try/except guards in `agentopt.model_selection`:
-`radial` (scipy), `plots` (matplotlib), `gittins` (jax, jaxtyping, torch),
-`bayesian` (botorch, gpytorch), `dotenv`, and `all`.
+`radial` (scipy), `radial-jax` (scipy + jax batched boundary builds),
+`plots` (matplotlib), `gittins` (jax, jaxtyping, torch), `bayesian`
+(botorch, gpytorch), `dotenv`, and `all`.
 
 ## Quick access: per-combo metrics
 

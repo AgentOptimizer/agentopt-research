@@ -18,12 +18,24 @@ import argparse
 import csv
 import json
 import math
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Hashable,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
 import numpy as np
 
@@ -59,10 +71,16 @@ from agentopt.model_selection.radial_gittins import (
 )
 from agentopt.model_selection.radial_gittins_dp import (
     RadialGittinsBoundaryCache,
+    RadialGittinsBoundaryTable,
     RadialGittinsGrid,
     direction_aware_grid,
     radial_posterior_coordinates,
     terminal_expected_radial_utility,
+)
+from agentopt.model_selection.radial_gittins_prewarm import (
+    RadialGittinsPrewarmRequest,
+    RadialGittinsPrewarmStats,
+    prewarm_radial_gittins_boundaries,
 )
 
 
@@ -72,6 +90,66 @@ OFFLINE_PRODUCTION_BASE_GRID = RadialGittinsGrid(
     state_size=513,
     boundary_margin_cells=4,
 )
+
+
+DEFAULT_RADIAL_BOUNDARY_CACHE_DIR = Path(
+    os.environ.get(
+        "AGENTOPT_RADIAL_GITTINS_CACHE_DIR",
+        str(
+            Path(__file__).resolve().parent
+            / "results"
+            / "cache_radial_gittins_boundaries"
+        ),
+    )
+).expanduser()
+
+
+_BOUNDARY_CACHE_STAT_FIELDS = (
+    "builds",
+    "memory_hits",
+    "disk_hits",
+    "disk_misses",
+    "corruptions",
+    "read_failures",
+    "write_failures",
+)
+_BOUNDARY_PREWARM_STAT_FIELDS = tuple(
+    RadialGittinsPrewarmStats.__dataclass_fields__
+)
+# On CPU, XLA compilation dominates one-off small grids. This conservative
+# proxy routes the production 513-point, seven-cost/H=47 families to JAX while
+# keeping the common 129/257-point plotting grids on the faster SciPy cold path.
+# Explicit `boundary_build_backend="jax"` always overrides the heuristic.
+_AUTO_JAX_MIN_CELL_STAGES = 50_000_000
+
+
+def _boundary_cache_stats_snapshot(cache: Any) -> Optional[Dict[str, int]]:
+    """Read cache counters while remaining compatible with test doubles."""
+    snapshot_method = getattr(cache, "stats_snapshot", None)
+    if not callable(snapshot_method):
+        return None
+    snapshot = snapshot_method()
+    return {
+        name: int(getattr(snapshot, name))
+        for name in _BOUNDARY_CACHE_STAT_FIELDS
+    }
+
+
+def _boundary_cache_stats_delta(
+    before: Optional[Mapping[str, int]],
+    after: Optional[Mapping[str, int]],
+    *,
+    fallback_builds: int,
+) -> Dict[str, int]:
+    if before is None or after is None:
+        return {
+            name: (max(0, int(fallback_builds)) if name == "builds" else 0)
+            for name in _BOUNDARY_CACHE_STAT_FIELDS
+        }
+    return {
+        name: max(0, int(after[name]) - int(before[name]))
+        for name in _BOUNDARY_CACHE_STAT_FIELDS
+    }
 
 
 @dataclass(frozen=True)
@@ -236,6 +314,63 @@ class DirectionVisitContext:
 
 
 IndexProvider = Callable[[DirectionVisitContext, int], float]
+RadialTerminalUtilityProvider = Callable[[int, int], float]
+
+
+class _VersionedArmValueCache:
+    """Cache scalar arm values until that arm's posterior changes.
+
+    Every online radial index and terminal utility is a pure function of
+    immutable run settings plus one arm's posterior and adaptive-pull stage.
+    A physical pull changes exactly one arm, so a per-arm generation counter
+    gives precise lazy invalidation without clearing values for other arms or
+    eagerly recomputing every search task.
+    """
+
+    def __init__(self, n_arms: int) -> None:
+        self._versions = np.zeros(int(n_arms), dtype=np.int64)
+        self._values: Dict[
+            Hashable,
+            Dict[int, Tuple[int, float]],
+        ] = {}
+        self._hits = 0
+        self._misses = 0
+        self._invalidations = 0
+
+    def invalidate(self, arm_index: int) -> None:
+        """Mark every cached value for one arm stale in constant time."""
+        self._versions[int(arm_index)] += 1
+        self._invalidations += 1
+
+    def get_or_compute(
+        self,
+        namespace: Hashable,
+        arm_index: int,
+        compute: Callable[[int], float],
+    ) -> float:
+        """Return the current value, evaluating ``compute`` only on a miss."""
+        arm_index = int(arm_index)
+        version = int(self._versions[arm_index])
+        namespace_values = self._values.setdefault(namespace, {})
+        cached = namespace_values.get(arm_index)
+        if cached is not None and cached[0] == version:
+            self._hits += 1
+            return cached[1]
+        self._misses += 1
+        value = float(compute(arm_index))
+        namespace_values[arm_index] = (version, value)
+        return value
+
+    def stats_snapshot(self) -> Dict[str, int]:
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "invalidations": self._invalidations,
+            "namespaces": len(self._values),
+            "resident_values": sum(
+                len(values) for values in self._values.values()
+            ),
+        }
 
 
 @dataclass(frozen=True)
@@ -402,17 +537,24 @@ def evaluate_direction_status(
     unfinished_indices: Mapping[int, float],
     reference_point: Sequence[float],
     stop_tolerance: float,
+    completed_terminal_indices: Optional[Mapping[int, float]] = None,
 ) -> DirectionStatus:
     """Combine completed terminal values and unfinished Gittins indices."""
-    completed_indices = {
-        arm_index: terminal_expected_radial_utility(
-            posteriors[arm_index].mean,
-            posteriors[arm_index].var,
-            direction,
-            reference_point,
-        )
-        for arm_index in completed_arms
-    }
+    if completed_terminal_indices is None:
+        completed_indices = {
+            arm_index: terminal_expected_radial_utility(
+                posteriors[arm_index].mean,
+                posteriors[arm_index].var,
+                direction,
+                reference_point,
+            )
+            for arm_index in completed_arms
+        }
+    else:
+        completed_indices = {
+            arm_index: float(completed_terminal_indices[arm_index])
+            for arm_index in completed_arms
+        }
     best_completed_arm, best_completed = _best_index(
         completed_indices,
         stop_tolerance,
@@ -615,6 +757,9 @@ def provisional_direction_winner_arms(
     reference_point: Sequence[float],
     stop_tolerance: float,
     candidate_arms: Optional[Sequence[int]] = None,
+    terminal_utility_provider: Optional[
+        RadialTerminalUtilityProvider
+    ] = None,
 ) -> List[int]:
     """Return deduplicated direction winners over current posteriors.
 
@@ -629,16 +774,24 @@ def provisional_direction_winner_arms(
     if not arm_indices:
         return []
     winners: List[int] = []
-    for direction in directions:
-        utilities = {
-            arm_index: terminal_expected_radial_utility(
-                posteriors[arm_index].mean,
-                posteriors[arm_index].var,
-                direction,
-                reference_point,
-            )
-            for arm_index in arm_indices
-        }
+    for direction_index, direction in enumerate(directions):
+        if terminal_utility_provider is None:
+            utilities = {
+                arm_index: terminal_expected_radial_utility(
+                    posteriors[arm_index].mean,
+                    posteriors[arm_index].var,
+                    direction,
+                    reference_point,
+                )
+                for arm_index in arm_indices
+            }
+        else:
+            utilities = {
+                arm_index: float(
+                    terminal_utility_provider(direction_index, arm_index)
+                )
+                for arm_index in arm_indices
+            }
         winner_arm, _ = _best_index(utilities, stop_tolerance)
         if winner_arm is not None and winner_arm not in winners:
             winners.append(winner_arm)
@@ -701,6 +854,9 @@ def _checkpoint_archive(
     observed_scores: Mapping[int, Sequence[float]],
     observed_costs: Mapping[int, Sequence[float]],
     ground_truth_hv: float,
+    radial_terminal_utility_provider: Optional[
+        RadialTerminalUtilityProvider
+    ] = None,
 ) -> _CheckpointArchive:
     """Build one online archive for an explicit arm-eligibility scope."""
     eligible = tuple(int(i) for i in eligible_arms)
@@ -710,6 +866,7 @@ def _checkpoint_archive(
         reference_point=reference_point,
         stop_tolerance=stop_tolerance,
         candidate_arms=eligible,
+        terminal_utility_provider=radial_terminal_utility_provider,
     )
     posterior_points = np.asarray(
         [posteriors[i].mean for i in winner_arms],
@@ -800,6 +957,9 @@ def _recommendation_checkpoint(
     event: str,
     completed_arms: Sequence[int] = (),
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE,
+    radial_terminal_utility_provider: Optional[
+        RadialTerminalUtilityProvider
+    ] = None,
 ) -> RecommendationCheckpoint:
     if archive_scope not in ARCHIVE_SCOPES:
         raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
@@ -826,6 +986,7 @@ def _recommendation_checkpoint(
         observed_scores=observed_scores,
         observed_costs=observed_costs,
         ground_truth_hv=ground_truth_hv,
+        radial_terminal_utility_provider=radial_terminal_utility_provider,
     )
     return RecommendationCheckpoint(
         cumulative_evaluations=int(total_evaluations),
@@ -974,10 +1135,13 @@ def simulate_radial_gittins(
     run_metadata: Optional[Dict[str, Any]] = None,
     boundary_grid: Optional[RadialGittinsGrid] = None,
     boundary_cache: Optional[RadialGittinsBoundaryCache] = None,
+    boundary_build_backend: str = "auto",
+    boundary_jax_min_batch_size: int = 4,
     index_provider: Optional[IndexProvider] = None,
     question_universe: str = "common",
     halt_on_gittins_stop: bool = True,
     record_recommendation_trajectory: bool = False,
+    recommendation_checkpoint_interval: int = 1,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
 ) -> RadialSimulationResult:
@@ -1002,11 +1166,36 @@ def simulate_radial_gittins(
     replay. ``selector_name`` and ``extra_params`` then label the result so a
     baseline is not reported as radial-Gittins. Boundary tables are never built
     in that mode, so the DP grid and cache arguments are ignored.
+
+    When trajectory recording is enabled, ``recommendation_checkpoint_interval``
+    retains one ordinary checkpoint after every N adaptive pulls. Warm-start,
+    first Gittins-stop, and final checkpoints are always retained; this changes
+    diagnostic curve resolution only, never acquisition or stopping.
+
+    With a real :class:`RadialGittinsBoundaryCache`, table construction is
+    direction-lazy: the first visit to a direction deduplicates that direction's
+    unfinished-arm table requests and batches sufficiently large cold groups
+    through JAX. ``boundary_build_backend='auto'`` falls back to SciPy if JAX
+    is absent or fails; ``'jax'`` is strict, and ``'scipy'`` disables JAX.
+    Online indices remain exact per-arm lazy values after this cold prewarm.
     """
     wall_start = time.perf_counter()
     batch_size = _positive_integer(batch_size, "batch_size")
     horizon_bin_width = _positive_integer(horizon_bin_width, "horizon_bin_width")
     resolved_directions = _validate_directions(directions)
+    recommendation_checkpoint_interval = _positive_integer(
+        recommendation_checkpoint_interval,
+        "recommendation_checkpoint_interval",
+    )
+    boundary_build_backend = str(boundary_build_backend).lower()
+    if boundary_build_backend not in {"auto", "jax", "scipy"}:
+        raise ValueError(
+            "boundary_build_backend must be 'auto', 'jax', or 'scipy'"
+        )
+    boundary_jax_min_batch_size = _positive_integer(
+        boundary_jax_min_batch_size,
+        "boundary_jax_min_batch_size",
+    )
     if not models or len(set(models)) != len(models):
         raise ValueError("models must be nonempty and unique")
     if not datapoints or len(set(datapoints)) != len(datapoints):
@@ -1289,7 +1478,139 @@ def simulate_radial_gittins(
         if boundary_cache is not None
         else RadialGittinsBoundaryCache()
     )
+    optimized_boundary_cache = type(cache) is RadialGittinsBoundaryCache
+    if (
+        index_provider is None
+        and boundary_build_backend == "jax"
+        and not optimized_boundary_cache
+    ):
+        raise TypeError(
+            "boundary_build_backend='jax' requires a concrete "
+            "RadialGittinsBoundaryCache"
+        )
     cache_size_before = len(cache)
+    cache_stats_before = _boundary_cache_stats_snapshot(cache)
+    online_value_cache = _VersionedArmValueCache(n_arms)
+    direction_boundary_tables: Dict[
+        Tuple[float, float],
+        Dict[int, RadialGittinsBoundaryTable],
+    ] = {}
+    boundary_prewarm_stats = {
+        name: 0 for name in _BOUNDARY_PREWARM_STAT_FIELDS
+    }
+    auto_jax_disabled = False
+    auto_jax_workload_skips = 0
+
+    def _prewarm_direction_boundaries(
+        direction: Tuple[float, float],
+        unfinished_arms: Sequence[int],
+    ) -> None:
+        """Build one direction's unique cold tables, at most once per run."""
+        nonlocal auto_jax_disabled, auto_jax_workload_skips
+        if direction in direction_boundary_tables:
+            return
+        # Test doubles and third-party cache-like objects retain the historical
+        # scalar `get` protocol. The optimized adapter intentionally relies on
+        # the concrete cache's validated probe/publish machinery.
+        if not optimized_boundary_cache:
+            return
+
+        arm_indices = tuple(int(arm_index) for arm_index in unfinished_arms)
+        requests = tuple(
+            RadialGittinsPrewarmRequest(
+                direction=direction,
+                effective_pull_cost=float(effective_pull_costs[arm_index]),
+                initial_var=initial_var,
+                obs_noise_var=noise_var,
+                horizon=int(planning_horizons[arm_index]),
+                grid=grid_for_arm(direction, arm_index),
+            )
+            for arm_index in arm_indices
+        )
+        explicit_jax = boundary_build_backend == "jax"
+        unique_requests = tuple(dict.fromkeys(requests))
+        estimated_cell_stages = sum(
+            request.horizon * request.grid.state_size**2
+            for request in unique_requests
+        )
+        auto_workload_eligible = (
+            estimated_cell_stages >= _AUTO_JAX_MIN_CELL_STAGES
+        )
+        jax_available: bool | None
+        if (
+            boundary_build_backend == "scipy"
+            or auto_jax_disabled
+            or (
+                boundary_build_backend == "auto"
+                and not auto_workload_eligible
+            )
+        ):
+            jax_available = False
+        elif explicit_jax:
+            jax_available = True
+        else:
+            jax_available = None
+        result = prewarm_radial_gittins_boundaries(
+            requests,
+            cache=cache,
+            jax_min_batch_size=(
+                1 if explicit_jax else boundary_jax_min_batch_size
+            ),
+            jax_available=jax_available,
+            fallback_on_jax_error=boundary_build_backend == "auto",
+        )
+        if (
+            boundary_build_backend == "auto"
+            and not auto_jax_disabled
+            and not auto_workload_eligible
+            and result.stats.cold_misses
+        ):
+            auto_jax_workload_skips += 1
+        if (
+            boundary_build_backend == "auto"
+            and result.stats.jax_fallback_groups
+        ):
+            # A backend/import/device failure is normally persistent for this
+            # process. Avoid paying for the same failed JAX attempt on every
+            # later direction; SciPy remains exact and available.
+            auto_jax_disabled = True
+        direction_boundary_tables[direction] = dict(
+            zip(arm_indices, result.tables)
+        )
+        for name in _BOUNDARY_PREWARM_STAT_FIELDS:
+            boundary_prewarm_stats[name] += int(getattr(result.stats, name))
+
+    def _compute_radial_terminal_utility(
+        direction_index: int,
+        arm_index: int,
+    ) -> float:
+        direction = resolved_directions[int(direction_index)]
+        posterior = posteriors[int(arm_index)]
+        return terminal_expected_radial_utility(
+            posterior.mean,
+            posterior.var,
+            direction,
+            resolved_reference,
+        )
+
+    def _cached_radial_terminal_utility(
+        direction_index: int,
+        arm_index: int,
+    ) -> float:
+        direction_index = int(direction_index)
+
+        def compute(current_arm: int) -> float:
+            return _compute_radial_terminal_utility(
+                direction_index,
+                current_arm,
+            )
+
+        return online_value_cache.get_or_compute(
+            ("radial_terminal", direction_index),
+            arm_index,
+            compute,
+        )
+
     trace: List[Dict[str, Any]] = []
 
     for arm_index in range(n_arms):
@@ -1332,6 +1653,7 @@ def simulate_radial_gittins(
     gittins_stop_evaluations: Optional[int] = None
     gittins_stop_cost_usd: Optional[float] = None
     recommendation_trajectory: List[RecommendationCheckpoint] = []
+    adaptive_checkpoint_pulls = 0
     past_gittins_stop = False
 
     # Truth metrics are diagnostics for budget curves / final HV. Compute them
@@ -1355,6 +1677,12 @@ def simulate_radial_gittins(
 
     def _append_recommendation_checkpoint(event: str) -> None:
         if not record_recommendation_trajectory:
+            return
+        if (
+            event == "adaptive_pull"
+            and adaptive_checkpoint_pulls % recommendation_checkpoint_interval
+            != 0
+        ):
             return
         completed_at_checkpoint = tuple(
             i
@@ -1388,6 +1716,9 @@ def simulate_radial_gittins(
                 event=event,
                 completed_arms=completed_at_checkpoint,
                 archive_scope=archive_scope,
+                radial_terminal_utility_provider=(
+                    _cached_radial_terminal_utility
+                ),
             )
         )
 
@@ -1454,18 +1785,32 @@ def simulate_radial_gittins(
         visit_counts[direction_index] += 1
 
         unfinished_indices: Dict[int, float] = {}
-        for arm_index in unfinished:
-            if index_provider is not None:
-                index = float(index_provider(context, arm_index))
-            else:
-                table_for_arm = cache.get(
-                    direction=direction,
-                    effective_pull_cost=float(effective_pull_costs[arm_index]),
-                    initial_var=initial_var,
-                    obs_noise_var=noise_var,
-                    horizon=int(planning_horizons[arm_index]),
-                    grid=grid_for_arm(direction, arm_index),
+        if index_provider is not None:
+            # External providers may depend on global_step, visit_count,
+            # other arms, or any other live context field. They therefore
+            # remain intentionally uncached.
+            for arm_index in unfinished:
+                unfinished_indices[arm_index] = float(
+                    index_provider(context, arm_index)
                 )
+        else:
+            _prewarm_direction_boundaries(direction, unfinished)
+
+            def compute_radial_index(arm_index: int) -> float:
+                table_for_arm = direction_boundary_tables.get(
+                    direction, {}
+                ).get(arm_index)
+                if table_for_arm is None:
+                    table_for_arm = cache.get(
+                        direction=direction,
+                        effective_pull_cost=float(
+                            effective_pull_costs[arm_index]
+                        ),
+                        initial_var=initial_var,
+                        obs_noise_var=noise_var,
+                        horizon=int(planning_horizons[arm_index]),
+                        grid=grid_for_arm(direction, arm_index),
+                    )
                 u, delta, _ = radial_posterior_coordinates(
                     posteriors[arm_index].mean,
                     posteriors[arm_index].var,
@@ -1476,9 +1821,27 @@ def simulate_radial_gittins(
                     int(adaptive_pulls[arm_index]),
                     delta,
                 )
-                index = u - boundary
-            unfinished_indices[arm_index] = index
+                return u - boundary
 
+            unfinished_indices = {
+                arm_index: online_value_cache.get_or_compute(
+                    ("radial_index", direction_index),
+                    arm_index,
+                    compute_radial_index,
+                )
+                for arm_index in unfinished
+            }
+
+        # Keep the ordered arm scan in evaluate_direction_status. Its
+        # tolerance-aware tie rule is an ordered fold, so replacing it
+        # with a plain max-heap could change the selected arm.
+        completed_terminal_indices = {
+            arm_index: _cached_radial_terminal_utility(
+                direction_index,
+                arm_index,
+            )
+            for arm_index in completed
+        }
         status = evaluate_direction_status(
             direction=direction,
             posteriors=posteriors,
@@ -1486,6 +1849,7 @@ def simulate_radial_gittins(
             unfinished_indices=unfinished_indices,
             reference_point=resolved_reference,
             stop_tolerance=stop_tolerance,
+            completed_terminal_indices=completed_terminal_indices,
         )
         visit_event: Dict[str, Any] = {
             "event": "direction_visit",
@@ -1636,6 +2000,7 @@ def simulate_radial_gittins(
             batch_size=planned_batch_size,
         )
         adaptive_pulls[selected_arm] += 1
+        online_value_cache.invalidate(selected_arm)
         observed_scores[selected_arm].extend(batch_scores)
         observed_costs[selected_arm].extend(batch_costs)
         observed_latencies[selected_arm].extend(batch_latencies)
@@ -1666,6 +2031,7 @@ def simulate_radial_gittins(
         trace.append(visit_event)
         if history is not None:
             history.append(dict(visit_event))
+        adaptive_checkpoint_pulls += 1
         _append_recommendation_checkpoint("adaptive_pull")
         skipped_since_last_evaluation = 0
         global_step += 1
@@ -1675,15 +2041,13 @@ def simulate_radial_gittins(
         i for i in range(n_arms) if adaptive_pulls[i] >= actual_horizons[i]
     ]
     direction_winners: List[DirectionWinner] = []
-    for direction in resolved_directions:
+    for direction_index_final, direction in enumerate(resolved_directions):
         if not completed_final:
             break
         utilities = {
-            arm_index: terminal_expected_radial_utility(
-                posteriors[arm_index].mean,
-                posteriors[arm_index].var,
-                direction,
-                resolved_reference,
+            arm_index: _cached_radial_terminal_utility(
+                direction_index_final,
+                arm_index,
             )
             for arm_index in completed_final
         }
@@ -1822,6 +2186,33 @@ def simulate_radial_gittins(
         else 0.0
     )
 
+    cache_stats = _boundary_cache_stats_delta(
+        cache_stats_before,
+        _boundary_cache_stats_snapshot(cache),
+        fallback_builds=len(cache) - cache_size_before,
+    )
+    cache_dir = getattr(cache, "cache_dir", None)
+    cache_disk_read = bool(getattr(cache, "disk_read", False))
+    cache_disk_write = bool(getattr(cache, "disk_write", False))
+    if cache_disk_read and cache_disk_write:
+        boundary_cache_mode = "disk_read_write_and_memory"
+    elif cache_disk_read:
+        boundary_cache_mode = "disk_read_and_memory"
+    elif cache_disk_write:
+        boundary_cache_mode = "disk_write_and_memory"
+    else:
+        boundary_cache_mode = "memory"
+    online_cache_stats_method = getattr(
+        online_value_cache,
+        "stats_snapshot",
+        None,
+    )
+    online_cache_stats = (
+        online_cache_stats_method()
+        if callable(online_cache_stats_method)
+        else None
+    )
+
     params: Dict[str, Any] = {
         "batch_size": batch_size,
         "recommendation_space": "observed_raw_accuracy_mean_cost_usd",
@@ -1852,6 +2243,9 @@ def simulate_radial_gittins(
         "max_search_cost_usd": max_search_cost_usd,
         "halt_on_gittins_stop": halt_on_gittins_stop,
         "record_recommendation_trajectory": record_recommendation_trajectory,
+        "recommendation_checkpoint_interval": (
+            recommendation_checkpoint_interval
+        ),
         "horizon_bin_width": horizon_bin_width,
         "actual_horizons": actual_horizons.tolist(),
         "planning_horizons": planning_horizons.tolist(),
@@ -1870,6 +2264,58 @@ def simulate_radial_gittins(
             sum(schedule.remaining(i) for i in range(n_arms))
         ),
         "boundary_grid_mode": boundary_grid_mode,
+        "boundary_cache": {
+            "mode": boundary_cache_mode,
+            "directory": str(cache_dir) if cache_dir is not None else None,
+            "disk_read": cache_disk_read,
+            "disk_write": cache_disk_write,
+            "stats": dict(cache_stats),
+        },
+        "boundary_table_build": {
+            "mode": (
+                "disabled_external_index_provider"
+                if index_provider is not None
+                else (
+                    "direction_lazy_hybrid"
+                    if optimized_boundary_cache
+                    else "scalar_cache_protocol"
+                )
+            ),
+            "requested_backend": boundary_build_backend,
+            "backend_scope": (
+                "not_applicable"
+                if index_provider is not None
+                else (
+                    "cold_cache_misses"
+                    if optimized_boundary_cache
+                    else "external_cache_protocol"
+                )
+            ),
+            "cache_backend_policy": (
+                "not_applicable"
+                if index_provider is not None
+                else (
+                    "backend_neutral"
+                    if optimized_boundary_cache
+                    else "external_cache_defined"
+                )
+            ),
+            "jax_min_batch_size": boundary_jax_min_batch_size,
+            "effective_jax_min_batch_size": (
+                1
+                if boundary_build_backend == "jax"
+                else boundary_jax_min_batch_size
+            ),
+            "auto_jax_disabled_after_failure": auto_jax_disabled,
+            "auto_jax_min_cell_stages": _AUTO_JAX_MIN_CELL_STAGES,
+            "auto_jax_workload_skips": auto_jax_workload_skips,
+            "prewarmed_directions": len(direction_boundary_tables),
+            "stats": dict(boundary_prewarm_stats),
+        },
+        "online_index_cache": {
+            "mode": "per_arm_generation_lazy_invalidation",
+            "stats": online_cache_stats,
+        },
         "boundary_grids": [
             {
                 "direction": list(direction),
@@ -1957,7 +2403,13 @@ def simulate_radial_gittins(
                 "cost_budget_overshoot_usd": cost_budget_overshoot,
                 "cost_reference_usd": calibration.cost_reference_usd,
                 "prior_mean": calibration.prior_mean.tolist(),
-                "boundary_tables_built": len(cache) - cache_size_before,
+                "boundary_tables_built": cache_stats["builds"],
+                "boundary_tables_loaded_from_disk": cache_stats["disk_hits"],
+                "boundary_cache_memory_hits": cache_stats["memory_hits"],
+                "boundary_cache_disk_misses": cache_stats["disk_misses"],
+                "boundary_cache_corruptions": cache_stats["corruptions"],
+                "boundary_cache_read_failures": cache_stats["read_failures"],
+                "boundary_cache_write_failures": cache_stats["write_failures"],
                 "boundary_tables_cached_total": len(cache),
                 "policy_wall_time_seconds": policy_wall_time,
             }
@@ -2117,6 +2569,44 @@ def main() -> None:
             "direction-aware grids"
         ),
     )
+    parser.add_argument(
+        "--boundary-cache-dir",
+        type=Path,
+        default=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR,
+        help=(
+            "Persistent DP-boundary cache directory (default: %(default)s; "
+            "override with AGENTOPT_RADIAL_GITTINS_CACHE_DIR)"
+        ),
+    )
+    parser.add_argument(
+        "--no-boundary-disk-cache",
+        action="store_true",
+        help="Use only the in-process boundary cache",
+    )
+    parser.add_argument(
+        "--boundary-build-backend",
+        choices=("auto", "jax", "scipy"),
+        default="auto",
+        help=(
+            "Cold boundary-table builder: auto batches large miss groups with "
+            "JAX and falls back to SciPy (default: auto)"
+        ),
+    )
+    parser.add_argument(
+        "--boundary-jax-min-batch-size",
+        type=int,
+        default=4,
+        help="Minimum cold miss group routed to JAX in auto mode (default: 4)",
+    )
+    parser.add_argument(
+        "--trajectory-checkpoint-interval",
+        type=int,
+        default=1,
+        help=(
+            "Record an ordinary trajectory point every N adaptive pulls; "
+            "warm-start, stop, and final points are always kept (default: 1)"
+        ),
+    )
     parser.add_argument("--output", default=None, help="Optional JSON output path")
     args = parser.parse_args()
 
@@ -2144,7 +2634,11 @@ def main() -> None:
         else None
     )
     results: List[RadialSimulationResult] = []
-    cache = RadialGittinsBoundaryCache()
+    cache = RadialGittinsBoundaryCache(
+        cache_dir=(
+            None if args.no_boundary_disk_cache else args.boundary_cache_dir
+        )
+    )
     for offset in range(args.seeds):
         result = simulate_radial_gittins(
             models,
@@ -2161,7 +2655,12 @@ def main() -> None:
             seed=args.base_seed + offset,
             boundary_grid=grid,
             boundary_cache=cache,
+            boundary_build_backend=args.boundary_build_backend,
+            boundary_jax_min_batch_size=args.boundary_jax_min_batch_size,
             question_universe=("per_arm" if args.ragged_diagnostic else "common"),
+            recommendation_checkpoint_interval=(
+                args.trajectory_checkpoint_interval
+            ),
         )
         print_radial_result(result)
         results.append(result)

@@ -19,6 +19,8 @@ dependencies = [
 [project.optional-dependencies]
 # Accuracy-vs-cost radial Gittins (the main multi-objective protocol).
 radial = ["scipy>=1.10"]
+# Optional batched cold-start backend for radial Gittins.
+radial-jax = ["scipy>=1.10", "jax>=0.4"]
 # Scalar Gittins index computation.
 gittins = ["jax>=0.4", "jaxtyping>=0.2", "torch>=2"]
 # Bayesian optimization selector.
@@ -29,12 +31,12 @@ plots = ["matplotlib>=3.6"]
 dotenv = ["python-dotenv>=1.0"]
 
 dev = [
-    "agentopt-research[radial,plots]",
+    "agentopt-research[radial-jax,plots]",
     "pytest>=7.4",
 ]
 # Everything, including the multi-GB torch/jax stacks.
 all = [
-    "agentopt-research[radial,gittins,bayesian,plots,dotenv]",
+    "agentopt-research[radial-jax,gittins,bayesian,plots,dotenv]",
 ]
 
 [tool.setuptools]
