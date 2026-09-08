@@ -1,3 +1,4 @@
+import inspect
 import json
 import math
 import tempfile
@@ -357,6 +358,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
                 ),
                 halt_on_gittins_stop=False,
                 record_recommendation_trajectory=True,
+                recommendation_checkpoint_interval=1,
                 seed=1,
             )
 
@@ -417,6 +419,12 @@ class OfflineRoundRobinTests(unittest.TestCase):
         )
         self.assertEqual(downsampled.model_results, every_pull.model_results)
         self.assertEqual(downsampled.stop_reason, every_pull.stop_reason)
+
+    def test_trajectory_checkpoint_interval_defaults_to_ten(self):
+        parameter = inspect.signature(simulate_radial_gittins).parameters[
+            "recommendation_checkpoint_interval"
+        ]
+        self.assertEqual(parameter.default, 10)
 
     def test_incremental_cache_is_event_for_event_equivalent_to_no_reuse(self):
         models, datapoints, table = self._constant_problem()

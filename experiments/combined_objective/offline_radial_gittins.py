@@ -1141,7 +1141,7 @@ def simulate_radial_gittins(
     question_universe: str = "common",
     halt_on_gittins_stop: bool = True,
     record_recommendation_trajectory: bool = False,
-    recommendation_checkpoint_interval: int = 1,
+    recommendation_checkpoint_interval: int = 10,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
 ) -> RadialSimulationResult:
@@ -2601,10 +2601,10 @@ def main() -> None:
     parser.add_argument(
         "--trajectory-checkpoint-interval",
         type=int,
-        default=1,
+        default=10,
         help=(
             "Record an ordinary trajectory point every N adaptive pulls; "
-            "warm-start, stop, and final points are always kept (default: 1)"
+            "warm-start, stop, and final points are always kept (default: 10)"
         ),
     )
     parser.add_argument("--output", default=None, help="Optional JSON output path")
