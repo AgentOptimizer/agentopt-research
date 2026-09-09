@@ -40,6 +40,13 @@ DEFAULT_DIRECTIONS: Tuple[Tuple[float, float], ...] = (
     (0.9, 0.1),
 )
 
+# The anytime replay also searches the accuracy endpoint with its scalar DP.
+# Keep the interior-only set above for fixed runs and two-dimensional tables.
+DEFAULT_ANYTIME_DIRECTIONS: Tuple[Tuple[float, float], ...] = (
+    *DEFAULT_DIRECTIONS,
+    (1.0, 0.0),
+)
+
 
 def _two_vector(value: VectorLike, name: str, *, positive: bool) -> np.ndarray:
     """Return *value* as a validated two-element float vector."""
@@ -718,6 +725,7 @@ def expected_min_of_two_normals(
 
 
 __all__ = [
+    "DEFAULT_ANYTIME_DIRECTIONS",
     "DEFAULT_DIRECTIONS",
     "GaussianVectorPosterior",
     "ObjectiveNormalizer",
