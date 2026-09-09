@@ -42,10 +42,13 @@ committed accuracy / cost / token matrices extracted from these pickles; see
 
 Shared ablation: `data/gpqa_thinking_ablation.csv`.
 
-Selector outputs:
+Plotting scripts live in `combined_objective/plot/`. Generated figures go
+with other selector outputs under `combined_objective/results/` (gitignored):
 
 - `combined_objective/results/radial_gittins_plots/`
 - `combined_objective/results/anytime_radial_gittins/`
+- `combined_objective/results/qa_random_20seeds/`
+- `combined_objective/results/scope_random/`
 - `combined_objective/results/multiobjective/`
 - `single_objective/results/{gpqa,bfcl,hotpotqa,mathqa}/selector_results.csv`
 - `single_objective/results/matrix_ucb_budget_sweep.csv`
@@ -255,9 +258,13 @@ policy's terminal output.
 
 `combined_objective/plot/plot_multiobjective_random_search.py` plots the random-search
 budget sweep and `combined_objective/plot/plot_multiobjective_method_comparison.py`
-plots radial-Gittins against it. `combined_objective/audit_multiobjective_results.py`
+plots radial-Gittins against it. QA random contact sheets and the seed-42 Gittins
+versus 20-seed random comparison go to `combined_objective/results/qa_random_20seeds/`;
+SCOPE random contact sheets go to `combined_objective/results/scope_random/`.
+`combined_objective/audit_multiobjective_results.py`
 re-checks dominance, distance to the front, hypervolume, GD and IGD against the
-brute-force frontier.
+brute-force frontier. Raw CSV files, compressed caches, wall-time records, and
+Slurm logs for those jobs remain under `analysis/vs/`.
 
 Pareto-set identification baselines that are *not* radial index rules live in
 `combined_objective/offline_pareto_baselines.py`. They pull question batches

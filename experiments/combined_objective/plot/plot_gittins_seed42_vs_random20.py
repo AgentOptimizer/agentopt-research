@@ -71,7 +71,7 @@ def main() -> None:
         "--output", type=Path,
         default=(
             ROOT
-            / "experiments/combined_objective/plots/qa_random_20seeds"
+            / "experiments/combined_objective/results/qa_random_20seeds"
             / "gittins_seed42_vs_random20.png"
         ),
     )

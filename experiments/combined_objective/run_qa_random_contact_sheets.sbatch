@@ -21,7 +21,7 @@ start_seconds=$SECONDS
 MPLCONFIGDIR=/tmp/mpl-qa-random-${SLURM_JOB_ID} \
   .venv-plot/bin/python -u \
   experiments/combined_objective/plot/plot_multiobjective_random_search.py \
-  --outdir experiments/combined_objective/plots/qa_random_20seeds \
+  --outdir experiments/combined_objective/results/qa_random_20seeds \
   --benchmarks "$benchmark" --seed "$seed" \
   --contact-sheet-only --version "$version"
 

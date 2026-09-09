@@ -119,7 +119,7 @@ def main():
     parser.add_argument(
         "--outdir",
         type=Path,
-        default=ROOT / "experiments/combined_objective/plots/scope_random",
+        default=ROOT / "experiments/combined_objective/results/scope_random",
     )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
