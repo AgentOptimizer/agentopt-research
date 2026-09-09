@@ -64,12 +64,15 @@ load_pickle = _offline_sim.load_pickle
 load_scope = _offline_sim.load_scope
 
 from agentopt.model_selection.radial_gittins import (
+    DEFAULT_ANYTIME_DIRECTIONS,
     DEFAULT_DIRECTIONS,
     GaussianVectorPosterior,
     PerArmQuestionSchedule,
     fit_empirical_bayes_warm_start,
 )
+from agentopt.model_selection.axis_gittins_dp import AxisGittinsBoundaryCache
 from agentopt.model_selection.radial_gittins_dp import (
+    BoundaryGridError,
     RadialGittinsBoundaryCache,
     RadialGittinsBoundaryTable,
     RadialGittinsGrid,
@@ -121,6 +124,7 @@ _BOUNDARY_PREWARM_STAT_FIELDS = tuple(
 # keeping the common 129/257-point plotting grids on the faster SciPy cold path.
 # Explicit `boundary_build_backend="jax"` always overrides the heuristic.
 _AUTO_JAX_MIN_CELL_STAGES = 50_000_000
+_ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES = 4
 
 
 def _boundary_cache_stats_snapshot(cache: Any) -> Optional[Dict[str, int]]:
@@ -202,11 +206,16 @@ class RecommendationCheckpoint:
         recommendation, and is the scope recorded from the endogenous stop
         onward.
 
-    The scope switches at most once, so a trajectory is a provisional prefix
-    followed by a deployable suffix.  A run that finishes every arm without an
-    endogenous stop stays labelled provisional, where the two scopes coincide
-    because every arm is completed.  Full-data oracle fields are diagnostic
+    Fixed-lambda runs switch scope at most once, so a trajectory is a
+    provisional prefix followed by a deployable suffix. A run that finishes
+    every arm without an endogenous stop stays labelled provisional, where the
+    two scopes coincide because every arm is completed. Full-data oracle fields are diagnostic
     only and never affect acquisition, stopping, or the archive.
+
+    Anytime runs use the deployable scope throughout, including an empty
+    warm-start archive when no arm is completed. ``added_arm_indices`` records
+    new archive members since the previous recommendation, including a new
+    member that replaces an existing one without increasing cardinality.
 
     ``budget_fraction`` is the cost-aware share of brute-force search spend
     (``cumulative_search_cost_usd / bruteforce_search_cost_usd``), not the
@@ -234,6 +243,10 @@ class RecommendationCheckpoint:
     event: str
     completed_arm_indices: Tuple[int, ...] = ()
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE
+    current_lambda: float = 1.0
+    lambda_stage: int = 0
+    added_arm_indices: Tuple[int, ...] = ()
+    added_models: Tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.archive_scope not in ARCHIVE_SCOPES:
@@ -286,6 +299,11 @@ class RadialSimulationResult:
     online_raw_archive_models: List[str] = field(default_factory=list)
     oracle_raw_winner_archive_arm_indices: Tuple[int, ...] = ()
     oracle_raw_winner_archive_models: List[str] = field(default_factory=list)
+    current_lambda: float = 1.0
+    lambda_stage: int = 0
+    lambda_stop_events: List[Dict[str, Any]] = field(default_factory=list)
+    gittins_stop_triggered: bool = False
+    halted_by_gittins: bool = False
 
 
 @dataclass(frozen=True)
@@ -311,6 +329,8 @@ class DirectionVisitContext:
     )
     reference_point: Tuple[float, float] = (0.0, 0.0)
     effective_pull_costs: Tuple[float, ...] = ()
+    current_lambda: float = 1.0
+    lambda_stage: int = 0
 
 
 IndexProvider = Callable[[DirectionVisitContext, int], float]
@@ -341,6 +361,12 @@ class _VersionedArmValueCache:
         """Mark every cached value for one arm stale in constant time."""
         self._versions[int(arm_index)] += 1
         self._invalidations += 1
+
+    def clear_radial_indices(self) -> None:
+        """Drop lambda-dependent indices while keeping terminal utilities."""
+        for namespace in tuple(self._values):
+            if isinstance(namespace, tuple) and namespace[0] == "radial_index":
+                del self._values[namespace]
 
     def get_or_compute(
         self,
@@ -390,16 +416,66 @@ def _validate_directions(
         array = np.asarray(value, dtype=np.float64)
         if array.shape != (2,) or not np.all(np.isfinite(array)):
             raise ValueError("each direction must be a finite length-2 vector")
-        if np.any(array <= 0.0) or not math.isclose(
+        if np.any(array < 0.0) or not math.isclose(
             float(array.sum()), 1.0, rel_tol=1e-9, abs_tol=1e-9
         ):
-            raise ValueError("direction components must be positive and sum to one")
+            raise ValueError("direction components must be nonnegative and sum to one")
         resolved.append((float(array[0]), float(array[1])))
     if not resolved:
         raise ValueError("at least one direction is required")
     if len(set(resolved)) != len(resolved):
         raise ValueError("directions must be unique")
     return tuple(resolved)
+
+
+def _direction_axis(direction: Sequence[float]) -> Optional[int]:
+    """Identify an exact endpoint without approximating it by a narrow ray."""
+    if direction[1] == 0.0:
+        return 0
+    if direction[0] == 0.0:
+        return 1
+    return None
+
+
+def _cli_directions(
+    *,
+    anytime: bool,
+    extra_directions: Iterable[Sequence[float]] = (),
+) -> Tuple[Tuple[float, float], ...]:
+    """Append CLI directions once, including endpoints already in defaults."""
+    directions = list(DEFAULT_ANYTIME_DIRECTIONS if anytime else DEFAULT_DIRECTIONS)
+    for extra in extra_directions:
+        direction = _validate_directions((extra,))[0]
+        if direction not in directions:
+            directions.append(direction)
+    return tuple(directions)
+
+
+def terminal_expected_direction_utility(
+    mean: Sequence[float],
+    var: Sequence[float],
+    direction: Sequence[float],
+    reference: Sequence[float] = (0.0, 0.0),
+) -> float:
+    """Use one objective at an endpoint and radial utility in the interior.
+
+    The scalar endpoint intentionally ignores the inactive objective. Sending
+    zero direction components through radial scaling would divide by zero.
+    """
+    resolved = _validate_directions((direction,))[0]
+    axis = _direction_axis(resolved)
+    if axis is None:
+        return terminal_expected_radial_utility(mean, var, resolved, reference)
+    mean_array = np.asarray(mean, dtype=np.float64)
+    var_array = np.asarray(var, dtype=np.float64)
+    reference_array = np.asarray(reference, dtype=np.float64)
+    if any(array.shape != (2,) for array in (mean_array, var_array, reference_array)):
+        raise ValueError("mean, var, and reference must be length-2 vectors")
+    if not all(np.all(np.isfinite(array)) for array in (mean_array, var_array, reference_array)):
+        raise ValueError("mean, var, and reference must be finite")
+    if np.any(var_array <= 0.0):
+        raise ValueError("var components must be positive")
+    return float(mean_array[axis] - reference_array[axis])
 
 
 def _positive_integer(value: int, name: str) -> int:
@@ -529,6 +605,45 @@ def _best_index(indices: Mapping[int, float], tolerance: float) -> Tuple[Optiona
     return best_arm, best_value
 
 
+def _best_direction_index(
+    indices: Mapping[int, float],
+    tolerance: float,
+    *,
+    direction: Sequence[float],
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    endpoint_secondary_values: Optional[Mapping[int, float]] = None,
+) -> Tuple[Optional[int], float]:
+    """Break endpoint utility ties by the other observed objective.
+
+    The interior direction rule is unchanged. Standalone posterior-only
+    callers use the other posterior mean as their secondary objective;
+    replay archives supply observed accuracy or negative observed mean cost.
+    """
+    best_arm, best_value = _best_index(indices, tolerance)
+    axis = _direction_axis(direction)
+    if best_arm is None or axis is None:
+        return best_arm, best_value
+    # The tolerance-aware ordered fold above is intentionally retained for
+    # interior rays. An endpoint's secondary objective may select another
+    # arm, so anchor its tie set to the true maximum to avoid drifting more
+    # than one tolerance below the best active-objective value.
+    best_value = max(float(value) for value in indices.values())
+    tied = [
+        arm_index for arm_index, value in indices.items()
+        if abs(float(value) - best_value) <= tolerance
+    ]
+    best_arm = max(
+        tied,
+        key=lambda arm_index: (
+            float(endpoint_secondary_values[arm_index])
+            if endpoint_secondary_values is not None
+            else float(posteriors[arm_index].mean[1 - axis]),
+            -arm_index,
+        ),
+    )
+    return best_arm, float(indices[best_arm])
+
+
 def evaluate_direction_status(
     *,
     direction: Tuple[float, float],
@@ -538,11 +653,12 @@ def evaluate_direction_status(
     reference_point: Sequence[float],
     stop_tolerance: float,
     completed_terminal_indices: Optional[Mapping[int, float]] = None,
+    completed_tiebreak_values: Optional[Mapping[int, float]] = None,
 ) -> DirectionStatus:
     """Combine completed terminal values and unfinished Gittins indices."""
     if completed_terminal_indices is None:
         completed_indices = {
-            arm_index: terminal_expected_radial_utility(
+            arm_index: terminal_expected_direction_utility(
                 posteriors[arm_index].mean,
                 posteriors[arm_index].var,
                 direction,
@@ -555,9 +671,12 @@ def evaluate_direction_status(
             arm_index: float(completed_terminal_indices[arm_index])
             for arm_index in completed_arms
         }
-    best_completed_arm, best_completed = _best_index(
+    best_completed_arm, best_completed = _best_direction_index(
         completed_indices,
         stop_tolerance,
+        direction=direction,
+        posteriors=posteriors,
+        endpoint_secondary_values=completed_tiebreak_values,
     )
     best_unfinished_arm, best_unfinished = _best_index(
         unfinished_indices,
@@ -760,6 +879,9 @@ def provisional_direction_winner_arms(
     terminal_utility_provider: Optional[
         RadialTerminalUtilityProvider
     ] = None,
+    endpoint_tiebreak_provider: Optional[
+        RadialTerminalUtilityProvider
+    ] = None,
 ) -> List[int]:
     """Return deduplicated direction winners over current posteriors.
 
@@ -777,7 +899,7 @@ def provisional_direction_winner_arms(
     for direction_index, direction in enumerate(directions):
         if terminal_utility_provider is None:
             utilities = {
-                arm_index: terminal_expected_radial_utility(
+                arm_index: terminal_expected_direction_utility(
                     posteriors[arm_index].mean,
                     posteriors[arm_index].var,
                     direction,
@@ -792,7 +914,21 @@ def provisional_direction_winner_arms(
                 )
                 for arm_index in arm_indices
             }
-        winner_arm, _ = _best_index(utilities, stop_tolerance)
+        secondary_values = (
+            {
+                arm_index: float(endpoint_tiebreak_provider(direction_index, arm_index))
+                for arm_index in arm_indices
+            }
+            if endpoint_tiebreak_provider is not None and _direction_axis(direction) is not None
+            else None
+        )
+        winner_arm, _ = _best_direction_index(
+            utilities,
+            stop_tolerance,
+            direction=direction,
+            posteriors=posteriors,
+            endpoint_secondary_values=secondary_values,
+        )
         if winner_arm is not None and winner_arm not in winners:
             winners.append(winner_arm)
     if not winners:
@@ -867,6 +1003,11 @@ def _checkpoint_archive(
         stop_tolerance=stop_tolerance,
         candidate_arms=eligible,
         terminal_utility_provider=radial_terminal_utility_provider,
+        endpoint_tiebreak_provider=lambda direction_index, arm_index: (
+            -float(np.mean(observed_costs[arm_index]))
+            if _direction_axis(directions[direction_index]) == 0
+            else float(np.mean(observed_scores[arm_index]))
+        ),
     )
     posterior_points = np.asarray(
         [posteriors[i].mean for i in winner_arms],
@@ -957,6 +1098,8 @@ def _recommendation_checkpoint(
     event: str,
     completed_arms: Sequence[int] = (),
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE,
+    current_lambda: float = 1.0,
+    lambda_stage: int = 0,
     radial_terminal_utility_provider: Optional[
         RadialTerminalUtilityProvider
     ] = None,
@@ -1013,6 +1156,8 @@ def _recommendation_checkpoint(
         event=event,
         completed_arm_indices=completed,
         archive_scope=archive_scope,
+        current_lambda=current_lambda,
+        lambda_stage=lambda_stage,
     )
 
 
@@ -1110,7 +1255,7 @@ def simulate_radial_gittins(
     table: LookupTable,
     *,
     batch_size: int = 4,
-    directions: Iterable[Sequence[float]] = DEFAULT_DIRECTIONS,
+    directions: Optional[Iterable[Sequence[float]]] = None,
     prior_variance: Sequence[float] | float = 0.04,
     obs_noise_variance: Optional[Sequence[float] | float] = None,
     cost_reference_usd: Optional[float] = None,
@@ -1140,6 +1285,9 @@ def simulate_radial_gittins(
     index_provider: Optional[IndexProvider] = None,
     question_universe: str = "common",
     halt_on_gittins_stop: bool = True,
+    anytime: bool = False,
+    lambda_initial: float = 1.0,
+    lambda_decay: float = 0.5,
     record_recommendation_trajectory: bool = False,
     recommendation_checkpoint_interval: int = 10,
     selector_name: str = "radial_gittins",
@@ -1172,6 +1320,29 @@ def simulate_radial_gittins(
     first Gittins-stop, and final checkpoints are always retained; this changes
     diagnostic curve resolution only, never acquisition or stopping.
 
+    ``anytime=True`` starts at ``lambda_initial`` and multiplies lambda by
+    ``lambda_decay`` whenever every direction stops without an intervening
+    observation. Lambda multiplies ``search_cost_scale_eta`` in the frozen
+    expected pull penalty. Every stage keeps the same posteriors, calibration,
+    question schedules, and direction scheduler. The stop restarts acquisition
+    with fresh lambda-dependent boundaries instead of forcing a pull. The
+    ``halt_on_gittins_stop`` flag applies only to fixed-lambda runs.
+
+    If ``directions`` is omitted, anytime runs use the nine interior directions
+    plus the exact accuracy endpoint ``(1, 0)``; fixed-lambda runs use the nine
+    interior directions. An explicit direction sequence replaces the default.
+
+    Anytime trajectories always recommend only completed arms. Each archive
+    membership change and lambda stop is retained regardless of checkpoint
+    interval.
+    Runs finish at a budget, full completion, or a numerical lambda floor:
+    the largest remaining cumulative penalty is below stopping precision.
+    This floor is a numerical safeguard, not an exact zero-cost optimality
+    certificate, because index roots can be more sensitive than raw penalties.
+    Small-penalty boundary roots receive extra tail room; if a build still
+    raises ``BoundaryGridError``, anytime mode doubles that direction's padding
+    and retries up to four times. The resolved grids and expansions are recorded.
+
     With a real :class:`RadialGittinsBoundaryCache`, table construction is
     direction-lazy: the first visit to a direction deduplicates that direction's
     unfinished-arm table requests and batches sufficiently large cold groups
@@ -1182,7 +1353,10 @@ def simulate_radial_gittins(
     wall_start = time.perf_counter()
     batch_size = _positive_integer(batch_size, "batch_size")
     horizon_bin_width = _positive_integer(horizon_bin_width, "horizon_bin_width")
-    resolved_directions = _validate_directions(directions)
+    resolved_directions = _validate_directions(
+        (DEFAULT_ANYTIME_DIRECTIONS if anytime else DEFAULT_DIRECTIONS)
+        if directions is None else directions
+    )
     recommendation_checkpoint_interval = _positive_integer(
         recommendation_checkpoint_interval,
         "recommendation_checkpoint_interval",
@@ -1202,6 +1376,10 @@ def simulate_radial_gittins(
         raise ValueError("datapoints must be nonempty and unique")
     if not math.isfinite(search_cost_scale_eta) or search_cost_scale_eta <= 0.0:
         raise ValueError("search_cost_scale_eta must be finite and positive")
+    if not math.isfinite(lambda_initial) or lambda_initial <= 0.0:
+        raise ValueError("lambda_initial must be finite and positive")
+    if not math.isfinite(lambda_decay) or not 0.0 < lambda_decay < 1.0:
+        raise ValueError("lambda_decay must be finite and lie in (0, 1)")
     if (
         not math.isfinite(boundary_z_padding_extra)
         or boundary_z_padding_extra < 0.0
@@ -1373,12 +1551,27 @@ def simulate_radial_gittins(
                 f"${guaranteed_batch_costs[arm_index]:.6f}"
             )
 
-    raw_effective_pull_costs = search_cost_scale_eta * expected_batch_costs
-    effective_pull_costs = _quantize_effective_costs(
-        raw_effective_pull_costs,
+    current_lambda = float(lambda_initial) if anytime else 1.0
+    lambda_stage = 0
+    base_raw_effective_pull_costs = search_cost_scale_eta * expected_batch_costs
+    base_effective_pull_costs = _quantize_effective_costs(
+        base_raw_effective_pull_costs,
         anchor=effective_cost_bin_anchor,
         bin_ratio=effective_cost_bin_ratio,
     )
+    # Quantize once, then scale all bins with lambda. In particular, halving
+    # lambda halves every continuation penalty even with non-binary bins.
+    raw_effective_pull_costs = current_lambda * base_raw_effective_pull_costs
+    effective_pull_costs = current_lambda * base_effective_pull_costs
+    if (
+        not np.all(np.isfinite(raw_effective_pull_costs))
+        or not np.all(np.isfinite(effective_pull_costs))
+        or np.any(raw_effective_pull_costs <= 0.0)
+        or np.any(effective_pull_costs <= 0.0)
+    ):
+        raise ValueError(
+            "lambda-scaled effective pull costs must be finite and positive"
+        )
 
     # With the required-completion convention, an arm can need to pay its
     # pull cost at every remaining stage before becoming selectable.  The
@@ -1389,6 +1582,20 @@ def simulate_radial_gittins(
     resolved_boundary_grids: Dict[
         Tuple[Tuple[float, float], int, float], RadialGittinsGrid
     ] = {}
+    boundary_padding_overrides: Dict[
+        Tuple[Tuple[float, float], int, float], float
+    ] = {}
+    boundary_grid_expansions: List[Dict[str, Any]] = []
+
+    def padding_for_arm(arm_index: int) -> float:
+        return max(
+            2.0 if anytime else 1.0,
+            max(
+                1.0,
+                int(planning_horizons[arm_index])
+                * float(effective_pull_costs[arm_index]) + 1.0,
+            ) + boundary_z_padding_extra,
+        )
 
     def grid_for_arm(
         direction: Tuple[float, float],
@@ -1400,9 +1607,13 @@ def simulate_radial_gittins(
         existing = resolved_boundary_grids.get(key)
         if existing is not None:
             return existing
-        z_padding = (
-            max(1.0, horizon * effective_cost + 1.0)
-            + boundary_z_padding_extra
+        # Small penalties move roots into Gaussian tails. Anytime decay needs
+        # additional tail room even after H*c becomes negligible. Apply the
+        # minimum after the explicit padding so existing +1 low-cost runs
+        # retain their grid rather than receiving the same padding twice.
+        z_padding = max(
+            padding_for_arm(arm_index),
+            boundary_padding_overrides.get(key, 0.0),
         )
         direction_array = np.asarray(direction, dtype=np.float64)
         factors = float(np.max(direction_array)) / direction_array
@@ -1444,6 +1655,49 @@ def simulate_radial_gittins(
         )
         resolved_boundary_grids[key] = resolved
         return resolved
+
+    def _build_with_boundary_retries(
+        direction: Tuple[float, float],
+        arm_indices: Sequence[int],
+        build: Callable[[], Any],
+    ) -> Any:
+        """Widen failed anytime root-search bands, with an explicit retry bound."""
+        for attempt in range(_ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES + 1):
+            try:
+                return build()
+            except BoundaryGridError as error:
+                if not anytime or attempt == _ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES:
+                    raise
+                keys_seen = set()
+                for arm_index in arm_indices:
+                    key = (
+                        direction,
+                        int(planning_horizons[arm_index]),
+                        float(effective_pull_costs[arm_index]),
+                    )
+                    if key in keys_seen:
+                        continue
+                    keys_seen.add(key)
+                    previous_padding = max(
+                        padding_for_arm(arm_index),
+                        boundary_padding_overrides.get(key, 0.0),
+                    )
+                    new_padding = 2.0 * previous_padding
+                    boundary_padding_overrides[key] = new_padding
+                    resolved_boundary_grids.pop(key, None)
+                    boundary_grid_expansions.append({
+                        "current_lambda": current_lambda,
+                        "lambda_stage": lambda_stage,
+                        "direction": list(direction),
+                        "horizon": key[1],
+                        "effective_pull_cost": key[2],
+                        "previous_z_padding": previous_padding,
+                        "new_z_padding": new_padding,
+                        "build_retry": attempt + 1,
+                        "reason": str(error),
+                    })
+        raise AssertionError("unreachable boundary retry state")
+
     reservation_costs = (
         guaranteed_batch_costs
         if guaranteed_batch_costs is not None
@@ -1490,6 +1744,7 @@ def simulate_radial_gittins(
         )
     cache_size_before = len(cache)
     cache_stats_before = _boundary_cache_stats_snapshot(cache)
+    axis_cache = AxisGittinsBoundaryCache()
     online_value_cache = _VersionedArmValueCache(n_arms)
     direction_boundary_tables: Dict[
         Tuple[float, float],
@@ -1505,8 +1760,10 @@ def simulate_radial_gittins(
         direction: Tuple[float, float],
         unfinished_arms: Sequence[int],
     ) -> None:
-        """Build one direction's unique cold tables, at most once per run."""
+        """Build one direction's unique cold tables once per lambda stage."""
         nonlocal auto_jax_disabled, auto_jax_workload_skips
+        if _direction_axis(direction) is not None:
+            return
         if direction in direction_boundary_tables:
             return
         # Test doubles and third-party cache-like objects retain the historical
@@ -1550,14 +1807,21 @@ def simulate_radial_gittins(
             jax_available = True
         else:
             jax_available = None
-        result = prewarm_radial_gittins_boundaries(
-            requests,
-            cache=cache,
-            jax_min_batch_size=(
-                1 if explicit_jax else boundary_jax_min_batch_size
+        result = _build_with_boundary_retries(
+            direction,
+            arm_indices,
+            lambda: prewarm_radial_gittins_boundaries(
+                tuple(
+                    replace(request, grid=grid_for_arm(direction, arm_index))
+                    for request, arm_index in zip(requests, arm_indices)
+                ),
+                cache=cache,
+                jax_min_batch_size=(
+                    1 if explicit_jax else boundary_jax_min_batch_size
+                ),
+                jax_available=jax_available,
+                fallback_on_jax_error=boundary_build_backend == "auto",
             ),
-            jax_available=jax_available,
-            fallback_on_jax_error=boundary_build_backend == "auto",
         )
         if (
             boundary_build_backend == "auto"
@@ -1586,7 +1850,7 @@ def simulate_radial_gittins(
     ) -> float:
         direction = resolved_directions[int(direction_index)]
         posterior = posteriors[int(arm_index)]
-        return terminal_expected_radial_utility(
+        return terminal_expected_direction_utility(
             posterior.mean,
             posterior.var,
             direction,
@@ -1611,12 +1875,19 @@ def simulate_radial_gittins(
             compute,
         )
 
+    def _observed_endpoint_tiebreak(direction: Sequence[float], arm_index: int) -> float:
+        if _direction_axis(direction) == 0:
+            return -float(np.mean(observed_costs[arm_index]))
+        return float(np.mean(observed_scores[arm_index]))
+
     trace: List[Dict[str, Any]] = []
 
     for arm_index in range(n_arms):
         trace.append(
             {
                 "event": "warm_start",
+                "current_lambda": current_lambda,
+                "lambda_stage": lambda_stage,
                 "arm_index": arm_index,
                 "model_name": models[arm_index],
                 "question_ids": list(warm_batches[arm_index]),
@@ -1655,6 +1926,10 @@ def simulate_radial_gittins(
     recommendation_trajectory: List[RecommendationCheckpoint] = []
     adaptive_checkpoint_pulls = 0
     past_gittins_stop = False
+    lambda_stop_events: List[Dict[str, Any]] = []
+    lambda_numerical_threshold: Optional[float] = None
+    last_deployable_archive: set[int] = set()
+    stopping_index_scale = 1.0
 
     # Truth metrics are diagnostics for budget curves / final HV. Compute them
     # before the adaptive loop so trajectory checkpoints can reuse the vectors
@@ -1675,52 +1950,73 @@ def simulate_radial_gittins(
     ground_truth_hv = hypervolume_2d(truth_front, resolved_reference)
     wall_start += time.perf_counter() - truth_metric_start
 
-    def _append_recommendation_checkpoint(event: str) -> None:
+    def _append_recommendation_checkpoint(
+        event: str,
+        *,
+        completed_arm_changed: bool = False,
+    ) -> None:
+        nonlocal last_deployable_archive
         if not record_recommendation_trajectory:
             return
-        if (
+        ordinary_checkpoint_due = not (
             event == "adaptive_pull"
             and adaptive_checkpoint_pulls % recommendation_checkpoint_interval
             != 0
-        ):
+        )
+        if not ordinary_checkpoint_due and not (anytime and completed_arm_changed):
             return
         completed_at_checkpoint = tuple(
             i
             for i in range(n_arms)
             if adaptive_pulls[i] >= actual_horizons[i]
         )
-        # Nothing is deployable until the policy declares itself done: before
-        # the endogenous stop the required-completion contract cannot produce a
-        # recommendation, so the checkpoint records the all-posterior
-        # diagnostic instead of an empty archive.
+        # Fixed-lambda trajectories keep their historical provisional prefix.
+        # Anytime recommendations are available after any arm completes.
         archive_scope = (
             DEPLOYABLE_ARCHIVE_SCOPE
-            if gittins_stop_evaluations is not None
+            if anytime or gittins_stop_evaluations is not None
             else PROVISIONAL_ARCHIVE_SCOPE
         )
-        recommendation_trajectory.append(
-            _recommendation_checkpoint(
-                posteriors=posteriors,
-                directions=resolved_directions,
-                models=models,
-                reference_point=resolved_reference,
-                stop_tolerance=stop_tolerance,
-                truth_vectors=truth_vectors,
-                raw_truth_vectors=raw_truth_vectors,
-                observed_scores=observed_scores,
-                observed_costs=observed_costs,
-                ground_truth_hv=ground_truth_hv,
-                total_evaluations=total_evaluations,
-                total_cost=total_cost,
-                bruteforce_search_cost_usd=bruteforce_search_cost_usd,
-                event=event,
-                completed_arms=completed_at_checkpoint,
-                archive_scope=archive_scope,
-                radial_terminal_utility_provider=(
-                    _cached_radial_terminal_utility
-                ),
-            )
+        checkpoint = _recommendation_checkpoint(
+            posteriors=posteriors,
+            directions=resolved_directions,
+            models=models,
+            reference_point=resolved_reference,
+            stop_tolerance=stop_tolerance,
+            truth_vectors=truth_vectors,
+            raw_truth_vectors=raw_truth_vectors,
+            observed_scores=observed_scores,
+            observed_costs=observed_costs,
+            ground_truth_hv=ground_truth_hv,
+            total_evaluations=total_evaluations,
+            total_cost=total_cost,
+            bruteforce_search_cost_usd=bruteforce_search_cost_usd,
+            event=event,
+            completed_arms=completed_at_checkpoint,
+            archive_scope=archive_scope,
+            current_lambda=current_lambda,
+            lambda_stage=lambda_stage,
+            radial_terminal_utility_provider=_cached_radial_terminal_utility,
         )
+        if anytime:
+            archive_members = set(checkpoint.selected_arm_indices)
+            membership_changed = archive_members != last_deployable_archive
+            added = tuple(sorted(archive_members - last_deployable_archive))
+            last_deployable_archive = archive_members
+            if added:
+                checkpoint = replace(
+                    checkpoint,
+                    event=(
+                        "recommendation_added" if event == "adaptive_pull" else event
+                    ),
+                    added_arm_indices=added,
+                    added_models=tuple(models[i] for i in added),
+                )
+            elif membership_changed and event == "adaptive_pull":
+                checkpoint = replace(checkpoint, event="recommendation_changed")
+            if not ordinary_checkpoint_due and not membership_changed:
+                return
+        recommendation_trajectory.append(checkpoint)
 
     _append_recommendation_checkpoint("after_warm_start")
 
@@ -1740,6 +2036,8 @@ def simulate_radial_gittins(
             trace.append(
                 {
                     "event": "budget_stop",
+                    "current_lambda": current_lambda,
+                    "lambda_stage": lambda_stage,
                     "reason": "question_budget",
                     "cumulative_evaluations": total_evaluations,
                     "cumulative_search_cost_usd": total_cost,
@@ -1754,6 +2052,8 @@ def simulate_radial_gittins(
             trace.append(
                 {
                     "event": "budget_stop",
+                    "current_lambda": current_lambda,
+                    "lambda_stage": lambda_stage,
                     "reason": "search_cost_budget",
                     "cost_budget_guard": cost_budget_guard,
                     "cost_budget_overshoot_usd": max(
@@ -1781,6 +2081,8 @@ def simulate_radial_gittins(
             effective_pull_costs=tuple(
                 float(x) for x in effective_pull_costs
             ),
+            current_lambda=current_lambda,
+            lambda_stage=lambda_stage,
         )
         visit_counts[direction_index] += 1
 
@@ -1797,19 +2099,41 @@ def simulate_radial_gittins(
             _prewarm_direction_boundaries(direction, unfinished)
 
             def compute_radial_index(arm_index: int) -> float:
+                axis = _direction_axis(direction)
+                if axis is not None:
+                    # Endpoints use a scalar required-completion problem.
+                    # Its table depends only on the active variance/noise,
+                    # horizon, resolution and lambda-scaled cost; the inactive
+                    # coordinate never enters acquisition or its grid.
+                    axis_table = axis_cache.get(
+                        effective_pull_cost=float(effective_pull_costs[arm_index]),
+                        initial_var=float(initial_var[axis]),
+                        obs_noise_var=float(noise_var[axis]),
+                        horizon=int(planning_horizons[arm_index]),
+                        grid_size=base_boundary_grid.state_size,
+                    )
+                    return axis_table.index(
+                        int(adaptive_pulls[arm_index]),
+                        float(posteriors[arm_index].mean[axis]),
+                        reference=float(resolved_reference[axis]),
+                    )
                 table_for_arm = direction_boundary_tables.get(
                     direction, {}
                 ).get(arm_index)
                 if table_for_arm is None:
-                    table_for_arm = cache.get(
-                        direction=direction,
-                        effective_pull_cost=float(
-                            effective_pull_costs[arm_index]
+                    table_for_arm = _build_with_boundary_retries(
+                        direction,
+                        (arm_index,),
+                        lambda: cache.get(
+                            direction=direction,
+                            effective_pull_cost=float(
+                                effective_pull_costs[arm_index]
+                            ),
+                            initial_var=initial_var,
+                            obs_noise_var=noise_var,
+                            horizon=int(planning_horizons[arm_index]),
+                            grid=grid_for_arm(direction, arm_index),
                         ),
-                        initial_var=initial_var,
-                        obs_noise_var=noise_var,
-                        horizon=int(planning_horizons[arm_index]),
-                        grid=grid_for_arm(direction, arm_index),
                     )
                 u, delta, _ = radial_posterior_coordinates(
                     posteriors[arm_index].mean,
@@ -1850,9 +2174,18 @@ def simulate_radial_gittins(
             reference_point=resolved_reference,
             stop_tolerance=stop_tolerance,
             completed_terminal_indices=completed_terminal_indices,
+            completed_tiebreak_values=(
+                {
+                    arm_index: _observed_endpoint_tiebreak(direction, arm_index)
+                    for arm_index in completed
+                }
+                if _direction_axis(direction) is not None else None
+            ),
         )
         visit_event: Dict[str, Any] = {
             "event": "direction_visit",
+            "current_lambda": current_lambda,
+            "lambda_stage": lambda_stage,
             "global_step": global_step,
             "direction_index": direction_index,
             "direction": list(direction),
@@ -1885,11 +2218,85 @@ def simulate_radial_gittins(
 
         if status.should_stop and not past_gittins_stop:
             skipped_since_last_evaluation += 1
+            stopping_index_scale = max(
+                stopping_index_scale,
+                abs(status.best_completed_index),
+                abs(status.best_unfinished_index),
+            )
             if skipped_since_last_evaluation == len(resolved_directions):
                 if gittins_stop_evaluations is None:
                     gittins_stop_evaluations = int(total_evaluations)
                     gittins_stop_cost_usd = float(total_cost)
-                    _append_recommendation_checkpoint("gittins_stop")
+                    if not anytime:
+                        _append_recommendation_checkpoint("gittins_stop")
+                if anytime:
+                    # A complete no-observation sweep certifies this lambda
+                    # stage's stop. Recompute every direction after decay;
+                    # none of the old skip decisions is valid at a new cost.
+                    trace.append(visit_event)
+                    global_step += 1
+                    remaining_penalty = max(
+                        float(planning_horizons[i] - adaptive_pulls[i])
+                        * float(effective_pull_costs[i])
+                        for i in unfinished
+                    )
+                    lambda_numerical_threshold = max(
+                        stop_tolerance,
+                        float(np.finfo(np.float64).eps) * stopping_index_scale,
+                    )
+                    next_lambda = current_lambda * lambda_decay
+                    next_raw_costs = next_lambda * base_raw_effective_pull_costs
+                    next_effective_costs = next_lambda * base_effective_pull_costs
+                    halt_reason: Optional[str] = None
+                    if remaining_penalty <= lambda_numerical_threshold:
+                        halt_reason = "lambda_numerical_floor"
+                    elif (
+                        not 0.0 < next_lambda < current_lambda
+                        or np.any(next_raw_costs <= 0.0)
+                        or np.any(next_effective_costs <= 0.0)
+                    ):
+                        halt_reason = "lambda_underflow"
+                    previous_stop = (
+                        lambda_stop_events[-1] if lambda_stop_events else None
+                    )
+                    same_observations = (
+                        previous_stop is not None
+                        and previous_stop["cumulative_evaluations"] == total_evaluations
+                    )
+                    lambda_stop_event = {
+                        "event": "lambda_stop",
+                        "global_step": global_step,
+                        "current_lambda": current_lambda,
+                        "lambda_stage": lambda_stage,
+                        "next_lambda": next_lambda if halt_reason is None else None,
+                        "continued": halt_reason is None,
+                        "halt_reason": halt_reason,
+                        "cumulative_evaluations": int(total_evaluations),
+                        "cumulative_search_cost_usd": float(total_cost),
+                        "budget_fraction": total_cost / bruteforce_search_cost_usd,
+                        "max_remaining_effective_penalty": remaining_penalty,
+                        "numerical_penalty_threshold": lambda_numerical_threshold,
+                        "consecutive_stops_without_evaluation": (
+                            int(previous_stop["consecutive_stops_without_evaluation"]) + 1
+                            if same_observations else 0
+                        ),
+                    }
+                    lambda_stop_events.append(lambda_stop_event)
+                    trace.append(dict(lambda_stop_event))
+                    _append_recommendation_checkpoint("lambda_stop")
+                    if halt_reason is not None:
+                        stop_reason = halt_reason
+                        break
+                    current_lambda = next_lambda
+                    lambda_stage += 1
+                    raw_effective_pull_costs = next_raw_costs
+                    effective_pull_costs = next_effective_costs
+                    direction_boundary_tables.clear()
+                    online_value_cache.clear_radial_indices()
+                    skipped_since_last_evaluation = 0
+                    stopping_index_scale = 1.0
+                    direction_index = (direction_index + 1) % len(resolved_directions)
+                    continue
                 if halt_on_gittins_stop:
                     trace.append(visit_event)
                     global_step += 1
@@ -2032,8 +2439,14 @@ def simulate_radial_gittins(
         if history is not None:
             history.append(dict(visit_event))
         adaptive_checkpoint_pulls += 1
-        _append_recommendation_checkpoint("adaptive_pull")
+        _append_recommendation_checkpoint(
+            "adaptive_pull",
+            completed_arm_changed=(
+                adaptive_pulls[selected_arm] >= actual_horizons[selected_arm]
+            ),
+        )
         skipped_since_last_evaluation = 0
+        stopping_index_scale = 1.0
         global_step += 1
         direction_index = (direction_index + 1) % len(resolved_directions)
 
@@ -2051,7 +2464,19 @@ def simulate_radial_gittins(
             )
             for arm_index in completed_final
         }
-        winner_arm, utility = _best_index(utilities, stop_tolerance)
+        winner_arm, utility = _best_direction_index(
+            utilities,
+            stop_tolerance,
+            direction=direction,
+            posteriors=posteriors,
+            endpoint_secondary_values=(
+                {
+                    arm_index: _observed_endpoint_tiebreak(direction, arm_index)
+                    for arm_index in completed_final
+                }
+                if _direction_axis(direction) is not None else None
+            ),
+        )
         assert winner_arm is not None
         direction_winners.append(
             DirectionWinner(
@@ -2156,6 +2581,13 @@ def simulate_radial_gittins(
         "all_directions_gittins_stop",
         "all_arms_completed",
     }
+    # Preserve the historical stopped_by_gittins diagnostic, which also counts
+    # earlier stops in fixed-budget force-continuation runs. These explicit
+    # fields distinguish a stage trigger from the reason this run actually ends.
+    gittins_stop_triggered = gittins_stop_evaluations is not None
+    halted_by_gittins = stop_reason in {
+        "all_directions_gittins_stop", "lambda_numerical_floor", "lambda_underflow"
+    }
     gittins_stop_budget_fraction = (
         float(gittins_stop_cost_usd) / float(bruteforce_search_cost_usd)
         if gittins_stop_cost_usd is not None
@@ -2219,12 +2651,46 @@ def simulate_radial_gittins(
         "posterior_archive_space": "normalized_posterior_mean_desirability",
         "oracle_raw_winner_archive_is_diagnostic": True,
         "directions": [list(x) for x in resolved_directions],
+        "endpoint_direction_policy": {
+            "directions": [
+                list(direction) for direction in resolved_directions
+                if _direction_axis(direction) is not None
+            ],
+            "terminal_utility": "active_posterior_mean_minus_reference",
+            "index": "scalar_gaussian_required_completion_gittins",
+            "tie_break": "other_observed_objective_then_arm_index",
+            "grid_size": base_boundary_grid.state_size,
+            "cache": "memory_keyed_by_cost_variance_noise_horizon_resolution",
+            "cache_stats": axis_cache.stats_snapshot(),
+        },
         "prior_variance": calibration.prior_var.tolist(),
         "obs_noise_variance": calibration.warm_obs_noise_var.tolist(),
         "cost_reference_usd": calibration.cost_reference_usd,
         "reference_point": list(resolved_reference),
         "search_cost_scale_eta": search_cost_scale_eta,
+        "anytime": anytime,
+        "lambda_initial": float(lambda_initial) if anytime else 1.0,
+        "lambda_decay": float(lambda_decay) if anytime else None,
+        "lambda_final": current_lambda,
+        "lambda_stage_count": lambda_stage + 1,
+        "lambda_stop_count": len(lambda_stop_events),
+        "lambda_cost_quantization": "quantize_eta_cost_then_multiply_lambda",
+        "lambda_numerical_floor_policy": (
+            "max_remaining_planning_penalty_at_stopping_precision"
+            if anytime else None
+        ),
+        "lambda_numerical_penalty_threshold": lambda_numerical_threshold,
+        "gittins_stop_action": (
+            "decay_lambda" if anytime else (
+                "halt" if halt_on_gittins_stop else "force_continuation"
+            )
+        ),
         "boundary_z_padding_extra": boundary_z_padding_extra,
+        "boundary_minimum_z_padding": 2.0 if anytime else 1.0,
+        "boundary_grid_expansions": boundary_grid_expansions,
+        "boundary_max_widening_retries": (
+            _ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES if anytime else 0
+        ),
         "expected_batch_costs_usd": expected_batch_costs.tolist(),
         "guaranteed_batch_costs_usd": (
             guaranteed_batch_costs.tolist()
@@ -2342,7 +2808,11 @@ def simulate_radial_gittins(
             )
         params.update(dict(extra_params))
     result = RadialSimulationResult(
-        selector=str(selector_name),
+        selector=(
+            "radial_gittins_anytime"
+            if anytime and selector_name == "radial_gittins"
+            else str(selector_name)
+        ),
         seed=seed,
         params=params,
         selected_models=selected_models,
@@ -2374,6 +2844,11 @@ def simulate_radial_gittins(
         gittins_stop_evaluations=gittins_stop_evaluations,
         gittins_stop_cost_usd=gittins_stop_cost_usd,
         gittins_stop_budget_fraction=gittins_stop_budget_fraction,
+        current_lambda=current_lambda,
+        lambda_stage=lambda_stage,
+        lambda_stop_events=lambda_stop_events,
+        gittins_stop_triggered=gittins_stop_triggered,
+        halted_by_gittins=halted_by_gittins,
         truth_vectors=truth_vectors,
         raw_truth_vectors=raw_truth_vectors,
         posterior_archive_arm_indices=tuple(posterior_archive_arms),
@@ -2390,6 +2865,12 @@ def simulate_radial_gittins(
             {
                 "stop_reason": stop_reason,
                 "stopped_by_gittins": stopped_by_gittins,
+                "anytime": anytime,
+                "current_lambda": current_lambda,
+                "lambda_stage": lambda_stage,
+                "lambda_stop_count": len(lambda_stop_events),
+                "gittins_stop_triggered": gittins_stop_triggered,
+                "halted_by_gittins": halted_by_gittins,
                 "selected_models": list(selected_models),
                 "posterior_archive_models": [
                     models[i] for i in posterior_archive_arms
@@ -2552,6 +3033,39 @@ def main() -> None:
         help="Optional per-batch upper bound in USD, shared by every arm",
     )
     parser.add_argument("--eta", type=float, default=1.0)
+    parser.add_argument(
+        "--extra-direction",
+        type=float,
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("ACCURACY", "COST_DESIRABILITY"),
+        help=(
+            "Append a simplex direction once; defaults are nine interior "
+            "directions, plus (1, 0) with --anytime"
+        ),
+    )
+    parser.add_argument(
+        "--anytime",
+        action="store_true",
+        help=(
+            "Use ten directions including (1, 0), decay lambda at each global "
+            "Gittins stop, and continue within the budget"
+        ),
+    )
+    parser.add_argument(
+        "--lambda-initial", type=float, default=1.0,
+        help="Initial continuation-cost multiplier in anytime mode (default: 1.0)",
+    )
+    parser.add_argument(
+        "--lambda-decay", type=float, default=0.5,
+        help="Multiplier after each anytime stopping trigger (default: 0.5)",
+    )
+    parser.add_argument(
+        "--record-trajectory",
+        action="store_true",
+        help="Record recommendation checkpoints (always enabled with --anytime)",
+    )
     parser.add_argument("--effective-cost-bin-ratio", type=float, default=2.0)
     parser.add_argument("--effective-cost-bin-anchor", type=float, default=1e-4)
     parser.add_argument(
@@ -2645,10 +3159,17 @@ def main() -> None:
             datapoints,
             table,
             batch_size=args.batch_size,
+            directions=_cli_directions(
+                anytime=args.anytime, extra_directions=args.extra_direction
+            ),
             observation_budget_fraction=args.budget_fraction,
             max_search_cost_usd=args.max_search_cost,
             guaranteed_batch_cost_usd=args.guaranteed_batch_cost,
             search_cost_scale_eta=args.eta,
+            anytime=args.anytime,
+            lambda_initial=args.lambda_initial,
+            lambda_decay=args.lambda_decay,
+            record_recommendation_trajectory=(args.record_trajectory or args.anytime),
             effective_cost_bin_ratio=args.effective_cost_bin_ratio,
             effective_cost_bin_anchor=args.effective_cost_bin_anchor,
             horizon_bin_width=args.horizon_bin_width,

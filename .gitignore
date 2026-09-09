@@ -5,6 +5,7 @@ experiments/single_objective/results/
 # Pre-refactor leftover paths (never commit)
 experiments/results/
 experiments/cached_results/
+experiments/combined_objective/plots/
 /plot/
 /analysis/
 

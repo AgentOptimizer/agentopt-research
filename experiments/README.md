@@ -42,9 +42,13 @@ committed accuracy / cost / token matrices extracted from these pickles; see
 
 Shared ablation: `data/gpqa_thinking_ablation.csv`.
 
-Selector outputs:
+Plotting scripts live in `combined_objective/plot/`. Generated figures go
+with other selector outputs under `combined_objective/results/` (gitignored):
 
 - `combined_objective/results/radial_gittins_plots/`
+- `combined_objective/results/anytime_radial_gittins/`
+- `combined_objective/results/qa_random_20seeds/`
+- `combined_objective/results/scope_random/`
 - `combined_objective/results/multiobjective/`
 - `single_objective/results/{gpqa,bfcl,hotpotqa,mathqa}/selector_results.csv`
 - `single_objective/results/matrix_ucb_budget_sweep.csv`
@@ -128,6 +132,116 @@ fewer than `batch_size` questions remain; Gittins tables still plan every stage
 as a full batch. `--horizon-bin-width 1` uses exact per-configuration horizons; larger values
 are an explicitly reported speed/accuracy approximation for larger sweeps.
 
+### Anytime radial Gittins
+
+The anytime selector uses nine interior directions plus the exact accuracy
+endpoint `(1, 0)` by default, so the most accurate combination can be recommended
+even when it is expensive. This is the standard anytime configuration in both
+the Python API and the plotting runner.
+
+`--anytime` keeps the replay running when every direction triggers stopping:
+it records the stop, halves lambda, and resumes acquisition with updated
+indices. Defaults are `--lambda-initial 1.0 --lambda-decay 0.5`. The effective
+pull penalty is lambda times the existing eta-scaled, quantized expected batch
+cost. Quantization is frozen before applying lambda, so each halving also halves
+every effective penalty exactly. Calibration, observations, posterior states,
+question schedules, and cumulative spend are retained across stages.
+
+Run these commands from the repository root:
+
+```bash
+# Replay one benchmark and record the complete trajectory.
+.venv/bin/python experiments/combined_objective/offline_radial_gittins.py \
+    --pickle experiments/data/lookup/hotpotqa_lookup.pkl \
+    --anytime --lambda-initial 1.0 --lambda-decay 0.5 --record-trajectory \
+    --output /tmp/hotpotqa_anytime.json
+
+# Generate HV regret, GD, IGD, and every recommendation-addition frontier.
+.venv/bin/python experiments/combined_objective/plot/plot_anytime_radial_gittins.py \
+    --benchmarks hotpotqa mathqa --seed 42 --batch-size 4 --grid-size 129 \
+    --boundary-z-padding-extra 2.0
+
+# Redraw saved results without rerunning acquisition.
+.venv/bin/python experiments/combined_objective/plot/plot_anytime_radial_gittins.py \
+    --plot-only
+```
+
+The Python API is `simulate_radial_gittins(..., anytime=True,
+lambda_initial=1.0, lambda_decay=0.5, record_recommendation_trajectory=True)`.
+The general replay API retains fixed-lambda behavior and nine interior directions
+unless `anytime=True` is set; explicitly supplied directions override either
+mode's defaults. Anytime mode takes precedence over
+`halt_on_gittins_stop`; it never force-pulls an arm that fails the current
+stopping rule. It returns at the question or dollar budget, full completion,
+or a recorded numerical lambda floor. The numerical floor prevents endless
+halvings when the remaining cumulative penalty is below stopping precision;
+it is not a proof of exact zero-cost optimality.
+
+Anytime recommendations contain completed direction winners filtered for
+raw accuracy/cost nondominance. They become available when the first arm
+completes. Every addition to this set is retained even between ordinary
+trajectory samples; replacements count as additions even when set size stays
+constant. Completing a dominated combination need not add a recommendation.
+The current recommendation may drop older members as better combinations
+finish. A `lambda_stop` checkpoint separately records each global stop.
+Warmup snapshots used to fit the prior never count as numbered key checkpoints,
+even if a short benchmark completes a combination during calibration. Later
+recommendations may still have lambda 1: lambda changes only at a global stop,
+not at every recommendation addition.
+
+Outputs are under `combined_objective/results/anytime_radial_gittins/`:
+
+- `metrics.png` / `.svg` show relative HV regret, GD, and IGD (lower is better).
+  Relative HV regret is `100 * (reference HV - HV) / reference HV`, with a
+  logarithmic scale above 0.01% and a linear scale down to zero below it.
+  The individual curves are saved as `hv_regret_curves`, `gd_curves`, `igd_curves`.
+  `metrics_checkpoint_zoom` enlarges the interval containing recommendation
+  changes, with matching `C` labels for the frontier snapshots.
+- `lambda_schedule.png` / `.svg` show the recorded lambda halvings against
+  cumulative cost; a stop at the numerical floor is not counted as a halving.
+- `{benchmark}_frontiers_*.png` / `.svg` show all recommendation additions,
+  paginated nine panels per image, plus the final frontier. Each panel labels
+  cumulative cost percentage, current lambda, and recommendation count.
+- `checkpoints.csv` gives the exact spend, added/removed combination IDs, full
+  names of additions, and metrics at each key checkpoint. `combinations.csv`
+  maps all `A` labels to full model combinations.
+- `trajectory.csv`, `lambda_stops.json`, `summary.json`, and
+  `{benchmark}_run.json` retain the data, parameters, and acquisition trace.
+  Metric tables include raw HV, absolute HV regret, and relative HV regret.
+
+The horizontal metric axis is actual cumulative search cost, including the
+warm start, divided by exhaustive spend on the same complete question
+intersection. `--budget-fraction` instead caps the number of question
+evaluations; `--max-search-cost-usd` exposes the existing dollar cap.
+HV/GD/IGD evaluate the recommendation against the full reference frontier in
+normalized desirability space, using the frozen reciprocal cost transform
+per question. Pareto snapshots show accuracy versus mean deployment cost in
+USD. Full-data reference points are used only for evaluation, never acquisition.
+Before any arm completes, HV is zero and GD/IGD are infinite (blank in CSV,
+null in JSON, and omitted from the distance curves).
+Relative regret is undefined if reference HV is zero. GD can start at zero
+when the first recommendation is on the reference frontier, increase when
+another recommendation is off that frontier, then decrease as it is replaced.
+IGD also measures coverage of the reference frontier.
+
+These defaults produce a reproducible single-seed illustration on a 129-point
+plotting grid. Use `--grid-size 513` for the production resolution; changes in
+grid resolution can change the acquisition trajectory. Anytime mode widens
+the numerical boundary grid and retries at most four times if a root reaches
+an edge as lambda decreases. These expansions are recorded in the run parameters;
+a persistent grid failure still raises an error.
+
+The default accuracy endpoint uses accuracy alone as its terminal
+utility and a one-dimensional Gaussian retirement DP for acquisition. It
+still pays the same lambda-scaled search penalty and shares observations,
+posteriors, budget guards, and global stopping with the other directions.
+The two-dimensional radial formula is used only for positive interior
+directions, so no division by zero or near-axis approximation is needed.
+If completed combinations tie on accuracy, the endpoint recommends the one
+with lower observed mean deployment cost. `(0, 1)` is also supported for
+cost desirability via `--extra-direction 0 1`. Repeating an already included
+direction on the CLI has no effect.
+
 `combined_objective/plot/plot_radial_gittins_trajectories.py` writes one raw-archive
 comparison per benchmark, with each snapshot panel labelled by the scope its
 checkpoint recorded. Its hypervolume, generational-distance, and inverted-generational-distance
@@ -144,9 +258,13 @@ policy's terminal output.
 
 `combined_objective/plot/plot_multiobjective_random_search.py` plots the random-search
 budget sweep and `combined_objective/plot/plot_multiobjective_method_comparison.py`
-plots radial-Gittins against it. `combined_objective/audit_multiobjective_results.py`
+plots radial-Gittins against it. QA random contact sheets and the seed-42 Gittins
+versus 20-seed random comparison go to `combined_objective/results/qa_random_20seeds/`;
+SCOPE random contact sheets go to `combined_objective/results/scope_random/`.
+`combined_objective/audit_multiobjective_results.py`
 re-checks dominance, distance to the front, hypervolume, GD and IGD against the
-brute-force frontier.
+brute-force frontier. Raw CSV files, compressed caches, wall-time records, and
+Slurm logs for those jobs remain under `analysis/vs/`.
 
 Pareto-set identification baselines that are *not* radial index rules live in
 `combined_objective/offline_pareto_baselines.py`. They pull question batches
