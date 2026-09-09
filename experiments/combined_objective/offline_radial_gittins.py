@@ -302,6 +302,7 @@ class RadialSimulationResult:
     current_lambda: float = 1.0
     lambda_stage: int = 0
     lambda_stop_events: List[Dict[str, Any]] = field(default_factory=list)
+    stage_timing_events: List[Dict[str, Any]] = field(default_factory=list)
     gittins_stop_triggered: bool = False
     halted_by_gittins: bool = False
 
@@ -986,6 +987,7 @@ def _checkpoint_archive(
     reference_point: Sequence[float],
     stop_tolerance: float,
     truth_vectors: np.ndarray,
+    truth_front: np.ndarray,
     raw_truth_vectors: np.ndarray,
     observed_scores: Mapping[int, Sequence[float]],
     observed_costs: Mapping[int, Sequence[float]],
@@ -1045,11 +1047,6 @@ def _checkpoint_archive(
         if online_raw_archive_arms
         else np.empty((0, 2), dtype=np.float64)
     )
-    truth_front = (
-        truth_vectors[nondominated_indices(truth_vectors)]
-        if truth_vectors.size
-        else np.empty((0, 2), dtype=np.float64)
-    )
     quality = front_quality_metrics(
         selected_truth,
         truth_front,
@@ -1088,6 +1085,7 @@ def _recommendation_checkpoint(
     reference_point: Sequence[float],
     stop_tolerance: float,
     truth_vectors: np.ndarray,
+    truth_front: np.ndarray,
     raw_truth_vectors: np.ndarray,
     observed_scores: Mapping[int, Sequence[float]],
     observed_costs: Mapping[int, Sequence[float]],
@@ -1125,6 +1123,7 @@ def _recommendation_checkpoint(
         reference_point=reference_point,
         stop_tolerance=stop_tolerance,
         truth_vectors=truth_vectors,
+        truth_front=truth_front,
         raw_truth_vectors=raw_truth_vectors,
         observed_scores=observed_scores,
         observed_costs=observed_costs,
@@ -1290,6 +1289,7 @@ def simulate_radial_gittins(
     lambda_decay: float = 0.5,
     record_recommendation_trajectory: bool = False,
     recommendation_checkpoint_interval: int = 10,
+    recommendation_checkpoint_target: Optional[int] = None,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
 ) -> RadialSimulationResult:
@@ -1319,6 +1319,10 @@ def simulate_radial_gittins(
     retains one ordinary checkpoint after every N adaptive pulls. Warm-start,
     first Gittins-stop, and final checkpoints are always retained; this changes
     diagnostic curve resolution only, never acquisition or stopping.
+    ``recommendation_checkpoint_target`` instead derives an effective interval
+    from the planned full-completion adaptive pulls so that each run retains
+    approximately the requested number of ordinary checkpoints. Mandatory
+    warm-start, recommendation-change, lambda-stop, and final points remain.
 
     ``anytime=True`` starts at ``lambda_initial`` and multiplies lambda by
     ``lambda_decay`` whenever every direction stops without an intervening
@@ -1351,16 +1355,23 @@ def simulate_radial_gittins(
     Online indices remain exact per-arm lazy values after this cold prewarm.
     """
     wall_start = time.perf_counter()
+    timing_origin = wall_start
     batch_size = _positive_integer(batch_size, "batch_size")
     horizon_bin_width = _positive_integer(horizon_bin_width, "horizon_bin_width")
     resolved_directions = _validate_directions(
         (DEFAULT_ANYTIME_DIRECTIONS if anytime else DEFAULT_DIRECTIONS)
         if directions is None else directions
     )
-    recommendation_checkpoint_interval = _positive_integer(
+    requested_checkpoint_interval = _positive_integer(
         recommendation_checkpoint_interval,
         "recommendation_checkpoint_interval",
     )
+    recommendation_checkpoint_interval = requested_checkpoint_interval
+    if recommendation_checkpoint_target is not None:
+        recommendation_checkpoint_target = _positive_integer(
+            recommendation_checkpoint_target,
+            "recommendation_checkpoint_target",
+        )
     boundary_build_backend = str(boundary_build_backend).lower()
     if boundary_build_backend not in {"auto", "jax", "scipy"}:
         raise ValueError(
@@ -1714,6 +1725,14 @@ def simulate_radial_gittins(
         [_adaptive_horizon(remaining, batch_size) for remaining in remaining_after_warm],
         dtype=np.int64,
     )
+    planned_adaptive_pulls = int(np.sum(actual_horizons))
+    if recommendation_checkpoint_target is not None:
+        recommendation_checkpoint_interval = max(
+            1,
+            int(math.ceil(
+                planned_adaptive_pulls / recommendation_checkpoint_target
+            )),
+        )
     planned_partial_tail_cells = int(
         sum(remaining % batch_size for remaining in remaining_after_warm)
     )
@@ -1927,6 +1946,7 @@ def simulate_radial_gittins(
     adaptive_checkpoint_pulls = 0
     past_gittins_stop = False
     lambda_stop_events: List[Dict[str, Any]] = []
+    stage_timing_events: List[Dict[str, Any]] = []
     lambda_numerical_threshold: Optional[float] = None
     last_deployable_archive: set[int] = set()
     stopping_index_scale = 1.0
@@ -1984,6 +2004,7 @@ def simulate_radial_gittins(
             reference_point=resolved_reference,
             stop_tolerance=stop_tolerance,
             truth_vectors=truth_vectors,
+            truth_front=truth_front,
             raw_truth_vectors=raw_truth_vectors,
             observed_scores=observed_scores,
             observed_costs=observed_costs,
@@ -2019,6 +2040,17 @@ def simulate_radial_gittins(
         recommendation_trajectory.append(checkpoint)
 
     _append_recommendation_checkpoint("after_warm_start")
+    lambda_stage_wall_start = time.perf_counter()
+    stage_timing_events.append({
+        "event": "warm_start_complete",
+        "lambda_stage": 0,
+        "current_lambda": current_lambda,
+        "stage_wall_time_seconds": float(lambda_stage_wall_start - timing_origin),
+        "run_wall_time_seconds": float(lambda_stage_wall_start - timing_origin),
+        "cumulative_evaluations": int(total_evaluations),
+        "cumulative_search_cost_usd": float(total_cost),
+        "budget_fraction": float(total_cost) / float(bruteforce_search_cost_usd),
+    })
 
     while True:
         completed = tuple(
@@ -2284,6 +2316,21 @@ def simulate_radial_gittins(
                     lambda_stop_events.append(lambda_stop_event)
                     trace.append(dict(lambda_stop_event))
                     _append_recommendation_checkpoint("lambda_stop")
+                    stage_stopped_at = time.perf_counter()
+                    timing_fields = {
+                        "stage_wall_time_seconds": float(
+                            stage_stopped_at - lambda_stage_wall_start
+                        ),
+                        "run_wall_time_seconds": float(
+                            stage_stopped_at - timing_origin
+                        ),
+                    }
+                    lambda_stop_event.update(timing_fields)
+                    trace[-1].update(timing_fields)
+                    stage_timing_events.append({
+                        **lambda_stop_event,
+                        "event": "lambda_stage_stop",
+                    })
                     if halt_reason is not None:
                         stop_reason = halt_reason
                         break
@@ -2296,6 +2343,7 @@ def simulate_radial_gittins(
                     skipped_since_last_evaluation = 0
                     stopping_index_scale = 1.0
                     direction_index = (direction_index + 1) % len(resolved_directions)
+                    lambda_stage_wall_start = stage_stopped_at
                     continue
                 if halt_on_gittins_stop:
                     trace.append(visit_event)
@@ -2595,6 +2643,20 @@ def simulate_radial_gittins(
     )
     if record_recommendation_trajectory:
         _append_recommendation_checkpoint("final")
+    run_completed_at = time.perf_counter()
+    stage_timing_events.append({
+        "event": "run_complete",
+        "lambda_stage": lambda_stage,
+        "current_lambda": current_lambda,
+        "stop_reason": stop_reason,
+        "stage_wall_time_seconds": float(
+            run_completed_at - lambda_stage_wall_start
+        ),
+        "run_wall_time_seconds": float(run_completed_at - timing_origin),
+        "cumulative_evaluations": int(total_evaluations),
+        "cumulative_search_cost_usd": float(total_cost),
+        "budget_fraction": float(total_cost) / float(bruteforce_search_cost_usd),
+    })
     selected_truth = (
         truth_vectors[archive_arms]
         if archive_arms
@@ -2712,6 +2774,11 @@ def simulate_radial_gittins(
         "recommendation_checkpoint_interval": (
             recommendation_checkpoint_interval
         ),
+        "recommendation_checkpoint_interval_requested": (
+            requested_checkpoint_interval
+        ),
+        "recommendation_checkpoint_target": recommendation_checkpoint_target,
+        "planned_adaptive_pulls": planned_adaptive_pulls,
         "horizon_bin_width": horizon_bin_width,
         "actual_horizons": actual_horizons.tolist(),
         "planning_horizons": planning_horizons.tolist(),
@@ -2847,6 +2914,7 @@ def simulate_radial_gittins(
         current_lambda=current_lambda,
         lambda_stage=lambda_stage,
         lambda_stop_events=lambda_stop_events,
+        stage_timing_events=stage_timing_events,
         gittins_stop_triggered=gittins_stop_triggered,
         halted_by_gittins=halted_by_gittins,
         truth_vectors=truth_vectors,
@@ -2869,6 +2937,7 @@ def simulate_radial_gittins(
                 "current_lambda": current_lambda,
                 "lambda_stage": lambda_stage,
                 "lambda_stop_count": len(lambda_stop_events),
+                "stage_timing_events": list(stage_timing_events),
                 "gittins_stop_triggered": gittins_stop_triggered,
                 "halted_by_gittins": halted_by_gittins,
                 "selected_models": list(selected_models),
@@ -3121,6 +3190,15 @@ def main() -> None:
             "warm-start, stop, and final points are always kept (default: 10)"
         ),
     )
+    parser.add_argument(
+        "--trajectory-target-checkpoints",
+        type=int,
+        default=None,
+        help=(
+            "Derive the interval to retain approximately N ordinary trajectory "
+            "points; mandatory event checkpoints remain"
+        ),
+    )
     parser.add_argument("--output", default=None, help="Optional JSON output path")
     args = parser.parse_args()
 
@@ -3181,6 +3259,9 @@ def main() -> None:
             question_universe=("per_arm" if args.ragged_diagnostic else "common"),
             recommendation_checkpoint_interval=(
                 args.trajectory_checkpoint_interval
+            ),
+            recommendation_checkpoint_target=(
+                args.trajectory_target_checkpoints
             ),
         )
         print_radial_result(result)

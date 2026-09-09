@@ -74,6 +74,25 @@ class _CostDependentBoundary:
 
 
 class AnytimeRadialGittinsTests(unittest.TestCase):
+    def test_stage_timing_records_warm_start_stops_and_completion(self):
+        result = _run()
+
+        events = result.stage_timing_events
+        self.assertEqual(events[0]["event"], "warm_start_complete")
+        self.assertEqual(events[-1]["event"], "run_complete")
+        stop_timings = [x for x in events if x["event"] == "lambda_stage_stop"]
+        self.assertEqual(len(stop_timings), len(result.lambda_stop_events))
+        self.assertTrue(all(x["stage_wall_time_seconds"] >= 0.0 for x in events))
+        self.assertEqual(
+            [x["run_wall_time_seconds"] for x in events],
+            sorted(x["run_wall_time_seconds"] for x in events),
+        )
+        self.assertTrue(all(
+            "stage_wall_time_seconds" in stop
+            and "run_wall_time_seconds" in stop
+            for stop in result.lambda_stop_events
+        ))
+
     def test_omitted_directions_use_ten_for_anytime_and_nine_for_fixed(self):
         for anytime, expected in (
             (True, replay.DEFAULT_ANYTIME_DIRECTIONS),
