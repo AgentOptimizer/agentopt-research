@@ -8,6 +8,7 @@ experiments/cached_results/
 experiments/combined_objective/plots/
 /plot/
 /analysis/
+.mplconfig/
 
 # Python
 __pycache__/
