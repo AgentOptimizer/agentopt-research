@@ -90,8 +90,8 @@ def key_checkpoints(run: Mapping[str, Any]) -> list[dict[str, Any]]:
     return checkpoints
 
 
-def _save_figure(fig: Any, path: Path) -> None:
-    fig.savefig(path.with_suffix(".png"), dpi=180, facecolor="white")
+def _save_figure(fig: Any, path: Path, *, dpi: int = 180) -> None:
+    fig.savefig(path.with_suffix(".png"), dpi=dpi, facecolor="white")
     fig.savefig(path.with_suffix(".svg"), facecolor="white")
     plt.close(fig)
     print(f"wrote {path.with_suffix('.png')}", flush=True)
@@ -238,6 +238,7 @@ def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
     raw = np.asarray(run["raw_truth_vectors"], dtype=float)
     reference = raw[raw_nondominated_indices(raw)]
     reference = reference[np.argsort(reference[:, 1])]
+    exhaustive_cells = run["params"]["available_cells_in_universe"]
     log_cost = bool(np.all(raw[:, 1] > 0) and np.ptp(np.log10(raw[:, 1])) >= 1.3)
     for page_start in range(0, len(panels), 9):
         page = panels[page_start:page_start + 9]
@@ -276,8 +277,12 @@ def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
             ax.set_ylim(max(0, raw[:, 0].min() - 0.05), min(1.02, raw[:, 0].max() + 0.08))
             ax.set_xlabel("Mean deployment cost (USD" + (", log scale)" if log_cost else ")"))
             ax.set_ylabel("Accuracy")
-            ax.set_title(f"{point['checkpoint']} · {point['budget_fraction']:.3%} of exhaustive cost\n"
-                         f"λ={point['current_lambda']:.4g} · {len(selected)} recommended", fontsize=10)
+            ax.set_title(
+                f"{point['checkpoint']} · {point['budget_fraction']:.3%} of exhaustive cost\n"
+                f"{point['cumulative_evaluations'] / exhaustive_cells:.3%} of exhaustive cells · "
+                f"λ={point['current_lambda']:.4g} · {len(selected)} recommended",
+                fontsize=10,
+            )
             ax.grid(alpha=0.18)
             ax.spines[["top", "right"]].set_visible(False)
         for ax in list(axes.flat)[len(page):]:
@@ -293,7 +298,7 @@ def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
                      fontsize=13)
         fig.tight_layout(rect=(0, 0.095 if nrows == 1 else 0.065, 1, 0.90 if nrows == 1 else 0.93))
         page_number = page_start // 9 + 1
-        _save_figure(fig, outdir / f"{name}_frontiers_{page_number:02d}")
+        _save_figure(fig, outdir / f"{name}_frontiers_{page_number:02d}", dpi=240)
 
 
 def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
