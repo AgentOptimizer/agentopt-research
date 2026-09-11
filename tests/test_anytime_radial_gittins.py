@@ -74,6 +74,49 @@ class _CostDependentBoundary:
 
 
 class AnytimeRadialGittinsTests(unittest.TestCase):
+    def test_trace_can_be_disabled_without_changing_results_or_checkpoints(self):
+        traced = _run()
+        untraced = _run(record_trace=False)
+
+        self.assertTrue(traced.trace)
+        self.assertEqual(untraced.trace, [])
+        self.assertEqual(traced.selected_models, untraced.selected_models)
+        self.assertEqual(traced.stop_reason, untraced.stop_reason)
+        self.assertEqual(traced.total_evaluations, untraced.total_evaluations)
+        self.assertEqual(traced.total_cost, untraced.total_cost)
+        self.assertEqual(
+            traced.recommendation_trajectory,
+            untraced.recommendation_trajectory,
+        )
+        timing_fields = {"stage_wall_time_seconds", "run_wall_time_seconds"}
+        strip_timing = lambda events: [
+            {key: value for key, value in event.items() if key not in timing_fields}
+            for event in events
+        ]
+        self.assertEqual(
+            strip_timing(traced.lambda_stop_events),
+            strip_timing(untraced.lambda_stop_events),
+        )
+
+    def test_stage_timing_records_warm_start_stops_and_completion(self):
+        result = _run()
+
+        events = result.stage_timing_events
+        self.assertEqual(events[0]["event"], "warm_start_complete")
+        self.assertEqual(events[-1]["event"], "run_complete")
+        stop_timings = [x for x in events if x["event"] == "lambda_stage_stop"]
+        self.assertEqual(len(stop_timings), len(result.lambda_stop_events))
+        self.assertTrue(all(x["stage_wall_time_seconds"] >= 0.0 for x in events))
+        self.assertEqual(
+            [x["run_wall_time_seconds"] for x in events],
+            sorted(x["run_wall_time_seconds"] for x in events),
+        )
+        self.assertTrue(all(
+            "stage_wall_time_seconds" in stop
+            and "run_wall_time_seconds" in stop
+            for stop in result.lambda_stop_events
+        ))
+
     def test_omitted_directions_use_ten_for_anytime_and_nine_for_fixed(self):
         for anytime, expected in (
             (True, replay.DEFAULT_ANYTIME_DIRECTIONS),

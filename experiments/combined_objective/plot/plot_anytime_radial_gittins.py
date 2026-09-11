@@ -297,7 +297,7 @@ def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
 
 
 def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
-    trajectory_rows, key_rows, combo_rows, stop_rows = [], [], [], []
+    trajectory_rows, key_rows, combo_rows, stop_rows, timing_rows = [], [], [], [], []
     for name, run in runs.items():
         keys = key_checkpoints(run)
         for p in run["recommendation_trajectory"]:
@@ -337,6 +337,8 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
                                "mean_deployment_cost_usd": raw[1]})
         for stop in run["lambda_stop_events"]:
             stop_rows.append({"benchmark": name, **stop})
+        for timing in run.get("stage_timing_events", []):
+            timing_rows.append({"benchmark": name, **timing})
     for filename, rows in (("trajectory.csv", trajectory_rows), ("checkpoints.csv", key_rows),
                            ("combinations.csv", combo_rows)):
         if not rows:
@@ -346,6 +348,14 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
             writer.writeheader()
             writer.writerows(rows)
     (outdir / "lambda_stops.json").write_text(json.dumps(stop_rows, indent=2, allow_nan=False) + "\n")
+    if timing_rows:
+        fieldnames = list(dict.fromkeys(
+            key for row in timing_rows for key in row
+        ))
+        with (outdir / "stage_timings.csv").open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(timing_rows)
     summary = {
         name: {"lambda_initial": run["params"]["lambda_initial"],
                "lambda_final": run["current_lambda"], "lambda_stage": run["lambda_stage"],
@@ -385,6 +395,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--boundary-cache-dir", type=Path, default=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR)
     parser.add_argument("--boundary-build-backend", choices=("auto", "scipy", "jax"), default="auto")
     parser.add_argument("--trajectory-checkpoint-interval", type=int, default=10)
+    parser.add_argument("--trajectory-target-checkpoints", type=int)
     parser.add_argument("--plot-only", action="store_true")
     args = parser.parse_args(argv)
     outdir = args.outdir.resolve()
@@ -414,6 +425,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             boundary_cache=cache, boundary_build_backend=args.boundary_build_backend,
             record_recommendation_trajectory=True,
             recommendation_checkpoint_interval=args.trajectory_checkpoint_interval,
+            recommendation_checkpoint_target=args.trajectory_target_checkpoints,
         )
         runs[name] = _jsonable_result(result)
         run_path.write_text(json.dumps(runs[name], indent=2, allow_nan=False) + "\n")
