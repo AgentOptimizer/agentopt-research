@@ -140,12 +140,116 @@ even when it is expensive. This is the standard anytime configuration in both
 the Python API and the plotting runner.
 
 `--anytime` keeps the replay running when every direction triggers stopping:
-it records the stop, halves lambda, and resumes acquisition with updated
-indices. Defaults are `--lambda-initial 1.0 --lambda-decay 0.5`. The effective
-pull penalty is lambda times the existing eta-scaled, quantized expected batch
-cost. Quantization is frozen before applying lambda, so each halving also halves
-every effective penalty exactly. Calibration, observations, posterior states,
-question schedules, and cumulative spend are retained across stages.
+it records the stop, halves the search-cost weight η, and resumes acquisition
+with updated indices. The legacy flags are `--lambda-initial 1.0
+--lambda-decay 0.5`: their scalar `lambda` is a cost-weight multiplier, distinct
+from the vector λ used for a scalarization direction in the design notes.
+The effective pull penalty is that multiplier times the existing eta-scaled,
+quantized expected batch cost. Quantization is frozen before applying the
+multiplier, so each halving halves every effective penalty exactly. Calibration,
+observations, posterior states, question schedules, and cumulative spend are
+retained across stages.
+
+The opt-in Python argument `eta_decay_schedule="direction_stop"` instead gives
+each direction its own η multiplier. On a local stop, only that direction's
+multiplier is halved; round-robin advances immediately and revisits it next
+cycle. All directions still share the observations and completed-only
+recommendations. This mode requires `anytime=True` and
+`direction_scheduler="round_robin"`. It records per-direction η vectors and decay events rather than
+treating these decisions as a common global stop. A direction at the numerical
+cost floor remains eligible for reconsideration after shared observations.
+The default `eta_decay_schedule="global_stop"` retains the global-stop rule.
+
+#### Reproduce asynchronous η decay on BIRD dev
+
+Run from the repository root in a Python 3.10+ environment with the project
+dependencies installed. For a new environment:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+The SCOPE BIRD dev input matrices are tracked under `data/scope/bird_dev`.
+Generated results are gitignored, so a fresh checkout needs the baseline first:
+
+```bash
+# 1. Generate the seed-42 global-decay baseline (skip if already saved).
+python experiments/combined_objective/compare_direction_schedulers.py --benchmarks bird_dev
+
+# 2. Run independent per-direction η decay and export the comparison.
+python experiments/combined_objective/compare_eta_decay.py
+
+# 3. Redraw all figures and tables from saved results, without replaying.
+python experiments/combined_objective/compare_eta_decay.py --plot-only
+
+# 4. Run the relevant regression tests.
+python -m pytest \
+    tests/test_direction_eta_decay.py tests/test_anytime_radial_gittins.py \
+    tests/test_axis_radial_replay.py tests/test_offline_radial_gittins.py \
+    tests/test_accuracy_last_scheduler.py tests/test_completed_recommendations.py -q
+```
+
+Step 1 runs both `round_robin` and the earlier `accuracy_last` ablation with
+global decay. Step 2 takes only its `round_robin` result from
+`experiments/combined_objective/results/direction_schedulers_bird_dev_completed_only_seed42/comparison.json`.
+Both comparison runners fix seed 42, batch size 4, grid size 129, and
+completed-only recommendations. In step 2, all ten directions, including
+`(1, 0)`, participate in round-robin. Use `--baseline PATH` to read a different
+baseline file and `--outdir DIR` to change the comparison output directory;
+pass the same `--outdir DIR` when redrawing. `--plot-only` needs only that
+directory's `comparison.json`. Running without it reruns the corresponding
+experiment and replaces its saved outputs.
+
+For a standalone replay through the general CLI, enable asynchronous decay
+with `--anytime --direction-scheduler round_robin --eta-decay-schedule direction_stop`:
+
+```bash
+python experiments/combined_objective/offline_radial_gittins.py \
+    --scope data/scope/bird_dev --anytime \
+    --direction-scheduler round_robin --eta-decay-schedule direction_stop \
+    --seeds 1 --base-seed 42 --batch-size 4 --grid-size 129 \
+    --eta 1.0 --lambda-initial 1.0 --lambda-decay 0.5 \
+    --record-trajectory --output /tmp/bird_dev_async_eta_seed42.json
+```
+
+The standalone CLI uses its default boundary padding; use the comparison
+runner above to reproduce the reported experiment with extra padding 2.0.
+The `--eta-decay-schedule` flag belongs to the general replay CLI; the comparison
+runner selects `direction_stop` internally. Omitting the flag in the general
+CLI keeps the existing `global_stop` default.
+
+The runner verifies matching data, warm start, calibration, and HV reference;
+exports accuracy and HV curves, all key-checkpoint Pareto frontiers, per-direction
+η schedules, and a compressed trace; and supports `--plot-only` for re-rendering.
+Outputs are under `combined_objective/results/direction_eta_decay_bird_dev_completed_only_seed42/`.
+Pareto panels use the existing `C1`, `C2`, ... convention: every recommendation
+addition, removal, or replacement is a key checkpoint. Warmup and unchanged
+stopping events are excluded; the actual final state is shown separately without
+a new C number. Each method has its own numbered sequence and actual costs.
+Filled circles mean completed and currently recommended; gold stars mark newly
+recommended configurations. Gray points and the dotted full-data frontier are
+references, not evaluation-status markers. `checkpoints.csv` preserves exact
+costs and added/removed configuration IDs. `matched_budgets.csv` remains available
+for comparisons at equal spend, separately from the checkpoint panels.
+In this seed-42 run, independent decay completed the highest-accuracy configuration
+at 24.99% of full-matrix search cost, versus 67.52% for global decay. At a 30%
+cost budget, relative HV regret was 0.406% versus 1.800%; the final recommendation
+set was identical. At the very early 1% budget, independent decay had slightly
+higher HV regret (4.758% versus 3.739%). These are single-seed results.
+
+The default `--direction-scheduler round_robin` visits all ten directions in
+one cycle. The experimental `--direction-scheduler accuracy_last` runs the
+other directions round-robin until all stop, then runs `(1, 0)` until it stops.
+An endpoint observation invalidates earlier stopping decisions, so the other
+directions are checked again before lambda can decrease. Each new stage starts
+with the other directions. Completed combinations reuse their results;
+partially evaluated combinations continue on unseen questions. This changes
+acquisition order, not the stopping, completion, or evaluation-deduplication
+rules. The option is available in both replay and anytime plotting CLIs and
+as `direction_scheduler="accuracy_last"` in the Python API. With no accuracy
+endpoint, it preserves the ordinary round-robin behavior.
 
 Run these commands from the repository root:
 
@@ -164,7 +268,36 @@ Run these commands from the repository root:
 # Redraw saved results without rerunning acquisition.
 .venv/bin/python experiments/combined_objective/plot/plot_anytime_radial_gittins.py \
     --plot-only
+
+# Try deferred accuracy acquisition in a separate output directory.
+.venv/bin/python experiments/combined_objective/plot/plot_anytime_radial_gittins.py \
+    --benchmarks hotpotqa mathqa --direction-scheduler accuracy_last \
+    --outdir experiments/combined_objective/results/anytime_accuracy_last
+
+# Compare both schedulers on HotpotQA and MathQA, completed-only, seed 42.
+.venv/bin/python experiments/combined_objective/compare_direction_schedulers.py
+
+# Run the same Radial-Gittins-decay comparison on complete SCOPE BIRD dev.
+.venv/bin/python experiments/combined_objective/compare_direction_schedulers.py \
+    --benchmarks bird_dev \
+    --outdir experiments/combined_objective/results/direction_schedulers_bird_dev_completed_only_seed42
 ```
+
+The comparison writes `comparison.json`, CSV tables and a figure under
+`results/direction_schedulers_completed_only_seed42/`. It uses the full common
+question sets, batch size 4, a 129-point plotting grid and 2.0 extra grid
+padding. Tables compare the current recommendation at matched realized search
+costs and the spend needed to reach HV-regret thresholds. `first_hit` reports
+the first crossing; `sustained_to_end` also requires every later checkpoint to
+remain below the threshold. These are single-seed diagnostics, not an average
+over seeds or a validation at the production 513-point resolution.
+
+`--benchmarks bird_dev` loads `data/scope/bird_dev`, the complete 75-configuration,
+1,534-question matrix. The comparison also exports Pareto snapshots at matched
+search-cost fractions and the final recommendation, using observed accuracy
+and mean deployment cost for completed configurations. Snapshot CSVs retain
+configuration IDs and the exact preceding checkpoint cost. Grey reference
+points are full-data diagnostics and never enter acquisition.
 
 The Python API is `simulate_radial_gittins(..., anytime=True,
 lambda_initial=1.0, lambda_decay=0.5, record_recommendation_trajectory=True)`.

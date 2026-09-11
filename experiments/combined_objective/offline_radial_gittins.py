@@ -6,7 +6,7 @@ table.  Full-matrix objective vectors are computed after selection only for
 evaluation metrics; they never enter calibration, indices, or stopping.
 
 Everything except the unfinished-arm index is shared infrastructure: the
-uniform warm start, the round-robin direction scheduler, the required-completion
+uniform warm start, the direction scheduler, the required-completion
 stopping convention, the budget guards, and the archive/hypervolume/GD/IGD metrics.
 An alternative acquisition rule therefore only has to supply an
 ``index_provider`` without changing the shared replay engine.
@@ -247,6 +247,10 @@ class RecommendationCheckpoint:
     lambda_stage: int = 0
     added_arm_indices: Tuple[int, ...] = ()
     added_models: Tuple[str, ...] = ()
+    removed_arm_indices: Tuple[int, ...] = ()
+    removed_models: Tuple[str, ...] = ()
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if self.archive_scope not in ARCHIVE_SCOPES:
@@ -305,6 +309,11 @@ class RadialSimulationResult:
     stage_timing_events: List[Dict[str, Any]] = field(default_factory=list)
     gittins_stop_triggered: bool = False
     halted_by_gittins: bool = False
+    recommendation_initial_snapshot: Optional[RecommendationCheckpoint] = None
+    recommendation_final_snapshot: Optional[RecommendationCheckpoint] = None
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
+    direction_eta_events: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -315,6 +324,9 @@ class DirectionVisitContext:
     only valid during the visit it was created for.  ``effective_pull_costs``
     holds the frozen per-arm continuation cost in normalized utility units,
     which is the same quantity the boundary dynamic program consumes.
+    With independent eta decay, ``current_lambda`` and ``lambda_stage`` are
+    the visited direction's multiplier/stage; the eta vectors describe all
+    directions. The legacy scalar name is not a scalarization direction.
     """
 
     global_step: int
@@ -332,10 +344,77 @@ class DirectionVisitContext:
     effective_pull_costs: Tuple[float, ...] = ()
     current_lambda: float = 1.0
     lambda_stage: int = 0
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
 
 
 IndexProvider = Callable[[DirectionVisitContext, int], float]
 RadialTerminalUtilityProvider = Callable[[int, int], float]
+
+
+class _DirectionScheduler:
+    """Visit direction groups while tracking stops under unchanged observations.
+
+    Accuracy-last drains the other directions first, then the exact accuracy
+    endpoint. An endpoint pull invalidates earlier stops, so the other group
+    must be checked again before the policy may stop or lower lambda.
+    """
+
+    def __init__(self, directions: Sequence[Tuple[float, float]], policy: str):
+        if policy not in {"round_robin", "accuracy_last"}:
+            raise ValueError("direction_scheduler must be 'round_robin' or 'accuracy_last'")
+        self.policy = policy
+        indices = tuple(range(len(directions)))
+        if policy == "accuracy_last":
+            primary = tuple(i for i in indices if _direction_axis(directions[i]) != 0)
+            accuracy = tuple(i for i in indices if _direction_axis(directions[i]) == 0)
+            self.groups = tuple(group for group in (primary, accuracy) if group)
+        else:
+            self.groups = (indices,)
+        self._direction_count = len(directions)
+        self._group = 0
+        self._position = 0
+        self._stopped: set[int] = set()
+
+    @property
+    def direction_index(self) -> int:
+        return self.groups[self._group][self._position]
+
+    @property
+    def all_stopped(self) -> bool:
+        return len(self._stopped) == self._direction_count
+
+    def record_stop(self) -> None:
+        self._stopped.add(self.direction_index)
+
+    def record_observation(self) -> None:
+        self._stopped.clear()
+
+    def advance(self, *, force_round_robin: bool = False) -> int:
+        if force_round_robin:
+            # Fixed-lambda diagnostics can ignore stops after the first global
+            # stop. Keep visiting every direction in that forced continuation.
+            next_index = (self.direction_index + 1) % self._direction_count
+            for group_index, indices in enumerate(self.groups):
+                if next_index in indices:
+                    self._group = group_index
+                    self._position = indices.index(next_index)
+                    break
+            return self.direction_index
+        group = self.groups[self._group]
+        if len(self.groups) > 1 and all(i in self._stopped for i in group):
+            self._group = (self._group + 1) % len(self.groups)
+            self._position = 0
+        else:
+            self._position = (self._position + 1) % len(group)
+        return self.direction_index
+
+    def start_next_stage(self) -> int:
+        self._stopped.clear()
+        if len(self.groups) > 1:
+            self._group = self._position = 0
+            return self.direction_index
+        return self.advance()
 
 
 class _VersionedArmValueCache:
@@ -368,6 +447,10 @@ class _VersionedArmValueCache:
         for namespace in tuple(self._values):
             if isinstance(namespace, tuple) and namespace[0] == "radial_index":
                 del self._values[namespace]
+
+    def clear_direction_radial_indices(self, direction_index: int) -> None:
+        """Invalidate one direction's cost-dependent indices after local decay."""
+        self._values.pop(("radial_index", int(direction_index)), None)
 
     def get_or_compute(
         self,
@@ -1098,6 +1181,8 @@ def _recommendation_checkpoint(
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE,
     current_lambda: float = 1.0,
     lambda_stage: int = 0,
+    direction_eta_multipliers: Tuple[float, ...] = (),
+    direction_eta_stages: Tuple[int, ...] = (),
     radial_terminal_utility_provider: Optional[
         RadialTerminalUtilityProvider
     ] = None,
@@ -1157,6 +1242,8 @@ def _recommendation_checkpoint(
         archive_scope=archive_scope,
         current_lambda=current_lambda,
         lambda_stage=lambda_stage,
+        direction_eta_multipliers=direction_eta_multipliers,
+        direction_eta_stages=direction_eta_stages,
     )
 
 
@@ -1255,6 +1342,8 @@ def simulate_radial_gittins(
     *,
     batch_size: int = 4,
     directions: Optional[Iterable[Sequence[float]]] = None,
+    direction_scheduler: str = "round_robin",
+    eta_decay_schedule: str = "global_stop",
     prior_variance: Sequence[float] | float = 0.04,
     obs_noise_variance: Optional[Sequence[float] | float] = None,
     cost_reference_usd: Optional[float] = None,
@@ -1291,10 +1380,11 @@ def simulate_radial_gittins(
     record_recommendation_trajectory: bool = False,
     recommendation_checkpoint_interval: Optional[int] = None,
     recommendation_checkpoint_target: Optional[int] = None,
+    recommendation_changes_only: bool = False,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
 ) -> RadialSimulationResult:
-    """Replay the complete warm-start + round-robin radial-Gittins policy.
+    """Replay the complete warm-start and directional radial-Gittins policy.
 
     The default benchmark universe is the complete question intersection, so
     every arm is judged on the same questions. ``question_universe='per_arm'``
@@ -1338,9 +1428,31 @@ def simulate_radial_gittins(
     plus the exact accuracy endpoint ``(1, 0)``; fixed-lambda runs use the nine
     interior directions. An explicit direction sequence replaces the default.
 
-    Anytime trajectories always recommend only completed arms. Each archive
-    membership change and lambda stop is retained regardless of checkpoint
-    interval.
+    ``direction_scheduler='accuracy_last'`` runs the other directions round-robin
+    until all stop, then runs the exact accuracy endpoint until it stops. Any
+    new observation invalidates every earlier stop, so the other directions
+    are revisited after endpoint acquisition before global stopping. Each new
+    lambda stage starts with the other directions. Completed arms are reused;
+    partially observed arms retain their posteriors and remaining questions.
+    The default ``'round_robin'`` keeps all directions in one cycle.
+
+    Anytime recommendations use only completed arms.
+
+    ``eta_decay_schedule='direction_stop'`` requires anytime round-robin.
+    A direction that stops halves only its own cost multiplier, then yields
+    to the next direction. It is reconsidered on its next visit using shared
+    observations. Legacy ``current_lambda`` / ``lambda_stage`` fields refer
+    to the visited direction in this mode; per-direction eta vectors are the
+    complete state. A numerical-floor stop is rechecked after observations,
+    and the run ends only when every direction stops at its own floor without
+    intervening observations. The default ``'global_stop'`` retains one shared
+    multiplier and the existing global stage trigger.
+
+    ``recommendation_changes_only=True`` checks membership after every pull
+    and records only changes, including removals. Initial/final snapshots and
+    lambda-stop events are stored separately, so unchanged stops and endpoints
+    do not create duplicate recommendation checkpoints. Otherwise each anytime
+    membership change and lambda stop survives checkpoint downsampling.
     Runs finish at a budget, full completion, or a numerical lambda floor:
     the largest remaining cumulative penalty is below stopping precision.
     This floor is a numerical safeguard, not an exact zero-cost optimality
@@ -1364,6 +1476,14 @@ def simulate_radial_gittins(
         (DEFAULT_ANYTIME_DIRECTIONS if anytime else DEFAULT_DIRECTIONS)
         if directions is None else directions
     )
+    scheduler = _DirectionScheduler(resolved_directions, direction_scheduler)
+    if eta_decay_schedule not in {"global_stop", "direction_stop"}:
+        raise ValueError("eta_decay_schedule must be 'global_stop' or 'direction_stop'")
+    independent_eta = eta_decay_schedule == "direction_stop"
+    if independent_eta and not anytime:
+        raise ValueError("eta_decay_schedule='direction_stop' requires anytime=True")
+    if independent_eta and direction_scheduler != "round_robin":
+        raise ValueError("eta_decay_schedule='direction_stop' requires direction_scheduler='round_robin'")
     requested_checkpoint_interval = (
         None
         if recommendation_checkpoint_interval is None
@@ -1570,6 +1690,13 @@ def simulate_radial_gittins(
 
     current_lambda = float(lambda_initial) if anytime else 1.0
     lambda_stage = 0
+    direction_eta_multipliers = [current_lambda] * len(resolved_directions)
+    direction_eta_stages = [0] * len(resolved_directions)
+    direction_eta_events: List[Dict[str, Any]] = []
+    # Only certifications at the unchanged current multiplier belong here.
+    # A pre-decay stop does not certify the newly lowered multiplier.
+    direction_floor_stops: set[int] = set()
+    active_eta_direction_index = 0
     base_raw_effective_pull_costs = search_cost_scale_eta * expected_batch_costs
     base_effective_pull_costs = _quantize_effective_costs(
         base_raw_effective_pull_costs,
@@ -1945,14 +2072,15 @@ def simulate_radial_gittins(
             }
         )
 
-    direction_index = 0
-    skipped_since_last_evaluation = 0
+    direction_index = scheduler.direction_index
     visit_counts = np.zeros(len(resolved_directions), dtype=np.int64)
     global_step = 0
     stop_reason = "all_directions_gittins_stop"
     gittins_stop_evaluations: Optional[int] = None
     gittins_stop_cost_usd: Optional[float] = None
     recommendation_trajectory: List[RecommendationCheckpoint] = []
+    recommendation_initial_snapshot: Optional[RecommendationCheckpoint] = None
+    recommendation_final_snapshot: Optional[RecommendationCheckpoint] = None
     adaptive_checkpoint_pulls = 0
     past_gittins_stop = False
     lambda_stop_events: List[Dict[str, Any]] = []
@@ -1986,6 +2114,7 @@ def simulate_radial_gittins(
         completed_arm_changed: bool = False,
     ) -> None:
         nonlocal last_deployable_archive
+        nonlocal recommendation_initial_snapshot, recommendation_final_snapshot
         if not record_recommendation_trajectory:
             return
         ordinary_checkpoint_due = (
@@ -1997,7 +2126,12 @@ def simulate_radial_gittins(
                 == 0
             )
         )
-        if not ordinary_checkpoint_due and not (anytime and completed_arm_changed):
+        inspect_every_pull = recommendation_changes_only
+        if (
+            not ordinary_checkpoint_due
+            and not inspect_every_pull
+            and not (anytime and completed_arm_changed)
+        ):
             return
         completed_at_checkpoint = tuple(
             i
@@ -2031,13 +2165,27 @@ def simulate_radial_gittins(
             archive_scope=archive_scope,
             current_lambda=current_lambda,
             lambda_stage=lambda_stage,
+            direction_eta_multipliers=tuple(direction_eta_multipliers),
+            direction_eta_stages=tuple(direction_eta_stages),
             radial_terminal_utility_provider=_cached_radial_terminal_utility,
         )
-        if anytime:
+        if event == "after_warm_start":
+            recommendation_initial_snapshot = checkpoint
+        if event == "final":
+            recommendation_final_snapshot = checkpoint
+        if anytime or inspect_every_pull:
             archive_members = set(checkpoint.selected_arm_indices)
             membership_changed = archive_members != last_deployable_archive
             added = tuple(sorted(archive_members - last_deployable_archive))
+            removed = tuple(sorted(last_deployable_archive - archive_members))
             last_deployable_archive = archive_members
+            checkpoint = replace(
+                checkpoint,
+                added_arm_indices=added,
+                added_models=tuple(models[i] for i in added),
+                removed_arm_indices=removed,
+                removed_models=tuple(models[i] for i in removed),
+            )
             if added:
                 checkpoint = replace(
                     checkpoint,
@@ -2049,6 +2197,8 @@ def simulate_radial_gittins(
                 )
             elif membership_changed and event == "adaptive_pull":
                 checkpoint = replace(checkpoint, event="recommendation_changed")
+            if recommendation_changes_only and not membership_changed:
+                return
             if not ordinary_checkpoint_due and not membership_changed:
                 return
         recommendation_trajectory.append(checkpoint)
@@ -2113,6 +2263,12 @@ def simulate_radial_gittins(
             break
 
         direction = resolved_directions[direction_index]
+        if independent_eta:
+            active_eta_direction_index = direction_index
+            current_lambda = direction_eta_multipliers[direction_index]
+            lambda_stage = direction_eta_stages[direction_index]
+            raw_effective_pull_costs = current_lambda * base_raw_effective_pull_costs
+            effective_pull_costs = current_lambda * base_effective_pull_costs
         context = DirectionVisitContext(
             global_step=global_step,
             direction_index=direction_index,
@@ -2129,6 +2285,8 @@ def simulate_radial_gittins(
             ),
             current_lambda=current_lambda,
             lambda_stage=lambda_stage,
+            direction_eta_multipliers=tuple(direction_eta_multipliers),
+            direction_eta_stages=tuple(direction_eta_stages),
         )
         visit_counts[direction_index] += 1
 
@@ -2262,22 +2420,85 @@ def simulate_radial_gittins(
             "cumulative_search_cost_usd": total_cost,
         } if record_trace or history is not None else {}
 
+        if independent_eta and status.should_stop:
+            _append_trace(visit_event)
+            if history is not None:
+                history.append(dict(visit_event))
+            remaining_penalty = max(
+                float(planning_horizons[i] - adaptive_pulls[i])
+                * float(effective_pull_costs[i]) for i in unfinished
+            )
+            index_scale = max(1.0, abs(status.best_completed_index), abs(status.best_unfinished_index))
+            lambda_numerical_threshold = max(
+                stop_tolerance, float(np.finfo(np.float64).eps) * index_scale,
+            )
+            next_multiplier = current_lambda * lambda_decay
+            next_raw_costs = next_multiplier * base_raw_effective_pull_costs
+            next_effective_costs = next_multiplier * base_effective_pull_costs
+            floor_reason = None
+            if remaining_penalty <= lambda_numerical_threshold:
+                floor_reason = "numerical_floor"
+            elif (
+                not 0.0 < next_multiplier < current_lambda
+                or np.any(next_raw_costs <= 0.0)
+                or np.any(next_effective_costs <= 0.0)
+            ):
+                floor_reason = "underflow"
+            if floor_reason is None:
+                direction_eta_multipliers[direction_index] = next_multiplier
+                direction_eta_stages[direction_index] += 1
+                direction_floor_stops.discard(direction_index)
+                direction_boundary_tables.pop(direction, None)
+                online_value_cache.clear_direction_radial_indices(direction_index)
+            else:
+                direction_floor_stops.add(direction_index)
+            eta_event = {
+                "event": "direction_eta_decay" if floor_reason is None else "direction_eta_floor_stop",
+                "global_step": global_step, "direction_index": direction_index,
+                "direction": list(direction), "current_lambda": current_lambda,
+                "lambda_stage": lambda_stage,
+                "next_lambda": next_multiplier if floor_reason is None else None,
+                "next_stage": direction_eta_stages[direction_index],
+                "direction_eta_multipliers": list(direction_eta_multipliers),
+                "direction_eta_stages": list(direction_eta_stages),
+                "floor_reason": floor_reason,
+                "max_remaining_effective_penalty": remaining_penalty,
+                "numerical_penalty_threshold": lambda_numerical_threshold,
+                "cumulative_evaluations": int(total_evaluations),
+                "cumulative_search_cost_usd": float(total_cost),
+                "budget_fraction": total_cost / bruteforce_search_cost_usd,
+            }
+            direction_eta_events.append(eta_event)
+            _append_trace(dict(eta_event))
+            # This is a local event, not a common-price global lambda stop.
+            # A local price change cannot change completed-only winners.
+            # Record prices here; recommendation checkpoints are retained at
+            # completions and at the final state, without duplicate archives.
+            global_step += 1
+            if len(direction_floor_stops) == len(resolved_directions):
+                stop_reason = "direction_eta_numerical_floor"
+                gittins_stop_evaluations = int(total_evaluations)
+                gittins_stop_cost_usd = float(total_cost)
+                break
+            direction_index = scheduler.advance()
+            continue
+
         if status.should_stop and not past_gittins_stop:
-            skipped_since_last_evaluation += 1
+            scheduler.record_stop()
             stopping_index_scale = max(
                 stopping_index_scale,
                 abs(status.best_completed_index),
                 abs(status.best_unfinished_index),
             )
-            if skipped_since_last_evaluation == len(resolved_directions):
+            if scheduler.all_stopped:
                 if gittins_stop_evaluations is None:
                     gittins_stop_evaluations = int(total_evaluations)
                     gittins_stop_cost_usd = float(total_cost)
                     if not anytime:
                         _append_recommendation_checkpoint("gittins_stop")
                 if anytime:
-                    # A complete no-observation sweep certifies this lambda
-                    # stage's stop. Recompute every direction after decay;
+                    # Stops from every direction since the last observation
+                    # certify this stage's stop. Recompute after decay;
                     # none of the old skip decisions is valid at a new cost.
                     _append_trace(visit_event)
                     global_step += 1
@@ -2351,13 +2572,14 @@ def simulate_radial_gittins(
                         break
                     current_lambda = next_lambda
                     lambda_stage += 1
+                    direction_eta_multipliers[:] = [current_lambda] * len(resolved_directions)
+                    direction_eta_stages[:] = [lambda_stage] * len(resolved_directions)
                     raw_effective_pull_costs = next_raw_costs
                     effective_pull_costs = next_effective_costs
                     direction_boundary_tables.clear()
                     online_value_cache.clear_radial_indices()
-                    skipped_since_last_evaluation = 0
                     stopping_index_scale = 1.0
-                    direction_index = (direction_index + 1) % len(resolved_directions)
+                    direction_index = scheduler.start_next_stage()
                     lambda_stage_wall_start = stage_stopped_at
                     continue
                 if halt_on_gittins_stop:
@@ -2366,12 +2588,11 @@ def simulate_radial_gittins(
                     stop_reason = "all_directions_gittins_stop"
                     break
                 past_gittins_stop = True
-                skipped_since_last_evaluation = 0
                 # Fall through and force-pull under the remaining budget.
             else:
                 _append_trace(visit_event)
                 global_step += 1
-                direction_index = (direction_index + 1) % len(resolved_directions)
+                direction_index = scheduler.advance()
                 continue
 
         selected_arm = status.best_unfinished_arm
@@ -2508,10 +2729,11 @@ def simulate_radial_gittins(
                 adaptive_pulls[selected_arm] >= actual_horizons[selected_arm]
             ),
         )
-        skipped_since_last_evaluation = 0
+        scheduler.record_observation()
+        direction_floor_stops.clear()
         stopping_index_scale = 1.0
         global_step += 1
-        direction_index = (direction_index + 1) % len(resolved_directions)
+        direction_index = scheduler.advance(force_round_robin=past_gittins_stop)
 
     completed_final = [
         i for i in range(n_arms) if adaptive_pulls[i] >= actual_horizons[i]
@@ -2647,9 +2869,10 @@ def simulate_radial_gittins(
     # Preserve the historical stopped_by_gittins diagnostic, which also counts
     # earlier stops in fixed-budget force-continuation runs. These explicit
     # fields distinguish a stage trigger from the reason this run actually ends.
-    gittins_stop_triggered = gittins_stop_evaluations is not None
+    gittins_stop_triggered = gittins_stop_evaluations is not None or bool(direction_eta_events)
     halted_by_gittins = stop_reason in {
-        "all_directions_gittins_stop", "lambda_numerical_floor", "lambda_underflow"
+        "all_directions_gittins_stop", "lambda_numerical_floor", "lambda_underflow",
+        "direction_eta_numerical_floor",
     }
     gittins_stop_budget_fraction = (
         float(gittins_stop_cost_usd) / float(bruteforce_search_cost_usd)
@@ -2672,6 +2895,12 @@ def simulate_radial_gittins(
         "cumulative_search_cost_usd": float(total_cost),
         "budget_fraction": float(total_cost) / float(bruteforce_search_cost_usd),
     })
+    if independent_eta:
+        stage_timing_events[-1].update({
+            "lambda_scope": "visited_direction",
+            "direction_eta_multipliers": list(direction_eta_multipliers),
+            "direction_eta_stages": list(direction_eta_stages),
+        })
     selected_truth = (
         truth_vectors[archive_arms]
         if archive_arms
@@ -2725,9 +2954,19 @@ def simulate_radial_gittins(
     params: Dict[str, Any] = {
         "batch_size": batch_size,
         "recommendation_space": "observed_raw_accuracy_mean_cost_usd",
+        "recommendation_eligibility": "completed_only",
+        "recommendation_changes_only": bool(recommendation_changes_only),
         "posterior_archive_space": "normalized_posterior_mean_desirability",
         "oracle_raw_winner_archive_is_diagnostic": True,
         "directions": [list(x) for x in resolved_directions],
+        "direction_scheduler": direction_scheduler,
+        "eta_decay_schedule": eta_decay_schedule,
+        "lambda_scope": "visited_direction" if independent_eta else "global",
+        "lambda_direction_index": active_eta_direction_index if independent_eta else None,
+        "direction_eta_multipliers": list(direction_eta_multipliers),
+        "direction_eta_stages": list(direction_eta_stages),
+        "direction_eta_event_count": len(direction_eta_events),
+        "direction_scheduler_groups": [list(group) for group in scheduler.groups],
         "endpoint_direction_policy": {
             "directions": [
                 list(direction) for direction in resolved_directions
@@ -2758,7 +2997,7 @@ def simulate_radial_gittins(
         ),
         "lambda_numerical_penalty_threshold": lambda_numerical_threshold,
         "gittins_stop_action": (
-            "decay_lambda" if anytime else (
+            "decay_direction_eta" if independent_eta else "decay_lambda" if anytime else (
                 "halt" if halt_on_gittins_stop else "force_continuation"
             )
         ),
@@ -2924,12 +3163,17 @@ def simulate_radial_gittins(
         trace=trace,
         observed_cells=tuple(sorted(observed_cells)),
         recommendation_trajectory=recommendation_trajectory,
+        recommendation_initial_snapshot=recommendation_initial_snapshot,
+        recommendation_final_snapshot=recommendation_final_snapshot,
         gittins_stop_evaluations=gittins_stop_evaluations,
         gittins_stop_cost_usd=gittins_stop_cost_usd,
         gittins_stop_budget_fraction=gittins_stop_budget_fraction,
         current_lambda=current_lambda,
         lambda_stage=lambda_stage,
         lambda_stop_events=lambda_stop_events,
+        direction_eta_multipliers=tuple(direction_eta_multipliers),
+        direction_eta_stages=tuple(direction_eta_stages),
+        direction_eta_events=direction_eta_events,
         stage_timing_events=stage_timing_events,
         gittins_stop_triggered=gittins_stop_triggered,
         halted_by_gittins=halted_by_gittins,
@@ -2953,6 +3197,11 @@ def simulate_radial_gittins(
                 "current_lambda": current_lambda,
                 "lambda_stage": lambda_stage,
                 "lambda_stop_count": len(lambda_stop_events),
+                "eta_decay_schedule": eta_decay_schedule,
+                "lambda_scope": "visited_direction" if independent_eta else "global",
+                "direction_eta_multipliers": list(direction_eta_multipliers),
+                "direction_eta_stages": list(direction_eta_stages),
+                "direction_eta_events": list(direction_eta_events),
                 "stage_timing_events": list(stage_timing_events),
                 "gittins_stop_triggered": gittins_stop_triggered,
                 "halted_by_gittins": halted_by_gittins,
@@ -3139,6 +3388,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--direction-scheduler", choices=("round_robin", "accuracy_last"),
+        default="round_robin",
+        help="Run (1, 0) only after the other directions stop with accuracy_last",
+    )
+    parser.add_argument(
+        "--eta-decay-schedule", choices=("global_stop", "direction_stop"),
+        default="global_stop",
+        help="Decay the shared eta after global stopping, or each direction's eta after its local stop",
+    )
+    parser.add_argument(
         "--lambda-initial", type=float, default=1.0,
         help="Initial continuation-cost multiplier in anytime mode (default: 1.0)",
     )
@@ -3155,6 +3414,10 @@ def main() -> None:
         "--no-trace",
         action="store_true",
         help="Do not retain per-direction-visit diagnostic trace events",
+    )
+    parser.add_argument(
+        "--recommendation-changes-only", action="store_true",
+        help="Record only recommendation membership changes, checking after every pull",
     )
     parser.add_argument("--effective-cost-bin-ratio", type=float, default=2.0)
     parser.add_argument("--effective-cost-bin-anchor", type=float, default=1e-4)
@@ -3261,6 +3524,8 @@ def main() -> None:
             directions=_cli_directions(
                 anytime=args.anytime, extra_directions=args.extra_direction
             ),
+            direction_scheduler=args.direction_scheduler,
+            eta_decay_schedule=args.eta_decay_schedule,
             observation_budget_fraction=args.budget_fraction,
             max_search_cost_usd=args.max_search_cost,
             guaranteed_batch_cost_usd=args.guaranteed_batch_cost,
@@ -3269,7 +3534,10 @@ def main() -> None:
             lambda_initial=args.lambda_initial,
             lambda_decay=args.lambda_decay,
             record_trace=not args.no_trace,
-            record_recommendation_trajectory=(args.record_trajectory or args.anytime),
+            record_recommendation_trajectory=(
+                args.record_trajectory or args.anytime or args.recommendation_changes_only
+            ),
+            recommendation_changes_only=args.recommendation_changes_only,
             effective_cost_bin_ratio=args.effective_cost_bin_ratio,
             effective_cost_bin_anchor=args.effective_cost_bin_anchor,
             horizon_bin_width=args.horizon_bin_width,
