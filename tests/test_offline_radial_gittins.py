@@ -420,11 +420,33 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(downsampled.model_results, every_pull.model_results)
         self.assertEqual(downsampled.stop_reason, every_pull.stop_reason)
 
-    def test_trajectory_checkpoint_interval_defaults_to_ten(self):
+    def test_trajectory_defaults_to_event_checkpoints_only(self):
         parameter = inspect.signature(simulate_radial_gittins).parameters[
             "recommendation_checkpoint_interval"
         ]
-        self.assertEqual(parameter.default, 10)
+        self.assertIsNone(parameter.default)
+
+        models, datapoints, table = self._constant_problem(
+            n_arms=1,
+            n_datapoints=6,
+        )
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=1,
+            directions=((0.5, 0.5),),
+            index_provider=lambda context, arm_index: 10.0,
+            halt_on_gittins_stop=False,
+            record_recommendation_trajectory=True,
+            seed=1,
+        )
+
+        self.assertIsNone(result.params["recommendation_checkpoint_interval"])
+        self.assertEqual(
+            [point.event for point in result.recommendation_trajectory],
+            ["after_warm_start", "final"],
+        )
 
     def test_trajectory_checkpoint_target_derives_interval(self):
         models, datapoints, table = self._constant_problem(

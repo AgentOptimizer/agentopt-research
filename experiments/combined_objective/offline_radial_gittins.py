@@ -1287,8 +1287,9 @@ def simulate_radial_gittins(
     anytime: bool = False,
     lambda_initial: float = 1.0,
     lambda_decay: float = 0.5,
+    record_trace: bool = True,
     record_recommendation_trajectory: bool = False,
-    recommendation_checkpoint_interval: int = 10,
+    recommendation_checkpoint_interval: Optional[int] = None,
     recommendation_checkpoint_target: Optional[int] = None,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
@@ -1315,10 +1316,11 @@ def simulate_radial_gittins(
     baseline is not reported as radial-Gittins. Boundary tables are never built
     in that mode, so the DP grid and cache arguments are ignored.
 
-    When trajectory recording is enabled, ``recommendation_checkpoint_interval``
-    retains one ordinary checkpoint after every N adaptive pulls. Warm-start,
-    first Gittins-stop, and final checkpoints are always retained; this changes
-    diagnostic curve resolution only, never acquisition or stopping.
+    Trajectory recording retains event checkpoints by default. Supplying
+    ``recommendation_checkpoint_interval`` additionally retains one ordinary
+    checkpoint after every N adaptive pulls. Warm-start, first Gittins-stop,
+    recommendation changes, and final checkpoints are always retained; this
+    changes diagnostic curve resolution only, never acquisition or stopping.
     ``recommendation_checkpoint_target`` instead derives an effective interval
     from the planned full-completion adaptive pulls so that each run retains
     approximately the requested number of ordinary checkpoints. Mandatory
@@ -1362,9 +1364,13 @@ def simulate_radial_gittins(
         (DEFAULT_ANYTIME_DIRECTIONS if anytime else DEFAULT_DIRECTIONS)
         if directions is None else directions
     )
-    requested_checkpoint_interval = _positive_integer(
-        recommendation_checkpoint_interval,
-        "recommendation_checkpoint_interval",
+    requested_checkpoint_interval = (
+        None
+        if recommendation_checkpoint_interval is None
+        else _positive_integer(
+            recommendation_checkpoint_interval,
+            "recommendation_checkpoint_interval",
+        )
     )
     recommendation_checkpoint_interval = requested_checkpoint_interval
     if recommendation_checkpoint_target is not None:
@@ -1901,8 +1907,12 @@ def simulate_radial_gittins(
 
     trace: List[Dict[str, Any]] = []
 
+    def _append_trace(event: Dict[str, Any]) -> None:
+        if record_trace:
+            trace.append(event)
+
     for arm_index in range(n_arms):
-        trace.append(
+        _append_trace(
             {
                 "event": "warm_start",
                 "current_lambda": current_lambda,
@@ -1978,10 +1988,14 @@ def simulate_radial_gittins(
         nonlocal last_deployable_archive
         if not record_recommendation_trajectory:
             return
-        ordinary_checkpoint_due = not (
-            event == "adaptive_pull"
-            and adaptive_checkpoint_pulls % recommendation_checkpoint_interval
-            != 0
+        ordinary_checkpoint_due = (
+            event != "adaptive_pull"
+            or (
+                recommendation_checkpoint_interval is not None
+                and adaptive_checkpoint_pulls
+                % recommendation_checkpoint_interval
+                == 0
+            )
         )
         if not ordinary_checkpoint_due and not (anytime and completed_arm_changed):
             return
@@ -2065,7 +2079,7 @@ def simulate_radial_gittins(
         # An arm-specific dollar reservation still happens after an arm is
         # proposed, because different arms have different frozen pull costs.
         if total_evaluations >= question_cap:
-            trace.append(
+            _append_trace(
                 {
                     "event": "budget_stop",
                     "current_lambda": current_lambda,
@@ -2081,7 +2095,7 @@ def simulate_radial_gittins(
             max_search_cost_usd is not None
             and total_cost >= max_search_cost_usd
         ):
-            trace.append(
+            _append_trace(
                 {
                     "event": "budget_stop",
                     "current_lambda": current_lambda,
@@ -2246,7 +2260,7 @@ def simulate_radial_gittins(
             "actual_batch_search_cost_usd": 0.0,
             "cumulative_evaluations": total_evaluations,
             "cumulative_search_cost_usd": total_cost,
-        }
+        } if record_trace or history is not None else {}
 
         if status.should_stop and not past_gittins_stop:
             skipped_since_last_evaluation += 1
@@ -2265,7 +2279,7 @@ def simulate_radial_gittins(
                     # A complete no-observation sweep certifies this lambda
                     # stage's stop. Recompute every direction after decay;
                     # none of the old skip decisions is valid at a new cost.
-                    trace.append(visit_event)
+                    _append_trace(visit_event)
                     global_step += 1
                     remaining_penalty = max(
                         float(planning_horizons[i] - adaptive_pulls[i])
@@ -2314,7 +2328,7 @@ def simulate_radial_gittins(
                         ),
                     }
                     lambda_stop_events.append(lambda_stop_event)
-                    trace.append(dict(lambda_stop_event))
+                    _append_trace(dict(lambda_stop_event))
                     _append_recommendation_checkpoint("lambda_stop")
                     stage_stopped_at = time.perf_counter()
                     timing_fields = {
@@ -2326,7 +2340,8 @@ def simulate_radial_gittins(
                         ),
                     }
                     lambda_stop_event.update(timing_fields)
-                    trace[-1].update(timing_fields)
+                    if record_trace:
+                        trace[-1].update(timing_fields)
                     stage_timing_events.append({
                         **lambda_stop_event,
                         "event": "lambda_stage_stop",
@@ -2346,7 +2361,7 @@ def simulate_radial_gittins(
                     lambda_stage_wall_start = stage_stopped_at
                     continue
                 if halt_on_gittins_stop:
-                    trace.append(visit_event)
+                    _append_trace(visit_event)
                     global_step += 1
                     stop_reason = "all_directions_gittins_stop"
                     break
@@ -2354,14 +2369,14 @@ def simulate_radial_gittins(
                 skipped_since_last_evaluation = 0
                 # Fall through and force-pull under the remaining budget.
             else:
-                trace.append(visit_event)
+                _append_trace(visit_event)
                 global_step += 1
                 direction_index = (direction_index + 1) % len(resolved_directions)
                 continue
 
         selected_arm = status.best_unfinished_arm
         if selected_arm is None:
-            trace.append(visit_event)
+            _append_trace(visit_event)
             stop_reason = "all_arms_completed"
             break
         planned_batch_size = _next_batch_size(
@@ -2371,7 +2386,7 @@ def simulate_radial_gittins(
         if planned_batch_size <= 0:
             raise RuntimeError("unfinished arm has no remaining questions")
         if total_evaluations + planned_batch_size > question_cap:
-            trace.append(visit_event)
+            _append_trace(visit_event)
             stop_reason = "question_budget"
             break
         batch_scale = float(planned_batch_size) / float(batch_size)
@@ -2399,7 +2414,7 @@ def simulate_radial_gittins(
         if max_search_cost_usd is not None and (
             total_cost + reservation_cost > max_search_cost_usd
         ):
-            trace.append(visit_event)
+            _append_trace(visit_event)
             stop_reason = "search_cost_budget"
             break
 
@@ -2483,7 +2498,7 @@ def simulate_radial_gittins(
                 ),
             }
         )
-        trace.append(visit_event)
+        _append_trace(visit_event)
         if history is not None:
             history.append(dict(visit_event))
         adaptive_checkpoint_pulls += 1
@@ -2771,6 +2786,7 @@ def simulate_radial_gittins(
         "max_search_cost_usd": max_search_cost_usd,
         "halt_on_gittins_stop": halt_on_gittins_stop,
         "record_recommendation_trajectory": record_recommendation_trajectory,
+        "record_trace": record_trace,
         "recommendation_checkpoint_interval": (
             recommendation_checkpoint_interval
         ),
@@ -3135,6 +3151,11 @@ def main() -> None:
         action="store_true",
         help="Record recommendation checkpoints (always enabled with --anytime)",
     )
+    parser.add_argument(
+        "--no-trace",
+        action="store_true",
+        help="Do not retain per-direction-visit diagnostic trace events",
+    )
     parser.add_argument("--effective-cost-bin-ratio", type=float, default=2.0)
     parser.add_argument("--effective-cost-bin-anchor", type=float, default=1e-4)
     parser.add_argument(
@@ -3184,10 +3205,10 @@ def main() -> None:
     parser.add_argument(
         "--trajectory-checkpoint-interval",
         type=int,
-        default=10,
+        default=None,
         help=(
             "Record an ordinary trajectory point every N adaptive pulls; "
-            "warm-start, stop, and final points are always kept (default: 10)"
+            "by default only event checkpoints are kept"
         ),
     )
     parser.add_argument(
@@ -3247,6 +3268,7 @@ def main() -> None:
             anytime=args.anytime,
             lambda_initial=args.lambda_initial,
             lambda_decay=args.lambda_decay,
+            record_trace=not args.no_trace,
             record_recommendation_trajectory=(args.record_trajectory or args.anytime),
             effective_cost_bin_ratio=args.effective_cost_bin_ratio,
             effective_cost_bin_anchor=args.effective_cost_bin_anchor,

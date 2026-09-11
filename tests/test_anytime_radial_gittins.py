@@ -74,6 +74,30 @@ class _CostDependentBoundary:
 
 
 class AnytimeRadialGittinsTests(unittest.TestCase):
+    def test_trace_can_be_disabled_without_changing_results_or_checkpoints(self):
+        traced = _run()
+        untraced = _run(record_trace=False)
+
+        self.assertTrue(traced.trace)
+        self.assertEqual(untraced.trace, [])
+        self.assertEqual(traced.selected_models, untraced.selected_models)
+        self.assertEqual(traced.stop_reason, untraced.stop_reason)
+        self.assertEqual(traced.total_evaluations, untraced.total_evaluations)
+        self.assertEqual(traced.total_cost, untraced.total_cost)
+        self.assertEqual(
+            traced.recommendation_trajectory,
+            untraced.recommendation_trajectory,
+        )
+        timing_fields = {"stage_wall_time_seconds", "run_wall_time_seconds"}
+        strip_timing = lambda events: [
+            {key: value for key, value in event.items() if key not in timing_fields}
+            for event in events
+        ]
+        self.assertEqual(
+            strip_timing(traced.lambda_stop_events),
+            strip_timing(untraced.lambda_stop_events),
+        )
+
     def test_stage_timing_records_warm_start_stops_and_completion(self):
         result = _run()
 
