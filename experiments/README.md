@@ -308,6 +308,190 @@ separate phase timings. The comparison runner explicitly defers diagnostics
 until it builds its report and preserves all recommendation changes. Plot
 selection does not change recorded events or online recommendations.
 
+#### Hybrid LCB recommendations with unchanged asynchronous acquisition
+
+The `lcb-style-recommendation` branch builds on the completed-only checkpoint
+optimization in `asynchronous-eta-decay`. The following options and runners
+belong to this additional recommendation-rule layer.
+
+`--recommendation-rule hybrid_lcb --recommendation-beta 1.0` enables
+recommendations from all warm-started arms, including partially evaluated
+ones. Completed arms use their posterior means; incomplete arms subtract
+`beta * posterior_std` componentwise. The default `completed_only` remains
+available, and `--recommendation-rule lcb` preserves the earlier rule that
+subtracts uncertainty from **every** arm, including completed arms. These
+options change the recommended set at a given budget; the required-completion
+Gittins indices, completed-arm stopping comparator, per-direction η decay, and
+sampled cells are unchanged.
+
+For each arm, form a normalized recommendation vector `z`. With `hybrid_lcb`,
+`z = posterior_mean` after all questions have been evaluated, otherwise
+`z = posterior_mean - beta * sqrt(posterior_variance)`. With `lcb`, use the
+second expression for every arm. The coordinates are accuracy and cost
+desirability, both maximized. Subtracting uncertainty from cost desirability
+is conservative about cost; it is not a lower bound on raw dollar cost.
+Completed posterior means retain the calibrated prior; they are not replaced
+with raw empirical means. Each interior direction uses the existing radial
+scalarization evaluated at `z`; `(1, 0)` uses the accuracy coordinate of `z`.
+Endpoint ties use the inactive coordinate of `z`, then the stable arm index.
+Deduplicated direction winners are filtered for nondomination in the same
+recommendation space. Coordinates are not clipped. These are componentwise
+LCB-style heuristics, not confidence guarantees or `mean(radial utility) -
+beta * std(radial utility)`, and can still return full-data-dominated arms.
+
+This hybrid rule is an experimental recommendation option, not a guarantee
+that the recommended configurations lie on the full-data Pareto front. In the
+saved seed-42 hybrid sequence, C13/C14/C15/C17/C19 include configurations 2054,
+2056, or 2057 with full-data accuracy 28.03%–30.44% and mean cost
+$0.001077–$0.001155. Configuration 13806 dominates all three at 40.61% and
+$0.000727, but has only 4–8 observations at these checkpoints. Its accuracy
+LCB is 8.16%–10.88%, so the recommendation rule cannot identify its full-data
+advantage. At C19, configuration 2056 has only 24 observations: posterior
+mean 41.12% minus 9.09 percentage points still gives 32.02%, above its actual
+28.94% accuracy. Removing completed-arm penalties does not resolve this
+sampling uncertainty or change how quickly promising arms are explored.
+
+There is also a direction-winner limitation: interior scalarization ties use
+the stable arm index, and nondomination is checked only among the resulting
+direction winners. At C17/C19, 13810 has essentially the same accuracy score
+as 2057 (27.0462%, differing only at floating-point precision) and a better
+cost-desirability score, but wins no direction. A tolerance-aware tie rule or
+filter over all candidate recommendation vectors would be a separate change;
+the current experiment retains the existing tie rule for reproducibility.
+
+LCB membership is checked after every observation batch so partial-arm
+recommendation changes survive checkpoint downsampling. Each check computes
+the direction winners and recommendation membership only. A retained change
+captures an immutable, lightweight event containing the evidence needed to
+reconstruct the checkpoint later. Empirical/oracle diagnostic archives and
+HV/GD/IGD are computed from those events after sampling, when requested.
+Warm start and Final retain their own evidence, even when membership is
+unchanged, so the final sample counts remain correct.
+
+The generic event recording and deferred reconstruction APIs are shared with
+the completed-only branch and documented above. This branch adds the LCB and
+hybrid recommendation vectors to those frozen events; it does not change the
+sampling/stopping policy or the checkpoint performance optimization.
+
+Materialized checkpoints are
+labelled `archive_scope="lcb"`; the explicit `recommendation_rule` distinguishes
+`lcb` from `hybrid_lcb`. They include beta, recommendation vectors, sample counts,
+and completed-arm indices. Empirical raw and oracle
+archives remain separate diagnostics. HV and accuracy metrics evaluate the
+actual selected configurations against the full lookup table; that table
+never determines recommendations.
+
+After generating the saved asynchronous completed-only baseline using the
+commands above, run from the repository root:
+
+```bash
+# Run hybrid LCB with beta=1, seed42; save results without rendering figures.
+python experiments/combined_objective/compare_lcb_recommendations.py \
+    --recommendation-rule hybrid_lcb --beta 1
+
+# Optionally render all figures at the end of a replay.
+python experiments/combined_objective/compare_lcb_recommendations.py \
+    --recommendation-rule hybrid_lcb --beta 1 --plots
+
+# Redraw saved comparison and every membership-change Pareto checkpoint.
+python experiments/combined_objective/compare_lcb_recommendations.py \
+    --recommendation-rule hybrid_lcb --beta 1 --plot-only
+
+# Earlier all-arm LCB comparison (also the runner's default rule).
+python experiments/combined_objective/compare_lcb_recommendations.py \
+    --recommendation-rule lcb --beta 1
+
+# Focused recommendation and acquisition-invariance tests.
+python -m pytest tests/test_deferred_recommendations.py tests/test_lcb_deferred_recommendations.py \
+    tests/test_lcb_recommendations.py tests/test_direction_eta_decay.py \
+    tests/test_completed_recommendations.py -q
+```
+
+The runner verifies the exact sampling sequence, stopping decisions, costs,
+and η events against the saved completed-only trace. It reports first and
+sustained highest-accuracy recommendation, alongside whole-front quality at
+matched spend. Outputs are under
+`combined_objective/results/hybrid_lcb_recommendations_bird_dev_seed42_beta1/`
+or `combined_objective/results/lcb_recommendations_bird_dev_seed42_beta1/`,
+according to the selected rule. The default writes `comparison.json`, the
+rule-specific compressed trace, `summary.csv`, and `matched_budgets.csv`
+without rendering figures. `--no-plots` remains accepted for compatibility;
+`--plots` opts into rendering after replay. `comparison.json` is written once
+per export. `--plot-only` later renders all figures
+and `checkpoints.csv` from `comparison.json`, without replaying acquisition.
+The hybrid trace is `hybrid_lcb_trace.json.gz`, and its full checkpoint sequence
+is `hybrid_lcb_pareto_key_checkpoints_all_pages.pdf`, with all pages also saved
+as PNGs. Use `--outdir DIR` to override the output directory, passing the same
+directory when redrawing.
+Pareto panels show full-data accuracy and cost for offline evaluation, with
+hollow markers for partially evaluated recommendations and filled markers
+for completed recommendations. Warm start and Final are shown separately;
+`C1`, `C2`, ... retain every later membership change, including removals and
+replacements. Earlier recommendation does not mean the unchanged search
+actually terminates at that point.
+
+In the earlier **all-arm LCB** seed-42, beta-1 replay, the highest-accuracy configuration (2790) first
+entered the LCB recommendation at C65, 13.304207% search cost, with 224 of 1534
+samples. It was briefly removed twice, then remained from C69, 13.575622%,
+with 260 samples. Completed-only first and sustained recommendation occurred
+at C5, 24.987002%, after all 1534 samples. At 15% search spend, relative HV
+regret was 0.4063% with LCB versus 1.8001% with completed-only. LCB had 69
+membership changes versus 5, including transient full-data-dominated
+recommendations. Final membership and HV regret were identical. All 115044
+ordered observations, 34175 trace events (excluding timing fields), and η
+events matched exactly; total search spend remained $946.704126. C65–C69 are
+on `lcb_pareto_key_checkpoints_page008.png`; the complete 8-page sequence is
+`lcb_pareto_key_checkpoints_all_pages.pdf`. These are single-seed findings.
+
+For a standalone hybrid replay through the general CLI:
+
+```bash
+python experiments/combined_objective/offline_radial_gittins.py \
+    --scope data/scope/bird_dev --anytime \
+    --direction-scheduler round_robin --eta-decay-schedule direction_stop \
+    --recommendation-rule hybrid_lcb --recommendation-beta 1.0 \
+    --seeds 1 --base-seed 42 --batch-size 4 --grid-size 129 \
+    --eta 1.0 --lambda-initial 1.0 --lambda-decay 0.5 \
+    --record-trajectory --recommendation-changes-only \
+    --output /tmp/bird_dev_async_eta_hybrid_lcb_seed42.json
+```
+
+As above, the standalone CLI uses its default boundary padding; the comparison
+runner fixes extra padding 2.0 for the reported BIRD experiment. Replace
+`hybrid_lcb` with `lcb` to run the original rule.
+
+The standalone deferred-diagnostic flag and saved-result materializer described
+above also support LCB/hybrid events.
+
+The earlier hybrid figures were reconstructed directly from the saved all-arm
+LCB trace. The main selector now supports `hybrid_lcb` explicitly, so the runner
+above is the reproducible algorithm entry point. The native seed-42, beta-1
+replay matches all 48 diagnostic snapshots (Warm start, 46 membership changes,
+and Final), including membership, sample counts, evaluations, and cost. All
+115044 sampled cells, 34175 acquisition events excluding timing, stopping
+decisions, and direction-eta events match the completed-only baseline. Config
+2790 first entered at C42 (13.748950% search cost, 284 samples), was removed
+twice, and remained from C46 (15.244572%, 480 samples). These remain single-seed
+findings; the dominated early recommendations described above are also retained.
+With the saved hybrid `diagnostic.json` and original LCB `comparison.json`
+available, redraw the earlier diagnostic without acquisition:
+
+```bash
+python experiments/combined_objective/plot/plot_hybrid_lcb_trace.py
+```
+
+Outputs are under `results/hybrid_lcb_recommendations_bird_dev_seed42_beta1/`:
+`pareto_key_checkpoints_page01.png` through `page06.png`,
+`pareto_key_checkpoints_all_pages.pdf`, and `checkpoints.csv` retain all C1–C46
+plus Warm start and the actual Final state. Each PNG title gives the page number
+and checkpoint range. Use `--pdf-only` to skip the per-page PNG writes.
+`--include-selected` additionally writes `pareto_selected_checkpoints.png`,
+an explicitly labelled excerpt of C42–C46 and Final, including both withdrawals.
+The old `pareto_recovery.png` was this excerpt, not the complete trajectory.
+These unprefixed diagnostic figure names differ from the runner's
+`hybrid_lcb_pareto_key_checkpoints*` figures. Both exporters write
+`checkpoints.csv`; use a separate `--outdir` when retaining both CSV versions.
+
 The default `--direction-scheduler round_robin` visits all ten directions in
 one cycle. The experimental `--direction-scheduler accuracy_last` runs the
 other directions round-robin until all stop, then runs `(1, 0)` until it stops.

@@ -185,7 +185,10 @@ class RadialArmSummary:
 
 PROVISIONAL_ARCHIVE_SCOPE = "provisional"
 DEPLOYABLE_ARCHIVE_SCOPE = "deployable"
-ARCHIVE_SCOPES = (PROVISIONAL_ARCHIVE_SCOPE, DEPLOYABLE_ARCHIVE_SCOPE)
+LCB_ARCHIVE_SCOPE = "lcb"
+ARCHIVE_SCOPES = (PROVISIONAL_ARCHIVE_SCOPE, DEPLOYABLE_ARCHIVE_SCOPE, LCB_ARCHIVE_SCOPE)
+LCB_RECOMMENDATION_RULES = ("lcb", "hybrid_lcb")
+RECOMMENDATION_RULES = ("completed_only", *LCB_RECOMMENDATION_RULES)
 
 
 @dataclass(frozen=True)
@@ -206,13 +209,22 @@ class RecommendationCheckpoint:
         recommendation, and is the scope recorded from the endogenous stop
         onward.
 
-    Fixed-lambda runs switch scope at most once, so a trajectory is a
+    ``"lcb"``
+        Every warm-started arm is eligible. Direction winners and the final
+        frontier use componentwise posterior mean minus beta times posterior
+        standard deviation in normalized desirability space. This is an
+        output-only rule; acquisition and stopping still require completion.
+        With ``recommendation_rule="hybrid_lcb"``, completed arms instead use
+        their posterior means, without an uncertainty penalty.
+        Observed raw vectors and full-data quality metrics are diagnostics.
+
+    With the default rule, fixed-lambda runs switch scope at most once, so a trajectory is a
     provisional prefix followed by a deployable suffix. A run that finishes
     every arm without an endogenous stop stays labelled provisional, where the
     two scopes coincide because every arm is completed. Full-data oracle fields are diagnostic
     only and never affect acquisition, stopping, or the archive.
 
-    Anytime runs use the deployable scope throughout, including an empty
+    With the default rule, anytime runs use the deployable scope throughout, including an empty
     warm-start archive when no arm is completed. ``added_arm_indices`` records
     new archive members since the previous recommendation, including a new
     member that replaces an existing one without increasing cardinality.
@@ -251,6 +263,9 @@ class RecommendationCheckpoint:
     removed_models: Tuple[str, ...] = ()
     direction_eta_multipliers: Tuple[float, ...] = ()
     direction_eta_stages: Tuple[int, ...] = ()
+    recommendation_rule: str = "completed_only"
+    recommendation_beta: float = 1.0
+    recommendation_desirability_vectors: Tuple[Tuple[float, float], ...] = ()
     direction_winner_sample_counts: Tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
@@ -259,7 +274,7 @@ class RecommendationCheckpoint:
 
     @property
     def is_deployable(self) -> bool:
-        return self.archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
+        return self.archive_scope in {DEPLOYABLE_ARCHIVE_SCOPE, LCB_ARCHIVE_SCOPE}
 
 
 @dataclass(frozen=True)
@@ -287,6 +302,9 @@ class RecommendationEvent:
     removed_arm_indices: Tuple[int, ...] = ()
     direction_eta_multipliers: Tuple[float, ...] = ()
     direction_eta_stages: Tuple[int, ...] = ()
+    recommendation_rule: str = "completed_only"
+    recommendation_beta: float = 1.0
+    recommendation_desirability_vectors: Tuple[Tuple[float, float], ...] = ()
 
 
 @dataclass
@@ -984,6 +1002,78 @@ def front_quality_metrics(
     )
 
 
+def recommendation_lcb_vectors(
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    arm_indices: Sequence[int],
+    beta: float = 1.0,
+    *,
+    completed_arms: Sequence[int] = (),
+) -> np.ndarray:
+    """Conservative accuracy and cost-desirability coordinates, without clipping.
+
+    Both posterior coordinates are maximized. Subtracting uncertainty from
+    cost desirability is conservative about cost, too. The standard deviation
+    describes uncertainty in the latent mean, not individual observations.
+    This componentwise LCB-style heuristic is not a joint confidence guarantee.
+    For the hybrid rule, pass completed arm IDs to exempt their coordinates
+    from the penalty. Posterior state is never modified.
+    """
+    if not math.isfinite(beta) or beta < 0.0:
+        raise ValueError("recommendation_beta must be finite and nonnegative")
+    completed = set(completed_arms)
+    return np.asarray(
+        [posteriors[i].mean if i in completed
+         else posteriors[i].mean - beta * np.sqrt(posteriors[i].var)
+         for i in arm_indices],
+        dtype=np.float64,
+    ).reshape((-1, 2))
+
+
+def recommendation_lcb_utilities(
+    vectors: np.ndarray,
+    direction: Sequence[float],
+    reference: Sequence[float] = (0.0, 0.0),
+) -> np.ndarray:
+    """Apply the existing radial scalarization to conservative coordinates."""
+    direction = _validate_directions((direction,))[0]
+    points = np.asarray(vectors, dtype=np.float64).reshape((-1, 2))
+    centered = points - np.asarray(reference, dtype=np.float64)
+    axis = _direction_axis(direction)
+    if axis is not None:
+        return centered[:, axis]
+    return np.min(np.max(direction) * centered / np.asarray(direction), axis=1)
+
+
+def _lcb_direction_winners(
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    directions: Sequence[Tuple[float, float]],
+    reference_point: Sequence[float],
+    stop_tolerance: float,
+    beta: float,
+    *,
+    completed_arms: Sequence[int] = (),
+) -> List[Tuple[int, float]]:
+    arms = sorted(posteriors)
+    if not arms:
+        return []
+    conservative = recommendation_lcb_vectors(
+        posteriors, arms, beta, completed_arms=completed_arms,
+    )
+    winners = []
+    for direction in directions:
+        axis = _direction_axis(direction)
+        utilities = dict(zip(arms, recommendation_lcb_utilities(conservative, direction, reference_point)))
+        winner, utility = _best_direction_index(
+            utilities, stop_tolerance, direction=direction, posteriors=posteriors,
+            endpoint_secondary_values=(
+                dict(zip(arms, conservative[:, 1 - axis])) if axis is not None else None
+            ),
+        )
+        assert winner is not None
+        winners.append((winner, utility))
+    return winners
+
+
 def provisional_direction_winner_arms(
     *,
     posteriors: Mapping[int, GaussianVectorPosterior],
@@ -1080,6 +1170,8 @@ def provisional_archive_from_posteriors(
 class _RecommendationSelection:
     selected_arm_indices: Tuple[int, ...]
     direction_winner_arm_indices: Tuple[int, ...]
+    recommendation_desirability_vectors: Tuple[Tuple[float, float], ...]
+    # Needed online by the empirical raw rule; LCB fills these only on capture.
     estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...] = ()
 
 
@@ -1093,11 +1185,31 @@ def _recommendation_selection(
     observed_costs: Mapping[int, Sequence[float]],
     completed_arms: Sequence[int],
     archive_scope: str,
+    recommendation_rule: str,
+    recommendation_beta: float,
     radial_terminal_utility_provider: Optional[RadialTerminalUtilityProvider] = None,
 ) -> _RecommendationSelection:
     """Select online members without computing any diagnostic archive or metric."""
+    if recommendation_rule not in RECOMMENDATION_RULES:
+        raise ValueError(f"recommendation_rule must be one of {RECOMMENDATION_RULES}")
     if archive_scope not in ARCHIVE_SCOPES:
         raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
+    if recommendation_rule in LCB_RECOMMENDATION_RULES:
+        exempt = completed_arms if recommendation_rule == "hybrid_lcb" else ()
+        winners = tuple(dict.fromkeys(
+            arm for arm, _ in _lcb_direction_winners(
+                posteriors, directions, reference_point, stop_tolerance,
+                recommendation_beta, completed_arms=exempt,
+            )
+        ))
+        vectors = recommendation_lcb_vectors(
+            posteriors, winners, recommendation_beta, completed_arms=exempt,
+        )
+        return _RecommendationSelection(
+            selected_arm_indices=tuple(winners[i] for i in nondominated_indices(vectors)),
+            direction_winner_arm_indices=winners,
+            recommendation_desirability_vectors=tuple(tuple(map(float, v)) for v in vectors),
+        )
     eligible = completed_arms if archive_scope == DEPLOYABLE_ARCHIVE_SCOPE else tuple(sorted(posteriors))
     winners = tuple(provisional_direction_winner_arms(
         posteriors=posteriors,
@@ -1116,6 +1228,7 @@ def _recommendation_selection(
     return _RecommendationSelection(
         selected_arm_indices=tuple(raw_archive_arm_indices(winners, np.asarray(raw).reshape((-1, 2)))),
         direction_winner_arm_indices=winners,
+        recommendation_desirability_vectors=(),
         estimated_raw_winner_vectors=raw,
     )
 
@@ -1136,12 +1249,16 @@ def _capture_recommendation_event(
     lambda_stage: int,
     direction_eta_multipliers: Tuple[float, ...],
     direction_eta_stages: Tuple[int, ...],
+    recommendation_rule: str,
+    recommendation_beta: float,
 ) -> RecommendationEvent:
     """Freeze only a retained event's online evidence; never access full truth."""
     if not math.isfinite(bruteforce_search_cost_usd) or bruteforce_search_cost_usd <= 0.0:
         raise ValueError("bruteforce_search_cost_usd must be finite and positive")
     winners = selection.direction_winner_arm_indices
     raw = selection.estimated_raw_winner_vectors
+    if recommendation_rule in LCB_RECOMMENDATION_RULES:
+        raw = tuple((float(np.mean(observed_scores[i])), float(np.mean(observed_costs[i]))) for i in winners)
     return RecommendationEvent(
         cumulative_evaluations=int(total_evaluations),
         cumulative_search_cost_usd=float(total_cost),
@@ -1158,6 +1275,9 @@ def _capture_recommendation_event(
         lambda_stage=lambda_stage,
         direction_eta_multipliers=direction_eta_multipliers,
         direction_eta_stages=direction_eta_stages,
+        recommendation_rule=recommendation_rule,
+        recommendation_beta=recommendation_beta,
+        recommendation_desirability_vectors=selection.recommendation_desirability_vectors,
     )
 
 
@@ -1321,16 +1441,21 @@ def _recommendation_checkpoint(
     lambda_stage: int = 0,
     direction_eta_multipliers: Tuple[float, ...] = (),
     direction_eta_stages: Tuple[int, ...] = (),
+    recommendation_rule: str = "completed_only",
+    recommendation_beta: float = 1.0,
     radial_terminal_utility_provider: Optional[
         RadialTerminalUtilityProvider
     ] = None,
 ) -> RecommendationCheckpoint:
     # Eager compatibility helper for callers constructing one checkpoint.
+    if recommendation_rule in LCB_RECOMMENDATION_RULES:
+        archive_scope = LCB_ARCHIVE_SCOPE
     selection = _recommendation_selection(
         posteriors=posteriors, directions=directions, reference_point=reference_point,
         stop_tolerance=stop_tolerance, observed_scores=observed_scores,
         observed_costs=observed_costs, completed_arms=completed_arms,
-        archive_scope=archive_scope,
+        archive_scope=archive_scope, recommendation_rule=recommendation_rule,
+        recommendation_beta=recommendation_beta,
         radial_terminal_utility_provider=radial_terminal_utility_provider,
     )
     snapshot = _capture_recommendation_event(
@@ -1341,6 +1466,7 @@ def _recommendation_checkpoint(
         current_lambda=current_lambda, lambda_stage=lambda_stage,
         direction_eta_multipliers=direction_eta_multipliers,
         direction_eta_stages=direction_eta_stages,
+        recommendation_rule=recommendation_rule, recommendation_beta=recommendation_beta,
     )
     return _materialize_recommendation_event(
         snapshot, models=models, truth_vectors=truth_vectors, truth_front=truth_front,
@@ -1446,6 +1572,8 @@ def simulate_radial_gittins(
     directions: Optional[Iterable[Sequence[float]]] = None,
     direction_scheduler: str = "round_robin",
     eta_decay_schedule: str = "global_stop",
+    recommendation_rule: str = "completed_only",
+    recommendation_beta: float = 1.0,
     prior_variance: Sequence[float] | float = 0.04,
     obs_noise_variance: Optional[Sequence[float] | float] = None,
     cost_reference_usd: Optional[float] = None,
@@ -1546,7 +1674,14 @@ def simulate_radial_gittins(
     partially observed arms retain their posteriors and remaining questions.
     The default ``'round_robin'`` keeps all directions in one cycle.
 
-    Anytime recommendations use only completed arms.
+    Anytime recommendations default to completed arms. The opt-in
+    ``recommendation_rule='lcb'`` instead uses all arms, scoring each direction
+    at componentwise posterior mean minus ``recommendation_beta`` posterior
+    standard deviations (default 1), and filters in that same conservative
+    desirability space. ``'hybrid_lcb'`` exempts completed arms from that penalty,
+    using their posterior means for both coordinates. Both rules change only
+    recommendations: unfinished indices,
+    the completed-arm stopping comparator, and eta decay are unchanged.
 
     ``eta_decay_schedule='direction_stop'`` requires anytime round-robin.
     A direction that stops halves only its own cost multiplier, then yields
@@ -1580,6 +1715,11 @@ def simulate_radial_gittins(
     """
     wall_start = time.perf_counter()
     timing_origin = wall_start
+    if recommendation_rule not in RECOMMENDATION_RULES:
+        raise ValueError(f"recommendation_rule must be one of {RECOMMENDATION_RULES}")
+    if not math.isfinite(recommendation_beta) or recommendation_beta < 0.0:
+        raise ValueError("recommendation_beta must be finite and nonnegative")
+    lcb_recommendation = recommendation_rule in LCB_RECOMMENDATION_RULES
     batch_size = _positive_integer(batch_size, "batch_size")
     horizon_bin_width = _positive_integer(horizon_bin_width, "horizon_bin_width")
     resolved_directions = _validate_directions(
@@ -2244,7 +2384,7 @@ def simulate_radial_gittins(
                 == 0
             )
         )
-        inspect_every_pull = recommendation_changes_only
+        inspect_every_pull = recommendation_changes_only or lcb_recommendation
         if (
             not ordinary_checkpoint_due
             and not inspect_every_pull
@@ -2256,12 +2396,14 @@ def simulate_radial_gittins(
             for i in range(n_arms)
             if adaptive_pulls[i] >= actual_horizons[i]
         )
-        # Fixed-lambda trajectories keep their historical provisional prefix.
-        # Anytime recommendations are available after any arm completes.
+        # LCB is available from warmup; the default completed-only rule keeps
+        # its historical fixed-lambda provisional prefix and anytime scope.
         archive_scope = (
-            DEPLOYABLE_ARCHIVE_SCOPE
-            if anytime or gittins_stop_evaluations is not None
-            else PROVISIONAL_ARCHIVE_SCOPE
+            LCB_ARCHIVE_SCOPE if lcb_recommendation else (
+                DEPLOYABLE_ARCHIVE_SCOPE
+                if anytime or gittins_stop_evaluations is not None
+                else PROVISIONAL_ARCHIVE_SCOPE
+            )
         )
         recommendation_recording["membership_checks"] += 1
         membership_started = time.perf_counter()
@@ -2274,6 +2416,8 @@ def simulate_radial_gittins(
             observed_costs=observed_costs,
             completed_arms=completed_at_checkpoint,
             archive_scope=archive_scope,
+            recommendation_rule=recommendation_rule,
+            recommendation_beta=recommendation_beta,
             radial_terminal_utility_provider=_cached_radial_terminal_utility,
         )
         recommendation_recording["membership_wall_time_seconds"] += time.perf_counter() - membership_started
@@ -2289,8 +2433,8 @@ def simulate_radial_gittins(
                 or (ordinary_checkpoint_due and not recommendation_changes_only)
             )
         # Warm/final preserve their own current evidence even if their set is
-        # unchanged. Discarded pulls never construct diagnostic archives or
-        # compute full-data quality metrics.
+        # unchanged. Discarded LCB pulls never scan histories; no discarded
+        # pull constructs diagnostic archives or metrics.
         if not retain and event not in {"after_warm_start", "final"}:
             return
         capture_started = time.perf_counter()
@@ -2309,6 +2453,8 @@ def simulate_radial_gittins(
             lambda_stage=lambda_stage,
             direction_eta_multipliers=tuple(direction_eta_multipliers),
             direction_eta_stages=tuple(direction_eta_stages),
+            recommendation_rule=recommendation_rule,
+            recommendation_beta=recommendation_beta,
         )
         recommendation_recording["captured_events"] += 1
         recommendation_recording["event_capture_wall_time_seconds"] += time.perf_counter() - capture_started
@@ -2871,30 +3017,41 @@ def simulate_radial_gittins(
     completed_final = [
         i for i in range(n_arms) if adaptive_pulls[i] >= actual_horizons[i]
     ]
+    penalty_exempt_final = completed_final if recommendation_rule == "hybrid_lcb" else ()
+    final_lcb_winners = (
+        _lcb_direction_winners(
+            posteriors, resolved_directions, resolved_reference,
+            stop_tolerance, recommendation_beta,
+            completed_arms=penalty_exempt_final,
+        ) if lcb_recommendation else []
+    )
     direction_winners: List[DirectionWinner] = []
     for direction_index_final, direction in enumerate(resolved_directions):
-        if not completed_final:
+        if not completed_final and not lcb_recommendation:
             break
-        utilities = {
-            arm_index: _cached_radial_terminal_utility(
-                direction_index_final,
-                arm_index,
+        if lcb_recommendation:
+            winner_arm, utility = final_lcb_winners[direction_index_final]
+        else:
+            utilities = {
+                arm_index: _cached_radial_terminal_utility(
+                    direction_index_final,
+                    arm_index,
+                )
+                for arm_index in completed_final
+            }
+            winner_arm, utility = _best_direction_index(
+                utilities,
+                stop_tolerance,
+                direction=direction,
+                posteriors=posteriors,
+                endpoint_secondary_values=(
+                    {
+                        arm_index: _observed_endpoint_tiebreak(direction, arm_index)
+                        for arm_index in completed_final
+                    }
+                    if _direction_axis(direction) is not None else None
+                ),
             )
-            for arm_index in completed_final
-        }
-        winner_arm, utility = _best_direction_index(
-            utilities,
-            stop_tolerance,
-            direction=direction,
-            posteriors=posteriors,
-            endpoint_secondary_values=(
-                {
-                    arm_index: _observed_endpoint_tiebreak(direction, arm_index)
-                    for arm_index in completed_final
-                }
-                if _direction_axis(direction) is not None else None
-            ),
-        )
         assert winner_arm is not None
         direction_winners.append(
             DirectionWinner(
@@ -2941,14 +3098,21 @@ def simulate_radial_gittins(
         posterior_archive_arms = []
         online_raw_archive_arms = []
         oracle_raw_archive_arms = []
-    # The deployable recommendation is filtered only with observations that
-    # the selector actually acquired. The oracle archive is diagnostic-only.
-    archive_arms = online_raw_archive_arms
-    selected_models = [models[i] for i in online_raw_archive_arms]
+    # LCB winners are filtered in the same conservative space used to rank
+    # them. Empirical raw and oracle fronts remain separately named diagnostics.
+    archive_arms = (
+        [unique_winner_arms[position] for position in nondominated_indices(
+            recommendation_lcb_vectors(
+                posteriors, unique_winner_arms, recommendation_beta,
+                completed_arms=penalty_exempt_final,
+            )
+        )] if lcb_recommendation else online_raw_archive_arms
+    )
+    selected_models = [models[i] for i in archive_arms]
 
     model_results: List[RadialArmSummary] = []
     winner_arm_set = set(unique_winner_arms)
-    archive_arm_set = set(online_raw_archive_arms)
+    archive_arm_set = set(archive_arms)
     posterior_archive_arm_set = set(posterior_archive_arms)
     oracle_raw_archive_arm_set = set(oracle_raw_archive_arms)
     for arm_index, model_name in enumerate(models):
@@ -3086,8 +3250,34 @@ def simulate_radial_gittins(
 
     params: Dict[str, Any] = {
         "batch_size": batch_size,
-        "recommendation_space": "observed_raw_accuracy_mean_cost_usd",
-        "recommendation_eligibility": "completed_only",
+        "recommendation_space": (
+            "completed_mean_partial_lcb_desirability" if recommendation_rule == "hybrid_lcb" else
+            "componentwise_posterior_lcb_desirability" if lcb_recommendation
+            else "observed_raw_accuracy_mean_cost_usd"
+        ),
+        "recommendation_rule": recommendation_rule,
+        "recommendation_beta": recommendation_beta,
+        "recommendation_completed_std_penalty": (
+            recommendation_beta if recommendation_rule == "lcb" else 0.0
+        ),
+        "recommendation_eligibility": "all_arms" if lcb_recommendation else "completed_only",
+        "recommendation_direction_score": (
+            "radial_utility_at_completed_mean_or_partial_lcb" if recommendation_rule == "hybrid_lcb" else
+            "radial_utility_at_componentwise_lcb" if lcb_recommendation
+            else "posterior_expected_terminal_utility"
+        ),
+        "recommendation_endpoint_score": (
+            "active_completed_mean_or_partial_lcb_minus_reference" if recommendation_rule == "hybrid_lcb" else
+            "active_posterior_mean_minus_beta_std_minus_reference" if lcb_recommendation
+            else "active_posterior_mean_minus_reference"
+        ),
+        "recommendation_endpoint_tie_break": (
+            "other_conservative_coordinate_then_arm_index" if lcb_recommendation
+            else "other_observed_objective_then_arm_index"
+        ),
+        "stopping_eligibility": "completed_only",
+        "stopping_value": "required_completion_gittins",
+        "recommendation_changes_acquisition": False,
         "recommendation_changes_only": bool(recommendation_changes_only),
         "defer_recommendation_diagnostics": bool(defer_recommendation_diagnostics),
         "recommendation_recording": recommendation_recording,
@@ -3103,6 +3293,7 @@ def simulate_radial_gittins(
         "direction_eta_event_count": len(direction_eta_events),
         "direction_scheduler_groups": [list(group) for group in scheduler.groups],
         "endpoint_direction_policy": {
+            "scope": "acquisition_and_stopping",
             "directions": [
                 list(direction) for direction in resolved_directions
                 if _direction_axis(direction) is not None
@@ -3317,7 +3508,7 @@ def simulate_radial_gittins(
         posterior_archive_arm_indices=tuple(posterior_archive_arms),
         posterior_archive_models=[models[i] for i in posterior_archive_arms],
         online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
-        online_raw_archive_models=list(selected_models),
+        online_raw_archive_models=[models[i] for i in online_raw_archive_arms],
         oracle_raw_winner_archive_arm_indices=tuple(oracle_raw_archive_arms),
         oracle_raw_winner_archive_models=[
             models[i] for i in oracle_raw_archive_arms
@@ -3335,6 +3526,9 @@ def simulate_radial_gittins(
                 "lambda_stage": lambda_stage,
                 "lambda_stop_count": len(lambda_stop_events),
                 "eta_decay_schedule": eta_decay_schedule,
+                "recommendation_rule": recommendation_rule,
+                "recommendation_beta": recommendation_beta,
+                "stopping_eligibility": "completed_only",
                 "lambda_scope": "visited_direction" if independent_eta else "global",
                 "direction_eta_multipliers": list(direction_eta_multipliers),
                 "direction_eta_stages": list(direction_eta_stages),
@@ -3442,7 +3636,7 @@ def print_radial_result(result: RadialSimulationResult) -> None:
             f"  {winner.direction}: {winner.model_name} "
             f"(terminal={winner.terminal_utility:.6f})"
         )
-    print(f"online raw-space recommendation: {result.selected_models}")
+    print(f"recommendation ({result.params['recommendation_space']}): {result.selected_models}")
     print(f"posterior-desirability archive: {result.posterior_archive_models}")
     print(
         "offline oracle raw winner archive: "
@@ -3534,6 +3728,14 @@ def main() -> None:
         "--eta-decay-schedule", choices=("global_stop", "direction_stop"),
         default="global_stop",
         help="Decay the shared eta after global stopping, or each direction's eta after its local stop",
+    )
+    parser.add_argument(
+        "--recommendation-rule", choices=RECOMMENDATION_RULES, default="completed_only",
+        help="Recommend completed arms, all arms with LCB, or hybrid_lcb (completed mean, partial LCB); stopping is unchanged",
+    )
+    parser.add_argument(
+        "--recommendation-beta", type=float, default=1.0,
+        help="Nonnegative posterior-standard-deviation multiplier for LCB recommendations (default: 1)",
     )
     parser.add_argument(
         "--lambda-initial", type=float, default=1.0,
@@ -3668,6 +3870,8 @@ def main() -> None:
             ),
             direction_scheduler=args.direction_scheduler,
             eta_decay_schedule=args.eta_decay_schedule,
+            recommendation_rule=args.recommendation_rule,
+            recommendation_beta=args.recommendation_beta,
             observation_budget_fraction=args.budget_fraction,
             max_search_cost_usd=args.max_search_cost,
             guaranteed_batch_cost_usd=args.guaranteed_batch_cost,
