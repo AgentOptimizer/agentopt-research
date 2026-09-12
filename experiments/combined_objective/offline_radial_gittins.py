@@ -251,6 +251,7 @@ class RecommendationCheckpoint:
     removed_models: Tuple[str, ...] = ()
     direction_eta_multipliers: Tuple[float, ...] = ()
     direction_eta_stages: Tuple[int, ...] = ()
+    direction_winner_sample_counts: Tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if self.archive_scope not in ARCHIVE_SCOPES:
@@ -259,6 +260,33 @@ class RecommendationCheckpoint:
     @property
     def is_deployable(self) -> bool:
         return self.archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
+
+
+@dataclass(frozen=True)
+class RecommendationEvent:
+    """Immutable online evidence for a retained recommendation, without metrics.
+
+    All vectors are copied at the event's time. No live posterior, observation
+    history, full-data metric, or reference to an acquisition cache is retained.
+    """
+
+    cumulative_evaluations: int
+    cumulative_search_cost_usd: float
+    budget_fraction: float
+    selected_arm_indices: Tuple[int, ...]
+    direction_winner_arm_indices: Tuple[int, ...]
+    winner_posterior_means: Tuple[Tuple[float, float], ...]
+    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
+    direction_winner_sample_counts: Tuple[int, ...]
+    event: str
+    completed_arm_indices: Tuple[int, ...] = ()
+    archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE
+    current_lambda: float = 1.0
+    lambda_stage: int = 0
+    added_arm_indices: Tuple[int, ...] = ()
+    removed_arm_indices: Tuple[int, ...] = ()
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
 
 
 @dataclass
@@ -314,6 +342,9 @@ class RadialSimulationResult:
     direction_eta_multipliers: Tuple[float, ...] = ()
     direction_eta_stages: Tuple[int, ...] = ()
     direction_eta_events: List[Dict[str, Any]] = field(default_factory=list)
+    recommendation_events: List[RecommendationEvent] = field(default_factory=list)
+    recommendation_initial_event: Optional[RecommendationEvent] = None
+    recommendation_final_event: Optional[RecommendationEvent] = None
 
 
 @dataclass(frozen=True)
@@ -1046,42 +1077,29 @@ def provisional_archive_from_posteriors(
 
 
 @dataclass(frozen=True)
-class _CheckpointArchive:
+class _RecommendationSelection:
+    selected_arm_indices: Tuple[int, ...]
     direction_winner_arm_indices: Tuple[int, ...]
-    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
-    posterior_archive_arm_indices: Tuple[int, ...]
-    posterior_archive_models: Tuple[str, ...]
-    online_raw_archive_arm_indices: Tuple[int, ...]
-    online_raw_archive_models: Tuple[str, ...]
-    oracle_raw_winner_archive_arm_indices: Tuple[int, ...]
-    oracle_raw_winner_archive_models: Tuple[str, ...]
-    hypervolume: float
-    hypervolume_regret: float
-    generational_distance: float
-    inverted_generational_distance: float
+    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...] = ()
 
 
-def _checkpoint_archive(
+def _recommendation_selection(
     *,
-    eligible_arms: Sequence[int],
     posteriors: Mapping[int, GaussianVectorPosterior],
     directions: Sequence[Tuple[float, float]],
-    models: Sequence[str],
     reference_point: Sequence[float],
     stop_tolerance: float,
-    truth_vectors: np.ndarray,
-    truth_front: np.ndarray,
-    raw_truth_vectors: np.ndarray,
     observed_scores: Mapping[int, Sequence[float]],
     observed_costs: Mapping[int, Sequence[float]],
-    ground_truth_hv: float,
-    radial_terminal_utility_provider: Optional[
-        RadialTerminalUtilityProvider
-    ] = None,
-) -> _CheckpointArchive:
-    """Build one online archive for an explicit arm-eligibility scope."""
-    eligible = tuple(int(i) for i in eligible_arms)
-    winner_arms = provisional_direction_winner_arms(
+    completed_arms: Sequence[int],
+    archive_scope: str,
+    radial_terminal_utility_provider: Optional[RadialTerminalUtilityProvider] = None,
+) -> _RecommendationSelection:
+    """Select online members without computing any diagnostic archive or metric."""
+    if archive_scope not in ARCHIVE_SCOPES:
+        raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
+    eligible = completed_arms if archive_scope == DEPLOYABLE_ARCHIVE_SCOPE else tuple(sorted(posteriors))
+    winners = tuple(provisional_direction_winner_arms(
         posteriors=posteriors,
         directions=directions,
         reference_point=reference_point,
@@ -1093,71 +1111,191 @@ def _checkpoint_archive(
             if _direction_axis(directions[direction_index]) == 0
             else float(np.mean(observed_scores[arm_index]))
         ),
+    ))
+    raw = tuple((float(np.mean(observed_scores[i])), float(np.mean(observed_costs[i]))) for i in winners)
+    return _RecommendationSelection(
+        selected_arm_indices=tuple(raw_archive_arm_indices(winners, np.asarray(raw).reshape((-1, 2)))),
+        direction_winner_arm_indices=winners,
+        estimated_raw_winner_vectors=raw,
     )
-    posterior_points = np.asarray(
-        [posteriors[i].mean for i in winner_arms],
-        dtype=np.float64,
-    ).reshape((-1, 2))
-    posterior_archive_arms = [
-        winner_arms[position]
-        for position in nondominated_indices(posterior_points)
-    ]
-    estimated_raw_points = np.asarray(
-        [
-            (
-                float(np.mean(observed_scores[i])),
-                float(np.mean(observed_costs[i])),
-            )
-            for i in winner_arms
-        ],
-        dtype=np.float64,
-    ).reshape((-1, 2))
-    online_raw_archive_arms = raw_archive_arm_indices(
-        winner_arms,
-        estimated_raw_points,
+
+
+def _capture_recommendation_event(
+    selection: _RecommendationSelection,
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    observed_scores: Mapping[int, Sequence[float]],
+    observed_costs: Mapping[int, Sequence[float]],
+    total_evaluations: int,
+    total_cost: float,
+    bruteforce_search_cost_usd: float,
+    event: str,
+    completed_arms: Sequence[int],
+    archive_scope: str,
+    current_lambda: float,
+    lambda_stage: int,
+    direction_eta_multipliers: Tuple[float, ...],
+    direction_eta_stages: Tuple[int, ...],
+) -> RecommendationEvent:
+    """Freeze only a retained event's online evidence; never access full truth."""
+    if not math.isfinite(bruteforce_search_cost_usd) or bruteforce_search_cost_usd <= 0.0:
+        raise ValueError("bruteforce_search_cost_usd must be finite and positive")
+    winners = selection.direction_winner_arm_indices
+    raw = selection.estimated_raw_winner_vectors
+    return RecommendationEvent(
+        cumulative_evaluations=int(total_evaluations),
+        cumulative_search_cost_usd=float(total_cost),
+        budget_fraction=float(total_cost) / float(bruteforce_search_cost_usd),
+        selected_arm_indices=selection.selected_arm_indices,
+        direction_winner_arm_indices=winners,
+        winner_posterior_means=tuple(tuple(map(float, posteriors[i].mean)) for i in winners),
+        estimated_raw_winner_vectors=raw,
+        direction_winner_sample_counts=tuple(len(observed_scores[i]) for i in winners),
+        event=event,
+        completed_arm_indices=tuple(int(i) for i in completed_arms),
+        archive_scope=archive_scope,
+        current_lambda=current_lambda,
+        lambda_stage=lambda_stage,
+        direction_eta_multipliers=direction_eta_multipliers,
+        direction_eta_stages=direction_eta_stages,
     )
-    oracle_raw_points = (
-        raw_truth_vectors[winner_arms]
-        if winner_arms
-        else np.empty((0, 2), dtype=np.float64)
-    )
-    oracle_raw_archive_arms = raw_archive_arm_indices(
-        winner_arms,
-        oracle_raw_points,
-    )
-    selected_truth = (
-        truth_vectors[online_raw_archive_arms]
-        if online_raw_archive_arms
-        else np.empty((0, 2), dtype=np.float64)
-    )
+
+
+def _materialize_recommendation_event(
+    event: RecommendationEvent,
+    *,
+    models: Sequence[str],
+    truth_vectors: np.ndarray,
+    truth_front: np.ndarray,
+    raw_truth_vectors: np.ndarray,
+    reference_point: Sequence[float],
+    ground_truth_hv: float,
+) -> RecommendationCheckpoint:
+    """Compute diagnostic archives/metrics from frozen evidence, after sampling."""
+    winners = event.direction_winner_arm_indices
+    posterior = np.asarray(event.winner_posterior_means).reshape((-1, 2))
+    posterior_arms = tuple(winners[i] for i in nondominated_indices(posterior))
+    raw_arms = tuple(raw_archive_arm_indices(
+        winners, np.asarray(event.estimated_raw_winner_vectors).reshape((-1, 2)),
+    ))
+    oracle_arms = tuple(raw_archive_arm_indices(
+        winners, raw_truth_vectors[list(winners)] if winners else np.empty((0, 2)),
+    ))
+    selected = list(event.selected_arm_indices)
     quality = front_quality_metrics(
-        selected_truth,
-        truth_front,
-        reference_point,
-        ground_truth_hv,
+        truth_vectors[selected] if selected else np.empty((0, 2)),
+        truth_front, reference_point, ground_truth_hv,
     )
-    return _CheckpointArchive(
-        direction_winner_arm_indices=tuple(winner_arms),
-        estimated_raw_winner_vectors=tuple(
-            (float(point[0]), float(point[1])) for point in estimated_raw_points
-        ),
-        posterior_archive_arm_indices=tuple(posterior_archive_arms),
-        posterior_archive_models=tuple(
-            models[i] for i in posterior_archive_arms
-        ),
-        online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
-        online_raw_archive_models=tuple(
-            models[i] for i in online_raw_archive_arms
-        ),
-        oracle_raw_winner_archive_arm_indices=tuple(oracle_raw_archive_arms),
-        oracle_raw_winner_archive_models=tuple(
-            models[i] for i in oracle_raw_archive_arms
-        ),
+    fields = {key: value for key, value in vars(event).items() if key != "winner_posterior_means"}
+    return RecommendationCheckpoint(
+        **fields,
+        selected_models=tuple(models[i] for i in selected),
+        posterior_archive_arm_indices=posterior_arms,
+        posterior_archive_models=tuple(models[i] for i in posterior_arms),
+        online_raw_archive_arm_indices=raw_arms,
+        online_raw_archive_models=tuple(models[i] for i in raw_arms),
+        oracle_raw_winner_archive_arm_indices=oracle_arms,
+        oracle_raw_winner_archive_models=tuple(models[i] for i in oracle_arms),
+        added_models=tuple(models[i] for i in event.added_arm_indices),
+        removed_models=tuple(models[i] for i in event.removed_arm_indices),
         hypervolume=quality.hypervolume,
         hypervolume_regret=quality.hypervolume_regret,
         generational_distance=quality.generational_distance,
         inverted_generational_distance=quality.inverted_generational_distance,
     )
+
+
+def _materialize_recommendation_events(
+    events: Sequence[RecommendationEvent],
+    initial: Optional[RecommendationEvent],
+    final: Optional[RecommendationEvent],
+    *,
+    models: Sequence[str],
+    truth_vectors: np.ndarray,
+    raw_truth_vectors: np.ndarray,
+    reference_point: Sequence[float],
+    ground_truth_hv: float,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    started = time.perf_counter()
+    truth_front = truth_vectors[nondominated_indices(truth_vectors)]
+    materialized: Dict[RecommendationEvent, RecommendationCheckpoint] = {}
+
+    def materialize(event: Optional[RecommendationEvent]) -> Optional[RecommendationCheckpoint]:
+        if event is None:
+            return None
+        if event not in materialized:
+            materialized[event] = _materialize_recommendation_event(
+                event, models=models, truth_vectors=truth_vectors,
+                truth_front=truth_front, raw_truth_vectors=raw_truth_vectors,
+                reference_point=reference_point, ground_truth_hv=ground_truth_hv,
+            )
+        return materialized[event]
+
+    checkpoints = {
+        "recommendation_trajectory": [materialize(event) for event in events],
+        "recommendation_initial_snapshot": materialize(initial),
+        "recommendation_final_snapshot": materialize(final),
+    }
+    return checkpoints, {
+        "diagnostic_materializations": len(materialized),
+        "diagnostic_wall_time_seconds": time.perf_counter() - started,
+    }
+
+
+def materialize_recommendation_diagnostics(result: RadialSimulationResult) -> None:
+    """Populate legacy checkpoint fields on demand, without replaying acquisition.
+
+    Existing callers get these same diagnostics after sampling by default.
+    Repeated calls are free; event-only JSON can instead use the saved variant.
+    """
+    if result.recommendation_initial_event is None or result.recommendation_initial_snapshot is not None:
+        return
+    checkpoints, stats = _materialize_recommendation_events(
+        result.recommendation_events, result.recommendation_initial_event,
+        result.recommendation_final_event,
+        models=[arm.model_name for arm in result.model_results],
+        truth_vectors=result.truth_vectors, raw_truth_vectors=result.raw_truth_vectors,
+        reference_point=result.params["reference_point"],
+        ground_truth_hv=result.ground_truth_hypervolume,
+    )
+    for name, value in checkpoints.items():
+        setattr(result, name, value)
+    result.params["recommendation_recording"].update(stats)
+
+
+def materialize_saved_recommendation_diagnostics(payload: Dict[str, Any]) -> None:
+    """Expand one event-only JSON result in place, even in a fresh process.
+
+    Accepts one `_jsonable_result` dictionary, or one item of a CLI output's
+    `results` list. No lookup files, live posteriors, or acquisition replay needed.
+    """
+    if payload.get("recommendation_initial_event") is None or payload.get("recommendation_initial_snapshot") is not None:
+        return
+
+    def restore(value: Optional[Mapping[str, Any]]) -> Optional[RecommendationEvent]:
+        if value is None:
+            return None
+        def freeze(item: Any) -> Any:
+            return tuple(freeze(v) for v in item) if isinstance(item, (list, tuple)) else item
+        return RecommendationEvent(**{key: freeze(item) for key, item in value.items()})
+
+    checkpoints, stats = _materialize_recommendation_events(
+        [restore(event) for event in payload["recommendation_events"]],
+        restore(payload["recommendation_initial_event"]),
+        restore(payload["recommendation_final_event"]),
+        models=[arm["model_name"] for arm in payload["model_results"]],
+        truth_vectors=np.asarray(payload["truth_vectors"], dtype=np.float64),
+        raw_truth_vectors=np.asarray(payload["raw_truth_vectors"], dtype=np.float64),
+        reference_point=payload["params"]["reference_point"],
+        ground_truth_hv=payload["ground_truth_hypervolume"],
+    )
+    # Match CLI handling of tuple arrays and undefined empty-front distances.
+    payload.update(_jsonable_value({
+        name: [asdict(point) for point in value] if isinstance(value, list)
+        else asdict(value) if value is not None else None
+        for name, value in checkpoints.items()
+    }))
+    payload["params"]["recommendation_recording"].update(stats)
 
 
 def _recommendation_checkpoint(
@@ -1187,63 +1325,27 @@ def _recommendation_checkpoint(
         RadialTerminalUtilityProvider
     ] = None,
 ) -> RecommendationCheckpoint:
-    if archive_scope not in ARCHIVE_SCOPES:
-        raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
-    if (
-        not math.isfinite(bruteforce_search_cost_usd)
-        or bruteforce_search_cost_usd <= 0.0
-    ):
-        raise ValueError("bruteforce_search_cost_usd must be finite and positive")
-    completed = tuple(int(i) for i in completed_arms)
-    eligible = (
-        completed
-        if archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
-        else tuple(sorted(posteriors))
-    )
-    archive = _checkpoint_archive(
-        eligible_arms=eligible,
-        posteriors=posteriors,
-        directions=directions,
-        models=models,
-        reference_point=reference_point,
-        stop_tolerance=stop_tolerance,
-        truth_vectors=truth_vectors,
-        truth_front=truth_front,
-        raw_truth_vectors=raw_truth_vectors,
-        observed_scores=observed_scores,
-        observed_costs=observed_costs,
-        ground_truth_hv=ground_truth_hv,
+    # Eager compatibility helper for callers constructing one checkpoint.
+    selection = _recommendation_selection(
+        posteriors=posteriors, directions=directions, reference_point=reference_point,
+        stop_tolerance=stop_tolerance, observed_scores=observed_scores,
+        observed_costs=observed_costs, completed_arms=completed_arms,
+        archive_scope=archive_scope,
         radial_terminal_utility_provider=radial_terminal_utility_provider,
     )
-    return RecommendationCheckpoint(
-        cumulative_evaluations=int(total_evaluations),
-        cumulative_search_cost_usd=float(total_cost),
-        budget_fraction=float(total_cost) / float(bruteforce_search_cost_usd),
-        selected_arm_indices=archive.online_raw_archive_arm_indices,
-        selected_models=archive.online_raw_archive_models,
-        direction_winner_arm_indices=archive.direction_winner_arm_indices,
-        estimated_raw_winner_vectors=archive.estimated_raw_winner_vectors,
-        posterior_archive_arm_indices=archive.posterior_archive_arm_indices,
-        posterior_archive_models=archive.posterior_archive_models,
-        online_raw_archive_arm_indices=archive.online_raw_archive_arm_indices,
-        online_raw_archive_models=archive.online_raw_archive_models,
-        oracle_raw_winner_archive_arm_indices=(
-            archive.oracle_raw_winner_archive_arm_indices
-        ),
-        oracle_raw_winner_archive_models=(
-            archive.oracle_raw_winner_archive_models
-        ),
-        hypervolume=archive.hypervolume,
-        hypervolume_regret=archive.hypervolume_regret,
-        generational_distance=archive.generational_distance,
-        inverted_generational_distance=archive.inverted_generational_distance,
-        event=event,
-        completed_arm_indices=completed,
-        archive_scope=archive_scope,
-        current_lambda=current_lambda,
-        lambda_stage=lambda_stage,
+    snapshot = _capture_recommendation_event(
+        selection, posteriors=posteriors, observed_scores=observed_scores,
+        observed_costs=observed_costs, total_evaluations=total_evaluations,
+        total_cost=total_cost, bruteforce_search_cost_usd=bruteforce_search_cost_usd,
+        event=event, completed_arms=completed_arms, archive_scope=archive_scope,
+        current_lambda=current_lambda, lambda_stage=lambda_stage,
         direction_eta_multipliers=direction_eta_multipliers,
         direction_eta_stages=direction_eta_stages,
+    )
+    return _materialize_recommendation_event(
+        snapshot, models=models, truth_vectors=truth_vectors, truth_front=truth_front,
+        raw_truth_vectors=raw_truth_vectors, reference_point=reference_point,
+        ground_truth_hv=ground_truth_hv,
     )
 
 
@@ -1381,6 +1483,7 @@ def simulate_radial_gittins(
     recommendation_checkpoint_interval: Optional[int] = None,
     recommendation_checkpoint_target: Optional[int] = None,
     recommendation_changes_only: bool = False,
+    defer_recommendation_diagnostics: bool = False,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
 ) -> RadialSimulationResult:
@@ -1415,6 +1518,13 @@ def simulate_radial_gittins(
     from the planned full-completion adaptive pulls so that each run retains
     approximately the requested number of ordinary checkpoints. Mandatory
     warm-start, recommendation-change, lambda-stop, and final points remain.
+
+    During sampling, membership is checked online and retained events freeze
+    only their online evidence. Diagnostic archives and checkpoint HV/GD/IGD
+    are materialized after sampling. With ``defer_recommendation_diagnostics``,
+    only ``recommendation_events`` and the independent warm/final events are
+    returned; call ``materialize_recommendation_diagnostics(result)`` later to
+    populate the legacy checkpoint fields without replaying the policy.
 
     ``anytime=True`` starts at ``lambda_initial`` and multiplies lambda by
     ``lambda_decay`` whenever every direction stops without an intervening
@@ -2078,9 +2188,17 @@ def simulate_radial_gittins(
     stop_reason = "all_directions_gittins_stop"
     gittins_stop_evaluations: Optional[int] = None
     gittins_stop_cost_usd: Optional[float] = None
-    recommendation_trajectory: List[RecommendationCheckpoint] = []
-    recommendation_initial_snapshot: Optional[RecommendationCheckpoint] = None
-    recommendation_final_snapshot: Optional[RecommendationCheckpoint] = None
+    recommendation_events: List[RecommendationEvent] = []
+    recommendation_initial_event: Optional[RecommendationEvent] = None
+    recommendation_final_event: Optional[RecommendationEvent] = None
+    recommendation_recording = {
+        "membership_checks": 0,
+        "membership_wall_time_seconds": 0.0,
+        "captured_events": 0,
+        "event_capture_wall_time_seconds": 0.0,
+        "diagnostic_materializations": 0,
+        "diagnostic_wall_time_seconds": 0.0,
+    }
     adaptive_checkpoint_pulls = 0
     past_gittins_stop = False
     lambda_stop_events: List[Dict[str, Any]] = []
@@ -2089,9 +2207,9 @@ def simulate_radial_gittins(
     last_deployable_archive: set[int] = set()
     stopping_index_scale = 1.0
 
-    # Truth metrics are diagnostics for budget curves / final HV. Compute them
-    # before the adaptive loop so trajectory checkpoints can reuse the vectors
-    # without re-scanning the lookup table after every pull.
+    # Full-data diagnostic inputs are computed once. Online membership and
+    # event capture never read these arrays; retained checkpoint diagnostics
+    # use them only after sampling (or on an explicit materialization request).
     truth_metric_start = time.perf_counter()
     truth_vectors = _full_truth_vectors(
         models,
@@ -2114,7 +2232,7 @@ def simulate_radial_gittins(
         completed_arm_changed: bool = False,
     ) -> None:
         nonlocal last_deployable_archive
-        nonlocal recommendation_initial_snapshot, recommendation_final_snapshot
+        nonlocal recommendation_initial_event, recommendation_final_event
         if not record_recommendation_trajectory:
             return
         ordinary_checkpoint_due = (
@@ -2145,18 +2263,42 @@ def simulate_radial_gittins(
             if anytime or gittins_stop_evaluations is not None
             else PROVISIONAL_ARCHIVE_SCOPE
         )
-        checkpoint = _recommendation_checkpoint(
+        recommendation_recording["membership_checks"] += 1
+        membership_started = time.perf_counter()
+        selection = _recommendation_selection(
             posteriors=posteriors,
             directions=resolved_directions,
-            models=models,
             reference_point=resolved_reference,
             stop_tolerance=stop_tolerance,
-            truth_vectors=truth_vectors,
-            truth_front=truth_front,
-            raw_truth_vectors=raw_truth_vectors,
             observed_scores=observed_scores,
             observed_costs=observed_costs,
-            ground_truth_hv=ground_truth_hv,
+            completed_arms=completed_at_checkpoint,
+            archive_scope=archive_scope,
+            radial_terminal_utility_provider=_cached_radial_terminal_utility,
+        )
+        recommendation_recording["membership_wall_time_seconds"] += time.perf_counter() - membership_started
+        archive_members = set(selection.selected_arm_indices)
+        membership_changed = archive_members != last_deployable_archive
+        added = tuple(sorted(archive_members - last_deployable_archive))
+        removed = tuple(sorted(last_deployable_archive - archive_members))
+        retain = True
+        if anytime or inspect_every_pull:
+            last_deployable_archive = archive_members
+            retain = (
+                membership_changed
+                or (ordinary_checkpoint_due and not recommendation_changes_only)
+            )
+        # Warm/final preserve their own current evidence even if their set is
+        # unchanged. Discarded pulls never construct diagnostic archives or
+        # compute full-data quality metrics.
+        if not retain and event not in {"after_warm_start", "final"}:
+            return
+        capture_started = time.perf_counter()
+        checkpoint = _capture_recommendation_event(
+            selection,
+            posteriors=posteriors,
+            observed_scores=observed_scores,
+            observed_costs=observed_costs,
             total_evaluations=total_evaluations,
             total_cost=total_cost,
             bruteforce_search_cost_usd=bruteforce_search_cost_usd,
@@ -2167,24 +2309,20 @@ def simulate_radial_gittins(
             lambda_stage=lambda_stage,
             direction_eta_multipliers=tuple(direction_eta_multipliers),
             direction_eta_stages=tuple(direction_eta_stages),
-            radial_terminal_utility_provider=_cached_radial_terminal_utility,
         )
+        recommendation_recording["captured_events"] += 1
+        recommendation_recording["event_capture_wall_time_seconds"] += time.perf_counter() - capture_started
         if event == "after_warm_start":
-            recommendation_initial_snapshot = checkpoint
+            recommendation_initial_event = checkpoint
         if event == "final":
-            recommendation_final_snapshot = checkpoint
+            recommendation_final_event = checkpoint
+        if not retain:
+            return
         if anytime or inspect_every_pull:
-            archive_members = set(checkpoint.selected_arm_indices)
-            membership_changed = archive_members != last_deployable_archive
-            added = tuple(sorted(archive_members - last_deployable_archive))
-            removed = tuple(sorted(last_deployable_archive - archive_members))
-            last_deployable_archive = archive_members
             checkpoint = replace(
                 checkpoint,
                 added_arm_indices=added,
-                added_models=tuple(models[i] for i in added),
                 removed_arm_indices=removed,
-                removed_models=tuple(models[i] for i in removed),
             )
             if added:
                 checkpoint = replace(
@@ -2193,15 +2331,10 @@ def simulate_radial_gittins(
                         "recommendation_added" if event == "adaptive_pull" else event
                     ),
                     added_arm_indices=added,
-                    added_models=tuple(models[i] for i in added),
                 )
             elif membership_changed and event == "adaptive_pull":
                 checkpoint = replace(checkpoint, event="recommendation_changed")
-            if recommendation_changes_only and not membership_changed:
-                return
-            if not ordinary_checkpoint_due and not membership_changed:
-                return
-        recommendation_trajectory.append(checkpoint)
+        recommendation_events.append(checkpoint)
 
     _append_recommendation_checkpoint("after_warm_start")
     lambda_stage_wall_start = time.perf_counter()
@@ -2956,6 +3089,8 @@ def simulate_radial_gittins(
         "recommendation_space": "observed_raw_accuracy_mean_cost_usd",
         "recommendation_eligibility": "completed_only",
         "recommendation_changes_only": bool(recommendation_changes_only),
+        "defer_recommendation_diagnostics": bool(defer_recommendation_diagnostics),
+        "recommendation_recording": recommendation_recording,
         "posterior_archive_space": "normalized_posterior_mean_desirability",
         "oracle_raw_winner_archive_is_diagnostic": True,
         "directions": [list(x) for x in resolved_directions],
@@ -3162,9 +3297,9 @@ def simulate_radial_gittins(
         model_results=model_results,
         trace=trace,
         observed_cells=tuple(sorted(observed_cells)),
-        recommendation_trajectory=recommendation_trajectory,
-        recommendation_initial_snapshot=recommendation_initial_snapshot,
-        recommendation_final_snapshot=recommendation_final_snapshot,
+        recommendation_events=recommendation_events,
+        recommendation_initial_event=recommendation_initial_event,
+        recommendation_final_event=recommendation_final_event,
         gittins_stop_evaluations=gittins_stop_evaluations,
         gittins_stop_cost_usd=gittins_stop_cost_usd,
         gittins_stop_budget_fraction=gittins_stop_budget_fraction,
@@ -3188,6 +3323,8 @@ def simulate_radial_gittins(
             models[i] for i in oracle_raw_archive_arms
         ],
     )
+    if not defer_recommendation_diagnostics:
+        materialize_recommendation_diagnostics(result)
     if run_metadata is not None:
         run_metadata.update(
             {
@@ -3313,24 +3450,25 @@ def print_radial_result(result: RadialSimulationResult) -> None:
     )
 
 
-def _jsonable_result(result: RadialSimulationResult) -> Dict[str, Any]:
-    def json_safe(value: Any) -> Any:
-        if isinstance(value, float):
-            return value if math.isfinite(value) else None
-        if isinstance(value, np.floating):
-            resolved = float(value)
-            return resolved if math.isfinite(resolved) else None
-        if isinstance(value, np.integer):
-            return int(value)
-        if isinstance(value, np.ndarray):
-            return json_safe(value.tolist())
-        if isinstance(value, Mapping):
-            return {str(key): json_safe(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [json_safe(item) for item in value]
-        return value
+def _jsonable_value(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, np.floating):
+        resolved = float(value)
+        return resolved if math.isfinite(resolved) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.ndarray):
+        return _jsonable_value(value.tolist())
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_value(item) for item in value]
+    return value
 
-    return json_safe(asdict(result))
+
+def _jsonable_result(result: RadialSimulationResult) -> Dict[str, Any]:
+    return _jsonable_value(asdict(result))
 
 
 def main() -> None:
@@ -3418,6 +3556,10 @@ def main() -> None:
     parser.add_argument(
         "--recommendation-changes-only", action="store_true",
         help="Record only recommendation membership changes, checking after every pull",
+    )
+    parser.add_argument(
+        "--defer-recommendation-diagnostics", action="store_true",
+        help="Save lightweight recommendation events; compute checkpoint diagnostics later on demand",
     )
     parser.add_argument("--effective-cost-bin-ratio", type=float, default=2.0)
     parser.add_argument("--effective-cost-bin-anchor", type=float, default=1e-4)
@@ -3538,6 +3680,7 @@ def main() -> None:
                 args.record_trajectory or args.anytime or args.recommendation_changes_only
             ),
             recommendation_changes_only=args.recommendation_changes_only,
+            defer_recommendation_diagnostics=args.defer_recommendation_diagnostics,
             effective_cost_bin_ratio=args.effective_cost_bin_ratio,
             effective_cost_bin_anchor=args.effective_cost_bin_anchor,
             horizon_bin_width=args.horizon_bin_width,

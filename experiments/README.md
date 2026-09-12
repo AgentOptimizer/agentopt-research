@@ -178,7 +178,7 @@ Generated results are gitignored, so a fresh checkout needs the baseline first:
 # 1. Generate the seed-42 global-decay baseline (skip if already saved).
 python experiments/combined_objective/compare_direction_schedulers.py --benchmarks bird_dev
 
-# 2. Run independent per-direction η decay and export the comparison.
+# 2. Run independent per-direction η decay and save the comparison (no figures).
 python experiments/combined_objective/compare_eta_decay.py
 
 # 3. Redraw all figures and tables from saved results, without replaying.
@@ -188,7 +188,8 @@ python experiments/combined_objective/compare_eta_decay.py --plot-only
 python -m pytest \
     tests/test_direction_eta_decay.py tests/test_anytime_radial_gittins.py \
     tests/test_axis_radial_replay.py tests/test_offline_radial_gittins.py \
-    tests/test_accuracy_last_scheduler.py tests/test_completed_recommendations.py -q
+    tests/test_accuracy_last_scheduler.py tests/test_completed_recommendations.py \
+    tests/test_deferred_recommendations.py -q
 ```
 
 Step 1 runs both `round_robin` and the earlier `accuracy_last` ablation with
@@ -200,7 +201,9 @@ completed-only recommendations. In step 2, all ten directions, including
 baseline file and `--outdir DIR` to change the comparison output directory;
 pass the same `--outdir DIR` when redrawing. `--plot-only` needs only that
 directory's `comparison.json`. Running without it reruns the corresponding
-experiment and replaces its saved outputs.
+experiment and replaces its saved outputs. The independent-decay runner saves
+data without rendering by default; add `--plots` to also render at the end.
+`--no-plots` remains an explicit alias for the default.
 
 For a standalone replay through the general CLI, enable asynchronous decay
 with `--anytime --direction-scheduler round_robin --eta-decay-schedule direction_stop`:
@@ -221,8 +224,9 @@ runner selects `direction_stop` internally. Omitting the flag in the general
 CLI keeps the existing `global_stop` default.
 
 The runner verifies matching data, warm start, calibration, and HV reference;
-exports accuracy and HV curves, all key-checkpoint Pareto frontiers, per-direction
-η schedules, and a compressed trace; and supports `--plot-only` for re-rendering.
+saves comparison tables and a compressed trace. `--plots` or `--plot-only`
+exports accuracy and HV curves, all key-checkpoint Pareto frontiers, and
+per-direction η schedules.
 Outputs are under `combined_objective/results/direction_eta_decay_bird_dev_completed_only_seed42/`.
 Pareto panels use the existing `C1`, `C2`, ... convention: every recommendation
 addition, removal, or replacement is a key checkpoint. Warmup and unchanged
@@ -238,6 +242,71 @@ at 24.99% of full-matrix search cost, versus 67.52% for global decay. At a 30%
 cost budget, relative HV regret was 0.406% versus 1.800%; the final recommendation
 set was identical. At the very early 1% budget, independent decay had slightly
 higher HV regret (4.758% versus 3.739%). These are single-seed results.
+
+#### Lightweight checkpoint recording with completed-only recommendations
+
+The `asynchronous-eta-decay` branch keeps the original recommendation rule:
+anytime recommendations use completed arms only. The checkpoint optimization
+changes recording and postprocessing, not acquisition, per-direction stopping,
+η decay, or the recommendation set. Fixed-budget provisional diagnostic scopes
+remain supported with their original interval semantics.
+
+Previously, every inspected batch built a complete checkpoint, including
+multiple diagnostic archives and HV/GD/IGD, before unchanged recommendations
+were discarded. The new path first checks membership; only retained events
+freeze winner IDs, posterior means, observed means, sample counts, completion
+status, cost and η metadata. With `recommendation_changes_only=True`, the
+trajectory retains only membership changes. Warm start and Final always keep
+independent evidence, even when their recommendation sets are unchanged.
+Events stay in memory during sampling and are serialized in bulk. No figures
+are rendered by the selector.
+
+Full checkpoint diagnostics are materialized after sampling by default for
+compatibility with existing callers. For event-only results:
+
+```python
+from experiments.combined_objective.offline_radial_gittins import (
+    materialize_recommendation_diagnostics,
+    simulate_radial_gittins,
+)
+
+result = simulate_radial_gittins(
+    models, questions, table,
+    anytime=True, eta_decay_schedule="direction_stop", seed=42,
+    record_recommendation_trajectory=True,
+    recommendation_changes_only=True,
+    recommendation_checkpoint_interval=None,
+    defer_recommendation_diagnostics=True,
+)
+# Consume/save recommendation_events and recommendation_initial_event/final_event.
+# Full checkpoint fields are populated only when explicitly requested:
+materialize_recommendation_diagnostics(result)
+```
+
+For the standalone CLI command above, append
+`--recommendation-changes-only --defer-recommendation-diagnostics` to save
+lightweight events. Rebuild full diagnostics later, without replaying policy or
+reloading the lookup matrices:
+
+```python
+import json
+from pathlib import Path
+from experiments.combined_objective.offline_radial_gittins import (
+    materialize_saved_recommendation_diagnostics,
+)
+
+saved = json.loads(Path("/tmp/bird_dev_async_eta_seed42.json").read_text())
+for run in saved["results"]:
+    materialize_saved_recommendation_diagnostics(run)
+```
+
+Both materializers are idempotent and reconstruct metrics from frozen event
+evidence, never from the final posterior. The saved result includes the fixed
+truth vectors needed for offline metrics. `params["recommendation_recording"]`
+reports membership checks, event captures and diagnostic materializations with
+separate phase timings. The comparison runner explicitly defers diagnostics
+until it builds its report and preserves all recommendation changes. Plot
+selection does not change recorded events or online recommendations.
 
 The default `--direction-scheduler round_robin` visits all ten directions in
 one cycle. The experimental `--direction-scheduler accuracy_last` runs the
