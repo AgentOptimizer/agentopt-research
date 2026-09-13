@@ -109,15 +109,13 @@ Available selectors: `brute_force` (combined objective), `random_search`, `matri
 - freezes an arm-specific expected pull cost from each arm's warm batch and
   bins those costs for practical boundary-table reuse;
 - visits radial directions round-robin while sharing one posterior per configuration;
-- returns direction winners filtered in online empirical raw space: maximize
-  observed mean accuracy and minimize observed mean deployment cost in USD;
-- restricts the deployable recommendation to completed direction winners,
-  matching the required-completion Gittins stopping convention;
-- records one archive per trajectory checkpoint, tagged with the eligibility
-  scope that produced it: all-posterior `provisional` before the endogenous
-  stop, when nothing is deployable yet, and completed-only `deployable` from
-  the stop onward; unfinished provisional winners are candidates, not terminal
-  recommendations;
+- recommends the empirical Pareto frontier of all completed arms by default:
+  maximize observed mean accuracy and minimize observed mean deployment cost
+  in USD, without restricting recommendations to direction winners;
+- records completed-only checkpoints as `deployable` throughout both anytime
+  and fixed-budget runs, including the empty set before any arm completes;
+  older fixed-budget results used a `provisional` all-posterior diagnostic
+  prefix followed by `deployable` recommendations at the endogenous stop;
 - separately reports the legacy posterior-desirability archive and an offline
   oracle raw winner archive for diagnostics. The oracle archive uses the full
   cached matrix and never affects acquisition, stopping, or the deployable
@@ -245,11 +243,14 @@ higher HV regret (4.758% versus 3.739%). These are single-seed results.
 
 #### Lightweight checkpoint recording with completed-only recommendations
 
-The `asynchronous-eta-decay` branch keeps the original recommendation rule:
-anytime recommendations use completed arms only. The checkpoint optimization
+The historical `asynchronous-eta-decay` branch kept its original recommendation
+rule: anytime recommendations used completed direction winners. The current
+`completed_only` rule instead returns the empirical Pareto frontier of all
+completed arms, as described below. The checkpoint optimization itself
 changes recording and postprocessing, not acquisition, per-direction stopping,
-η decay, or the recommendation set. Fixed-budget provisional diagnostic scopes
-remain supported with their original interval semantics.
+η decay, or the recommendation set. Historical fixed-budget results may retain
+a provisional diagnostic prefix. Newly generated `completed_only` checkpoints
+are always deployable and contain only the empirical completed frontier.
 
 Previously, every inspected batch built a complete checkpoint, including
 multiple diagnostic archives and HV/GD/IGD, before unchanged recommendations
@@ -308,189 +309,286 @@ separate phase timings. The comparison runner explicitly defers diagnostics
 until it builds its report and preserves all recommendation changes. Plot
 selection does not change recorded events or online recommendations.
 
-#### Hybrid LCB recommendations with unchanged asynchronous acquisition
+#### Recommend the empirical Pareto frontier of completed arms
 
-The `lcb-style-recommendation` branch builds on the completed-only checkpoint
-optimization in `asynchronous-eta-decay`. The following options and runners
-belong to this additional recommendation-rule layer.
+The current `recommendation_rule="completed_only"` directly recommends every
+nondominated completed arm, comparing its measured mean accuracy (maximize)
+and measured mean USD cost (minimize). It uses observations from the declared
+question universe, not posterior means, confidence penalties, or direction
+winners. Equal objective pairs are both retained. Before any arm completes,
+the recommendation is empty. An older member is removed only when another
+completed arm empirically dominates it; partial arms never enter the set.
 
-`--recommendation-rule hybrid_lcb --recommendation-beta 1.0` enables
-recommendations from all warm-started arms, including partially evaluated
-ones. Completed arms use their posterior means; incomplete arms subtract
-`beta * posterior_std` componentwise. The default `completed_only` remains
-available, and `--recommendation-rule lcb` preserves the earlier rule that
-subtracts uncertainty from **every** arm, including completed arms. These
-options change the recommended set at a given budget; the required-completion
-Gittins indices, completed-arm stopping comparator, per-direction η decay, and
-sampled cells are unchanged.
+This changes recommendation membership only. The ten exploration directions,
+round-robin schedule, required-completion Gittins comparator, and asynchronous
+per-direction eta decay are unchanged. There is no recommendation beta or
+additional completed raw guard. Older result files remain unchanged as frozen
+artifacts; historical completed-only results used a direction-filtered set and
+should not be labelled as the new empirical rule.
 
-For each arm, form a normalized recommendation vector `z`. With `hybrid_lcb`,
-`z = posterior_mean` after all questions have been evaluated, otherwise
-`z = posterior_mean - beta * sqrt(posterior_variance)`. With `lcb`, use the
-second expression for every arm. The coordinates are accuracy and cost
-desirability, both maximized. Subtracting uncertainty from cost desirability
-is conservative about cost; it is not a lower bound on raw dollar cost.
-Completed posterior means retain the calibrated prior; they are not replaced
-with raw empirical means. Each interior direction uses the existing radial
-scalarization evaluated at `z`; `(1, 0)` uses the accuracy coordinate of `z`.
-Endpoint ties use the inactive coordinate of `z`, then the stable arm index.
-Deduplicated direction winners are filtered for nondomination in the same
-recommendation space. Coordinates are not clipped. These are componentwise
-LCB-style heuristics, not confidence guarantees or `mean(radial utility) -
-beta * std(radial utility)`, and can still return full-data-dominated arms.
-
-This hybrid rule is an experimental recommendation option, not a guarantee
-that the recommended configurations lie on the full-data Pareto front. In the
-saved seed-42 hybrid sequence, C13/C14/C15/C17/C19 include configurations 2054,
-2056, or 2057 with full-data accuracy 28.03%–30.44% and mean cost
-$0.001077–$0.001155. Configuration 13806 dominates all three at 40.61% and
-$0.000727, but has only 4–8 observations at these checkpoints. Its accuracy
-LCB is 8.16%–10.88%, so the recommendation rule cannot identify its full-data
-advantage. At C19, configuration 2056 has only 24 observations: posterior
-mean 41.12% minus 9.09 percentage points still gives 32.02%, above its actual
-28.94% accuracy. Removing completed-arm penalties does not resolve this
-sampling uncertainty or change how quickly promising arms are explored.
-
-There is also a direction-winner limitation: interior scalarization ties use
-the stable arm index, and nondomination is checked only among the resulting
-direction winners. At C17/C19, 13810 has essentially the same accuracy score
-as 2057 (27.0462%, differing only at floating-point precision) and a better
-cost-desirability score, but wins no direction. A tolerance-aware tie rule or
-filter over all candidate recommendation vectors would be a separate change;
-the current experiment retains the existing tie rule for reproducibility.
-
-LCB membership is checked after every observation batch so partial-arm
-recommendation changes survive checkpoint downsampling. Each check computes
-the direction winners and recommendation membership only. A retained change
-captures an immutable, lightweight event containing the evidence needed to
-reconstruct the checkpoint later. Empirical/oracle diagnostic archives and
-HV/GD/IGD are computed from those events after sampling, when requested.
-Warm start and Final retain their own evidence, even when membership is
-unchanged, so the final sample counts remain correct.
-
-The generic event recording and deferred reconstruction APIs are shared with
-the completed-only branch and documented above. This branch adds the LCB and
-hybrid recommendation vectors to those frozen events; it does not change the
-sampling/stopping policy or the checkpoint performance optimization.
-
-Materialized checkpoints are
-labelled `archive_scope="lcb"`; the explicit `recommendation_rule` distinguishes
-`lcb` from `hybrid_lcb`. They include beta, recommendation vectors, sample counts,
-and completed-arm indices. Empirical raw and oracle
-archives remain separate diagnostics. HV and accuracy metrics evaluate the
-actual selected configurations against the full lookup table; that table
-never determines recommendations.
-
-After generating the saved asynchronous completed-only baseline using the
-commands above, run from the repository root:
+Use raw mean cost for the acquisition model explicitly, as in the preceding
+raw-cost experiment, and change only the recommendation rule:
 
 ```bash
-# Run hybrid LCB with beta=1, seed42; save results without rendering figures.
-python experiments/combined_objective/compare_lcb_recommendations.py \
-    --recommendation-rule hybrid_lcb --beta 1
+python experiments/combined_objective/run_lcb_benchmarks.py --question-order independent \
+    --benchmarks restaurant_valid --cost-model raw_mean \
+    --recommendation-rule completed_only \
+    --outdir experiments/combined_objective/results/completed_raw_pareto_seed42
 
-# Optionally render all figures at the end of a replay.
-python experiments/combined_objective/compare_lcb_recommendations.py \
-    --recommendation-rule hybrid_lcb --beta 1 --plots
+# Rebuild tables from the saved run without another replay.
+python experiments/combined_objective/run_lcb_benchmarks.py --question-order independent \
+    --benchmarks restaurant_valid --recommendation-rule completed_only \
+    --outdir experiments/combined_objective/results/completed_raw_pareto_seed42 \
+    --summarize-only
 
-# Redraw saved comparison and every membership-change Pareto checkpoint.
-python experiments/combined_objective/compare_lcb_recommendations.py \
-    --recommendation-rule hybrid_lcb --beta 1 --plot-only
-
-# Earlier all-arm LCB comparison (also the runner's default rule).
-python experiments/combined_objective/compare_lcb_recommendations.py \
-    --recommendation-rule lcb --beta 1
-
-# Focused recommendation and acquisition-invariance tests.
-python -m pytest tests/test_deferred_recommendations.py tests/test_lcb_deferred_recommendations.py \
-    tests/test_lcb_recommendations.py tests/test_direction_eta_decay.py \
-    tests/test_completed_recommendations.py -q
+# Render every recommendation change from the saved run.
+python experiments/combined_objective/plot/plot_lcb_recommendations.py \
+    experiments/combined_objective/results/completed_raw_pareto_seed42/restaurant_valid/comparison.json
 ```
 
-The runner verifies the exact sampling sequence, stopping decisions, costs,
-and η events against the saved completed-only trace. It reports first and
-sustained highest-accuracy recommendation, alongside whole-front quality at
-matched spend. Outputs are under
-`combined_objective/results/hybrid_lcb_recommendations_bird_dev_seed42_beta1/`
-or `combined_objective/results/lcb_recommendations_bird_dev_seed42_beta1/`,
-according to the selected rule. The default writes `comparison.json`, the
-rule-specific compressed trace, `summary.csv`, and `matched_budgets.csv`
-without rendering figures. `--no-plots` remains accepted for compatibility;
-`--plots` opts into rendering after replay. `comparison.json` is written once
-per export. `--plot-only` later renders all figures
-and `checkpoints.csv` from `comparison.json`, without replaying acquisition.
-The hybrid trace is `hybrid_lcb_trace.json.gz`, and its full checkpoint sequence
-is `hybrid_lcb_pareto_key_checkpoints_all_pages.pdf`, with all pages also saved
-as PNGs. Use `--outdir DIR` to override the output directory, passing the same
-directory when redrawing.
-Pareto panels show full-data accuracy and cost for offline evaluation, with
-hollow markers for partially evaluated recommendations and filled markers
-for completed recommendations. Warm start and Final are shown separately;
-`C1`, `C2`, ... retain every later membership change, including removals and
-replacements. Earlier recommendation does not mean the unchanged search
-actually terminates at that point.
+Both commands use seed 42. The result is stored as
+`restaurant_valid/comparison.json` under `runs["completed_only"]`, alongside
+`completed_only_trace.json.gz`; `summary.csv` and `matched_budgets.csv` use the
+same method name. Membership checks and lightweight events remain separate
+from deferred diagnostics and bulk output. Completed recommendation coordinates
+are empirical; posterior values retained in events describe acquisition state.
+For compatibility with saved-event readers, the checkpoint fields named
+`direction_winner_*` carry the selected frontier arms and their evidence under
+`completed_only`; those names do not imply a direction filter. The result-level
+`direction_winners` still records the acquisition direction winners separately.
 
-In the earlier **all-arm LCB** seed-42, beta-1 replay, the highest-accuracy configuration (2790) first
-entered the LCB recommendation at C65, 13.304207% search cost, with 224 of 1534
-samples. It was briefly removed twice, then remained from C69, 13.575622%,
-with 260 samples. Completed-only first and sustained recommendation occurred
-at C5, 24.987002%, after all 1534 samples. At 15% search spend, relative HV
-regret was 0.4063% with LCB versus 1.8001% with completed-only. LCB had 69
-membership changes versus 5, including transient full-data-dominated
-recommendations. Final membership and HV regret were identical. All 115044
-ordered observations, 34175 trace events (excluding timing fields), and η
-events matched exactly; total search spend remained $946.704126. C65–C69 are
-on `lcb_pareto_key_checkpoints_page008.png`; the complete 8-page sequence is
-`lcb_pareto_key_checkpoints_all_pages.pdf`. These are single-seed findings.
+The benchmark runner now defaults to `finite_lcb` with `raw_mean` cost. With
+`--recommendation-rule completed_only --cost-model raw_mean` and no explicit
+output path, it writes to
+`combined_objective/results/completed_only_benchmarks_seed42_raw_mean_shared_questions/`.
+The core replay API and CLI retain `completed_only` as their conservative
+general-purpose default.
 
-For a standalone hybrid replay through the general CLI:
+Run the same raw-mean acquisition and empirical completed-frontier rule on
+HotpotQA, MathQA, Stack Overflow and BIRD Dev (all seed 42):
 
 ```bash
-python experiments/combined_objective/offline_radial_gittins.py \
-    --scope data/scope/bird_dev --anytime \
-    --direction-scheduler round_robin --eta-decay-schedule direction_stop \
-    --recommendation-rule hybrid_lcb --recommendation-beta 1.0 \
-    --seeds 1 --base-seed 42 --batch-size 4 --grid-size 129 \
-    --eta 1.0 --lambda-initial 1.0 --lambda-decay 0.5 \
-    --record-trajectory --recommendation-changes-only \
-    --output /tmp/bird_dev_async_eta_hybrid_lcb_seed42.json
+python experiments/combined_objective/run_lcb_benchmarks.py --question-order independent \
+    --benchmarks hotpotqa mathqa stackoverflow bird_dev \
+    --cost-model raw_mean --recommendation-rule completed_only \
+    --outdir experiments/combined_objective/results/completed_raw_pareto_seed42
+
+for benchmark in hotpotqa mathqa stackoverflow bird_dev; do
+    python experiments/combined_objective/plot/plot_lcb_recommendations.py \
+        "experiments/combined_objective/results/completed_raw_pareto_seed42/$benchmark/comparison.json"
+done
 ```
 
-As above, the standalone CLI uses its default boundary padding; the comparison
-runner fixes extra padding 2.0 for the reported BIRD experiment. Replace
-`hybrid_lcb` with `lcb` to run the original rule.
+`bird_dev` is an explicit additional benchmark; the runner's existing default
+benchmark list remains unchanged. Each folder contains its full checkpoint PDF,
+comparison JSON and compressed physical sampling trace.
 
-The standalone deferred-diagnostic flag and saved-result materializer described
-above also support LCB/hybrid events.
+#### Full-test mean LCB recommendations
 
-The earlier hybrid figures were reconstructed directly from the saved all-arm
-LCB trace. The main selector now supports `hybrid_lcb` explicitly, so the runner
-above is the reproducible algorithm entry point. The native seed-42, beta-1
-replay matches all 48 diagnostic snapshots (Warm start, 46 membership changes,
-and Final), including membership, sample counts, evaluations, and cost. All
-115044 sampled cells, 34175 acquisition events excluding timing, stopping
-decisions, and direction-eta events match the completed-only baseline. Config
-2790 first entered at C42 (13.748950% search cost, 284 samples), was removed
-twice, and remained from C46 (15.244572%, 480 samples). These remain single-seed
-findings; the dominated early recommendations described above are also retained.
-With the saved hybrid `diagnostic.json` and original LCB `comparison.json`
-available, redraw the earlier diagnostic without acquisition:
+The opt-in `recommendation_rule="finite_lcb"` estimates each arm's mean over
+the fixed benchmark question universe, including its already observed values.
+For one objective, let `N` be the total question count, `n` the observed count,
+`S_n` their sum, `mu` and `v` the posterior mean and variance of the latent
+per-question mean, and `tau_squared` the frozen per-question observation noise.
+The conditional full-test mean and variance are
+
+```text
+m = (S_n + (N - n) * mu) / N
+s_squared = ((N - n)**2 * v + (N - n) * tau_squared) / N**2
+```
+
+These moments assume conditionally independent Gaussian unseen observations,
+with shared uncertainty through the latent mean and fixed plug-in noise
+calibrated from the warm batch. They describe the fixed test mean, not only
+the latent population mean. Accuracy and cost use their respective moments.
+The recommendation coordinates are `(m_accuracy - beta * s_accuracy,
+m_cost_usd + beta * s_cost_usd)`: maximize the former and minimize the latter.
+The selector returns the Pareto frontier of these conservative raw coordinates
+over all arms, without a direction filter. Coordinates are not clipped.
+
+When `n == N`, both unobserved terms vanish: `m` is the empirical full-test
+mean and `s == 0`. Completion therefore requires no manual uncertainty
+exemption. `beta=1` is a componentwise conservative score; plug-in calibration,
+repeated adaptive recommendations, and comparisons across arms do not give
+it a simultaneous or anytime confidence guarantee. The implementation
+requires `cost_model="raw_mean"`. It is the benchmark runner's default
+recommendation rule; the lower-level replay API still defaults to
+`completed_only`.
+
+This rule affects recommendation membership only. It introduces no change
+to the sampling rule, exploration directions, Gaussian acquisition model,
+Gittins DP, or asynchronous eta schedule. Light events are captured when
+membership changes and diagnostics are computed after sampling. Frozen
+`finite_target_mean_vectors`, `finite_target_std_vectors`, and
+`recommendation_raw_vectors` provide the evidence for each returned arm;
+they align with `direction_winner_arm_indices`, whose legacy name here means
+the selected finite-test frontier. `estimated_raw_winner_vectors` still means
+the observed sample averages, while posterior fields describe the latent
+acquisition state. The affine `recommendation_desirability_vectors` export
+exists for compatibility; raw conservative coordinates determine membership.
+
+Run the five datasets with seed 42 and beta 1:
 
 ```bash
-python experiments/combined_objective/plot/plot_hybrid_lcb_trace.py
+python experiments/combined_objective/run_lcb_benchmarks.py --question-order independent \
+    --benchmarks hotpotqa mathqa stackoverflow bird_dev restaurant_valid \
+    --cost-model raw_mean --recommendation-rule finite_lcb --beta 1 \
+    --outdir experiments/combined_objective/results/finite_lcb_raw_mean_seed42_beta1
+
+# Render every recommendation change and overlay the saved completed reference.
+# Both methods' complete checkpoint PDFs are written to each finite_lcb folder.
+for benchmark in hotpotqa mathqa stackoverflow bird_dev restaurant_valid
+do
+    python experiments/combined_objective/plot/plot_lcb_recommendations.py \
+        "experiments/combined_objective/results/finite_lcb_raw_mean_seed42_beta1/$benchmark/comparison.json" \
+        --reference "experiments/combined_objective/results/completed_raw_pareto_seed42/$benchmark/comparison.json"
+done
 ```
 
-Outputs are under `results/hybrid_lcb_recommendations_bird_dev_seed42_beta1/`:
-`pareto_key_checkpoints_page01.png` through `page06.png`,
-`pareto_key_checkpoints_all_pages.pdf`, and `checkpoints.csv` retain all C1–C46
-plus Warm start and the actual Final state. Each PNG title gives the page number
-and checkpoint range. Use `--pdf-only` to skip the per-page PNG writes.
-`--include-selected` additionally writes `pareto_selected_checkpoints.png`,
-an explicitly labelled excerpt of C42–C46 and Final, including both withdrawals.
-The old `pareto_recovery.png` was this excerpt, not the complete trajectory.
-These unprefixed diagnostic figure names differ from the runner's
-`hybrid_lcb_pareto_key_checkpoints*` figures. Both exporters write
-`checkpoints.csv`; use a separate `--outdir` when retaining both CSV versions.
+If a completed reference is missing, generate it with the first command using
+`--recommendation-rule completed_only` and the output directory
+`experiments/combined_objective/results/completed_raw_pareto_seed42`.
+The plot overlay checks lookup hashes, seed, model/question universe and metric
+coordinates before combining saved results. It does not certify identical
+acquisition traces. `comparison.png`/`.pdf` overlay both methods; each has its
+own `*_pareto_key_checkpoints_all_pages.pdf`, and `pareto_snapshots.pdf` aliases
+the finite-test method's full sequence. All plotted accuracy/cost positions
+are offline full-data values; a hollow circle denotes an incomplete
+recommendation, not an estimate of its accuracy or cost.
+
+#### Full-test mean recommendations after 32 observations
+
+The opt-in `recommendation_rule="finite_mean"` uses the same full-test mean
+`m = (S_n + (N - n) * mu) / N` for accuracy and raw mean USD cost, without a
+standard-deviation penalty. It returns the direct Pareto frontier of eligible
+arms in `(m_accuracy, m_cost_usd)`. Set `--recommendation-min-samples 32` to make
+an arm eligible only after **32 actual observed questions**, including warm-up
+observations; the threshold counts observations, not batches. Until an arm
+qualifies, the recommendation is empty. An arm with fewer than 32 total
+questions never qualifies under this strict threshold. All five datasets below
+have at least 32 common questions per arm.
+
+`finite_mean` always records effective `recommendation_beta=0.0`, regardless
+of `--beta`; it does not subtract or add posterior standard deviation. The
+target moments and their Gaussian assumptions remain those described above.
+`finite_target_std_vectors` are retained as diagnostic evidence, while
+`recommendation_raw_vectors` equal `finite_target_mean_vectors`. Completed
+arms naturally have their empirical full-test means and zero target variance.
+The count threshold is a chosen evidence gate, not a confidence guarantee or
+a stopping rule. It changes recommendation membership only; sampling,
+directions, asynchronous eta decay, warm calibration and the raw cost model
+remain the same.
+
+`recommendation_min_samples` defaults to zero and may also be used with
+`finite_lcb`; a nonzero threshold is rejected for other rules. Both finite
+rules require `cost_model="raw_mean"`.
+The new run exports `recommendation_min_samples`, the eligibility condition,
+the `eligible_arms_finite_test_mean_raw_pareto` filter and frozen target evidence
+alongside every lightweight membership event. Existing defaults and saved
+results are unchanged.
+
+Reproduce the five original independent-order datasets with seed 42, then
+compare against both saved independent-order references:
+
+```bash
+python experiments/combined_objective/run_lcb_benchmarks.py --question-order independent \
+    --benchmarks hotpotqa mathqa stackoverflow bird_dev restaurant_valid \
+    --cost-model raw_mean --recommendation-rule finite_mean \
+    --recommendation-min-samples 32 \
+    --outdir experiments/combined_objective/results/finite_mean_min32_raw_mean_seed42
+
+for benchmark in hotpotqa mathqa stackoverflow bird_dev restaurant_valid
+do
+    python experiments/combined_objective/plot/plot_lcb_recommendations.py \
+        "experiments/combined_objective/results/finite_mean_min32_raw_mean_seed42/$benchmark/comparison.json" \
+        --reference "experiments/combined_objective/results/completed_raw_pareto_seed42/$benchmark/comparison.json" \
+        --reference "experiments/combined_objective/results/finite_lcb_raw_mean_seed42_beta1/$benchmark/comparison.json"
+done
+```
+
+`--reference` is repeatable; the earlier single-reference command still works.
+The same provenance and metric checks apply to every added reference. Each new
+folder gets three-way `comparison.pdf`/`.png` curves and a full checkpoint PDF
+for each method. `finite_mean_pareto_key_checkpoints_all_pages.pdf` is the new
+method's canonical sequence; `pareto_snapshots.pdf` aliases that sequence.
+Its label records `n≥32`, and hollow/filled markers still distinguish partial
+and completed recommendations in offline full-data coordinates. No native
+sampling is repeated by the plotting command.
+
+#### Shared random question order
+
+The combined radial simulator and benchmark runner now default to
+`question_order="shared"`. The same seeded warm-up batch is retained, so this
+switch leaves warm-up observations and their prior/noise calibration unchanged.
+After warm-up, one random permutation orders the remaining questions for all
+arms. Each arm keeps its **own cursor**: selecting one arm advances only that
+arm. This does not force equal sample counts or evaluate every arm on the same
+question simultaneously. On the runner's common question universe, two arms
+with the same observed count have seen the same question prefix; an arm with
+more observations is farther along that prefix. For noncommon universes, the
+global order is restricted to each arm's available questions.
+
+This change leaves the selected recommendation rule, `n>=32` gate, effective
+beta zero, raw cost model, directions and asynchronous eta mechanism unchanged.
+Post-warm observations differ, so posterior states, acquisition decisions and
+eta events may differ from an independent-order run. Identical acquisition
+traces are therefore not an expected property of a cross-order comparison.
+The low-level `PerArmQuestionSchedule` constructor keeps its legacy
+`independent` default for other callers; the radial simulator opts into shared
+order explicitly.
+
+Run the finite-mean variant on the same five datasets with seed 42:
+
+```bash
+python experiments/combined_objective/run_lcb_benchmarks.py \
+    --benchmarks hotpotqa mathqa stackoverflow bird_dev restaurant_valid \
+    --question-order shared \
+    --cost-model raw_mean --recommendation-rule finite_mean \
+    --recommendation-min-samples 32 \
+    --outdir experiments/combined_objective/results/finite_mean_min32_raw_mean_seed42_shared_questions
+```
+
+To reproduce the earlier independent-order version, use the explicit old mode:
+
+```bash
+python experiments/combined_objective/run_lcb_benchmarks.py \
+    --benchmarks hotpotqa mathqa stackoverflow bird_dev restaurant_valid \
+    --question-order independent \
+    --cost-model raw_mean --recommendation-rule finite_mean \
+    --recommendation-min-samples 32 \
+    --outdir experiments/combined_objective/results/finite_mean_min32_raw_mean_seed42
+```
+
+The historical recipes in this README specify `--question-order independent`
+to preserve their meaning. Without `--outdir`, new shared runs receive a
+`_shared_questions` suffix; explicit independent mode preserves the old output
+names. An existing `comparison.json` with a different question order is
+protected even when `--outdir` is explicit: choose a new directory. Repeating
+a run with the same order remains allowed.
+
+`question_order` is recorded in config, compact runs and summary tables;
+`question_order_semantics` and `question_order_rng_scheme` are retained in the
+compact evidence. Historical results without a question-order field mean
+**independent**, including when overlaid with a new shared run. Plot reference
+compatibility checks still require the same dataset, seed and metric space,
+but permit different question orders and do not assert trace parity. Mixed
+orders are identified in the comparison legend and retained in plot manifests
+and checkpoint CSVs. The older BIRD exact-acquisition comparison CLI retains
+its independent default and requires a baseline with the same order; use the
+benchmark runner and saved plot references for cross-order comparisons.
+
+#### Current recommendation rules
+
+The executable recommendation choices are now `finite_lcb`, `finite_mean`,
+and the `completed_only` comparison baseline. The only LCB rule is
+`finite_lcb`; it uses finite-test predictive accuracy LCB and mean-cost UCB
+coordinates and therefore requires `cost_model="raw_mean"`. The earlier
+direction-winner LCB variants and their completed-raw guard have been removed
+from the replay API, command-line interfaces, plotting entry points, and tests.
+
+Historical result directories are frozen artifacts rather than runnable method
+definitions. See `combined_objective/results/README.md` for provenance; do not
+use their legacy method labels as current CLI arguments.
 
 The default `--direction-scheduler round_robin` visits all ten directions in
 one cycle. The experimental `--direction-scheduler accuracy_last` runs the
@@ -563,8 +661,11 @@ or a recorded numerical lambda floor. The numerical floor prevents endless
 halvings when the remaining cumulative penalty is below stopping precision;
 it is not a proof of exact zero-cost optimality.
 
-Anytime recommendations contain completed direction winners filtered for
-raw accuracy/cost nondominance. They become available when the first arm
+Anytime `completed_only` recommendations contain the empirical raw
+accuracy/cost Pareto frontier of all completed arms, with no direction filter.
+Older saved experiments in this section used completed direction winners;
+rerunning the current code produces the expanded empirical rule. Recommendations
+become available when the first arm
 completes. Every addition to this set is retained even between ordinary
 trajectory samples; replacements count as additions even when set size stays
 constant. Completing a dominated combination need not add a recommendation.
@@ -599,9 +700,12 @@ The horizontal metric axis is actual cumulative search cost, including the
 warm start, divided by exhaustive spend on the same complete question
 intersection. `--budget-fraction` instead caps the number of question
 evaluations; `--max-search-cost-usd` exposes the existing dollar cap.
-HV/GD/IGD evaluate the recommendation against the full reference frontier in
-normalized desirability space, using the frozen reciprocal cost transform
-per question. Pareto snapshots show accuracy versus mean deployment cost in
+Current completed-only HV/GD/IGD evaluate the recommendation against the full
+mean-USD Pareto frontier using the offline affine metric scale described above.
+Historical completed-only results and reciprocal-model LCB results instead
+used normalized desirability from the frozen per-question reciprocal transform;
+their HV values require recomputation before comparison with the new metric.
+Pareto snapshots show accuracy versus mean deployment cost in
 USD. Full-data reference points are used only for evaluation, never acquisition.
 Before any arm completes, HV is zero and GD/IGD are infinite (blank in CSV,
 null in JSON, and omitted from the distance curves).
@@ -623,19 +727,21 @@ still pays the same lambda-scaled search penalty and shares observations,
 posteriors, budget guards, and global stopping with the other directions.
 The two-dimensional radial formula is used only for positive interior
 directions, so no division by zero or near-axis approximation is needed.
-If completed combinations tie on accuracy, the endpoint recommends the one
-with lower observed mean deployment cost. `(0, 1)` is also supported for
+Legacy direction-filtered recommendations broke completed accuracy ties using
+lower observed mean deployment cost; current completed-only recommendations
+are selected directly by empirical Pareto dominance. `(0, 1)` is also supported for
 cost desirability via `--extra-direction 0 1`. Repeating an already included
 direction on the CLI has no effect.
 
 `combined_objective/plot/plot_radial_gittins_trajectories.py` writes one raw-archive
 comparison per benchmark, with each snapshot panel labelled by the scope its
 checkpoint recorded. Its hypervolume, generational-distance, and inverted-generational-distance
-series are each a single trajectory: a dashed
-all-posterior diagnostic before the endogenous Gittins stop and the solid
-completed-only recommendation from the stop onward, with the handover marked,
-because the deployable archive is not a recommendation before the policy
-stops. Online and oracle membership
+series preserve the recorded archive scopes. Historical fixed-budget results
+show a dashed all-posterior diagnostic before the endogenous Gittins stop and
+a solid completed-only recommendation afterwards, with the handover marked.
+New `completed_only` runs instead record the deployable empirical frontier
+throughout, starting with an empty set until the first arm completes; their
+recommendations do not wait for an endogenous stop. Online and oracle membership
 are plotted at full-dataset raw coordinates against the global raw Pareto
 front, so disagreements expose estimation error without feeding hidden
 outcomes back into the selector. The replay after the marked endogenous stop

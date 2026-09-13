@@ -81,7 +81,7 @@ class AxisRadialReplayTests(unittest.TestCase):
         ):
             result = _run()
 
-        self.assertEqual(result.selected_models, ["arm_1"])
+        self.assertEqual(result.selected_models, ["arm_0", "arm_1"])
         self.assertTrue(result.contains_true_accuracy_best)
         self.assertEqual(result.stop_reason, "all_arms_completed")
         self.assertGreater(result.lambda_stage, 0)

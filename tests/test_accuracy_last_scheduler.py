@@ -248,7 +248,10 @@ class AccuracyLastSchedulerTests(unittest.TestCase):
         self.assertEqual(deferred.observed_cells, baseline.observed_cells)
         self.assertEqual(deferred.stop_reason, "all_arms_completed")
         self.assertGreater(deferred.lambda_stage, 0)
-        self.assertEqual(deferred.selected_models, ["arm_1"])
+        # The endpoint winner is the accuracy best, while completed-only
+        # recommendation preserves both empirical accuracy/cost trade-offs.
+        self.assertEqual([winner.model_name for winner in deferred.direction_winners], ["arm_1"])
+        self.assertEqual(deferred.selected_models, ["arm_0", "arm_1"])
 
     def test_fixed_lambda_forced_continuation_returns_to_global_round_robin(self):
         result = _run(

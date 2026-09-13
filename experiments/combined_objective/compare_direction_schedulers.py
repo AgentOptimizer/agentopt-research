@@ -97,6 +97,7 @@ def compact_run(result):
     assert len(set(result.observed_cells)) == result.total_evaluations
     return {
         "scheduler": result.params["direction_scheduler"],
+        "question_order": result.params.get("question_order", "independent"),
         "seed": result.seed,
         "warm_start_sha256": digest(warm),
         "calibration_sha256": digest({key: result.params[key] for key in (
@@ -349,6 +350,7 @@ def main():
         "search_cost_scale_eta": 1.0, "observation_budget_fraction": 1.0,
         "boundary_z_padding_extra": 2.0, "effective_cost_bin_ratio": 2.0,
         "max_search_cost_usd": None, "question_universe": "common",
+        "question_order": "independent",
         "matched_budget_fractions": BUDGETS, "hv_regret_thresholds": THRESHOLDS,
         "default_pareto_budget_fractions": PARETO_BUDGETS,
         "checkpoint_recording": "Completion and lambda-stop events; no ordinary pull checkpoints",
@@ -393,6 +395,7 @@ def main():
                 result = simulate_radial_gittins(
                     models, questions, table, anytime=True, direction_scheduler=scheduler,
                     seed=42, batch_size=4, lambda_initial=1.0, lambda_decay=0.5,
+                    question_order="independent",  # Preserve this historical comparison's design.
                     search_cost_scale_eta=1.0, observation_budget_fraction=1.0,
                     boundary_z_padding_extra=2.0, effective_cost_bin_ratio=2.0,
                     boundary_grid=grid, boundary_cache=cache,

@@ -189,8 +189,6 @@ class DeferredRecommendationTests(unittest.TestCase):
                 with mock.patch.object(
                     replay, "simulate_radial_gittins", side_effect=AssertionError("replayed acquisition"),
                 ), mock.patch.object(
-                    replay, "_full_truth_vectors", side_effect=AssertionError("rescanned lookup"),
-                ), mock.patch.object(
                     replay, "_full_raw_objective_vectors", side_effect=AssertionError("rescanned lookup"),
                 ), mock.patch(
                     "builtins.open", side_effect=AssertionError("read or wrote a file"),
@@ -215,9 +213,14 @@ class DeferredRecommendationTests(unittest.TestCase):
                 score=float(question >= 6), cost=0.1, latency_seconds=0.1,
                 input_tokens={}, output_tokens={},
             )
-        # Fixed-budget runs already expose provisional partial diagnostics;
-        # they need no additional recommendation rule to exercise this case.
-        result = _run(problem, anytime=False, defer_recommendation_diagnostics=True)
+        # Finite LCB explicitly permits partial recommendations. The
+        # completed-only rule stays empty until completion, even in
+        # fixed-budget runs.
+        result = _run(
+            problem, anytime=False, recommendation_rule="finite_lcb",
+            cost_model="raw_mean",
+            defer_recommendation_diagnostics=True,
+        )
         warm = result.recommendation_initial_event
         final = result.recommendation_final_event
         self.assertEqual(warm.selected_arm_indices, final.selected_arm_indices)

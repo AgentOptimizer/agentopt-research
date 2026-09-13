@@ -165,6 +165,7 @@ def run_benchmark(
         boundary_z_padding_extra=boundary_z_padding_extra,
         observation_budget_fraction=1.0,
         seed=seed,
+        question_order="independent",  # Preserve this historical entry point's design.
         boundary_grid=grid,
         boundary_cache=cache,
         halt_on_gittins_stop=False,
@@ -689,6 +690,7 @@ def main() -> None:
             "final_evaluations": result.total_evaluations,
             "final_cost_usd": result.total_cost,
             "available_cells": result.params["available_cells_in_universe"],
+            "question_order": result.params["question_order"],
             "bruteforce_search_cost_usd": result.params["bruteforce_search_cost_usd"],
             "final_hv_regret": (
                 final_checkpoint.hypervolume_regret

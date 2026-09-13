@@ -166,7 +166,14 @@ def main():
         export(json.loads(output.read_text()), args.outdir, plots=True)
         return
     saved_baseline = json.loads(args.baseline.read_text())
-    baseline = saved_baseline["runs"]["bird_dev"]["round_robin"]
+    baseline = dict(saved_baseline["runs"]["bird_dev"]["round_robin"])
+    # Older saved runs used independent tails before the simulator default changed.
+    question_order = baseline.get("question_order", saved_baseline["config"].get("question_order", "independent"))
+    if question_order not in ("independent", "shared"):
+        parser.error(f"unsupported baseline question_order: {question_order!r}")
+    if saved_baseline["config"].get("question_order", question_order) != question_order:
+        parser.error("baseline run and config disagree on question_order")
+    baseline["question_order"] = question_order
     lookup = ROOT / "data/scope/bird_dev"
     hashes = {name: hashlib.sha256((lookup / name).read_bytes()).hexdigest()
               for name in ("accuracy_matrix.csv", "cost_matrix_usd.csv", "metadata.json")}
@@ -186,6 +193,7 @@ def main():
         result = simulate_radial_gittins(
             models, questions, table, anytime=True, direction_scheduler="round_robin",
             eta_decay_schedule="direction_stop", seed=42, batch_size=4,
+            question_order=question_order,
             lambda_initial=1.0, lambda_decay=0.5, search_cost_scale_eta=1.0,
             observation_budget_fraction=1.0, boundary_z_padding_extra=2.0,
             effective_cost_bin_ratio=2.0,
@@ -201,12 +209,13 @@ def main():
     run = compact_run(result)
     run["recommendation_recording"] = dict(result.params["recommendation_recording"])
     for key in ("warm_start_sha256", "calibration_sha256", "model_names", "raw_truth_vectors",
-                "bruteforce_search_cost_usd", "ground_truth_hypervolume"):
+                "bruteforce_search_cost_usd", "ground_truth_hypervolume", "question_order"):
         assert baseline[key] == run[key], key
     visits = [event for event in result.trace if event["event"] == "direction_visit"]
     assert all(event["direction_index"] == i % 10 for i, event in enumerate(visits))
     payload = {
         "config": {"benchmark": "bird_dev", "seed": 42, "recommendation_eligibility": "completed_only",
+                   "question_order": question_order,
                    "eta_initial": 1.0, "eta_decay": 0.5, "direction_scheduler": "round_robin",
                    "recommendation_changes_only": True, "defer_recommendation_diagnostics": True,
                    "baseline_file": str(args.baseline), "lookup_sha256": hashes,

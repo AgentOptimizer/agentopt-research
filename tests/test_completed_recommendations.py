@@ -121,13 +121,14 @@ class CompletedRecommendationTests(unittest.TestCase):
         self.assertEqual(result.selected_models, list(point.selected_models))
         self.assertEqual(result.recommendation_final_snapshot.selected_arm_indices, (0,))
 
-    def test_removal_only_membership_changes_are_retained_without_lambda_duplicates(self):
+    def test_completing_dominated_arm_does_not_remove_an_existing_frontier_member(self):
         models, questions, table = _problem(
             values=((0.3, 1.0), (0.8, 10.0), (0.4, 100.0)), n_questions=3
         )
-        # The last arm wins the normalized cost direction, but its raw cost
-        # leaves it dominated by arm 1. This removes arm 0 without adding
-        # a new recommendation after arm 2 completes.
+        # Arm 2 wins a legacy normalized-cost direction because two of its
+        # questions are free. Its empirical mean cost is nevertheless worse
+        # than arm 1's. Completing it must neither displace arm 0 nor create
+        # another recommendation event.
         for question, cost in zip(questions, (0.0, 0.0, 300.0)):
             table[models[2]][question].cost = cost
         result = _run(
@@ -141,15 +142,16 @@ class CompletedRecommendationTests(unittest.TestCase):
 
         self.assertEqual(result.lambda_stage, 2)
         trajectory = result.recommendation_trajectory
-        self.assertEqual([point.cumulative_evaluations for point in trajectory], [5, 7, 9])
+        self.assertEqual([point.cumulative_evaluations for point in trajectory], [5, 7])
         self.assertEqual(
             [set(point.selected_arm_indices) for point in trajectory],
-            [{0}, {0, 1}, {1}],
+            [{0}, {0, 1}],
         )
-        self.assertEqual(trajectory[-1].added_arm_indices, ())
-        self.assertEqual(trajectory[-1].removed_arm_indices, (0,))
-        self.assertEqual(trajectory[-1].removed_models, ("arm_0",))
-        self.assertEqual(result.selected_models, ["arm_1"])
+        self.assertEqual(trajectory[-1].added_arm_indices, (1,))
+        self.assertEqual(trajectory[-1].removed_arm_indices, ())
+        self.assertEqual(result.selected_models, ["arm_0", "arm_1"])
+        self.assertEqual(result.recommendation_final_snapshot.selected_arm_indices, (0, 1))
+        self.assertEqual(result.recommendation_final_snapshot.completed_arm_indices, (0, 1, 2))
 
     def test_changes_only_preserves_sampling_cost_and_lambda_decay(self):
         problem = _problem(values=((0.9, 9.0), (0.6, 1.0), (0.2, 0.1)), n_questions=3)

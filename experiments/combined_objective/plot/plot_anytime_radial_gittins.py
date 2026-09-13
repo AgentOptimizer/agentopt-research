@@ -447,6 +447,7 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
                "selected_models": run["selected_models"],
                "directions": run["params"]["directions"],
                "direction_scheduler": run["params"].get("direction_scheduler", "round_robin"),
+               "question_order": run["params"].get("question_order", "independent"),
                "HV": run["hypervolume"], "reference_HV": run["ground_truth_hypervolume"],
                "HV_regret": run["hypervolume_regret"],
                "relative_HV_regret_percent": _metric_value(run, run, "relative_hv_regret_percent"),
@@ -511,6 +512,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             models, datapoints, table,
             anytime=True, lambda_initial=args.lambda_initial, lambda_decay=args.lambda_decay,
             search_cost_scale_eta=args.eta, seed=args.seed, batch_size=args.batch_size,
+            question_order="independent",  # Preserve this historical entry point's design.
             directions=_cli_directions(anytime=True, extra_directions=args.extra_direction),
             direction_scheduler=args.direction_scheduler,
             observation_budget_fraction=args.budget_fraction,

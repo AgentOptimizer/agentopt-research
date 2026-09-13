@@ -218,6 +218,41 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertGreater(online_stats["hits"], 0)
         self.assertEqual(online_stats["invalidations"], 7)
 
+    def test_fixed_prior_cold_start_consumes_no_uniform_warm_batch(self):
+        models, datapoints, table = self._constant_problem(
+            n_arms=2,
+            n_datapoints=8,
+        )
+
+        result = simulate_radial_gittins(
+            models,
+            datapoints,
+            table,
+            batch_size=4,
+            warm_start_batch_size=0,
+            fixed_prior_mean=(0.5, 0.5),
+            prior_variance=0.04,
+            cost_reference_usd=0.1,
+            directions=((1.0, 0.0),),
+            recommendation_rule="completed_only",
+            index_provider=lambda context, arm: 1.0 if arm == 0 else 0.0,
+            max_total_question_evaluations=4,
+            record_recommendation_trajectory=True,
+            seed=3,
+        )
+
+        self.assertEqual(result.total_evaluations, 4)
+        self.assertFalse(any(event["event"] == "warm_start" for event in result.trace))
+        self.assertEqual(result.recommendation_initial_event.cumulative_evaluations, 0)
+        self.assertEqual(result.recommendation_initial_event.event, "initial_prior")
+        self.assertEqual(result.params["warm_start_batch_size"], 0)
+        self.assertEqual(
+            result.params["initialization"],
+            "fixed_general_prior_without_warm_start",
+        )
+        np.testing.assert_allclose(result.params["reward_prior_mean"], [0.5, 0.5])
+        np.testing.assert_allclose(result.params["expected_batch_costs_usd"], [0.4, 0.4])
+
     def test_boundary_prewarm_is_lazy_and_disables_failed_auto_jax(self):
         models, datapoints, table = self._constant_problem(
             n_arms=3,
@@ -337,7 +372,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
             "scalar_cache_protocol",
         )
 
-    def test_terminal_utilities_are_shared_by_policy_and_trajectory(self):
+    def test_partial_recommendation_checks_do_not_evaluate_terminal_utilities(self):
         models, datapoints, table = self._constant_problem()
         original = radial_replay.terminal_expected_radial_utility
 
@@ -364,10 +399,11 @@ class OfflineRoundRobinTests(unittest.TestCase):
 
         self.assertEqual(result.total_evaluations, 6)
         self.assertEqual(len(result.recommendation_trajectory), 5)
-        # Three warm-started arms are evaluated once, then only the pulled arm
-        # is recomputed after each of three updates. Policy status, adaptive
-        # checkpoints, final winners, and the final checkpoint share values.
-        self.assertEqual(terminal_utility.call_count, 6)
+        # No arm completes within this budget. Recommendation checks should
+        # remain empty without computing direction utilities for partial arms.
+        self.assertTrue(all(not point.selected_arm_indices for point in result.recommendation_trajectory))
+        self.assertEqual(result.selected_models, [])
+        terminal_utility.assert_not_called()
 
     def test_trajectory_checkpoint_interval_only_downsamples_diagnostics(self):
         models, datapoints, table = self._constant_problem(
@@ -400,14 +436,14 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(every_pull.trace, downsampled.trace)
         self.assertEqual(
             [point.event for point in downsampled.recommendation_trajectory],
-            ["after_warm_start", "adaptive_pull", "adaptive_pull", "final"],
+            ["after_warm_start", "adaptive_pull", "adaptive_pull", "recommendation_added", "final"],
         )
         self.assertEqual(
             [
                 point.cumulative_evaluations
                 for point in downsampled.recommendation_trajectory
             ],
-            [1, 3, 5, 6],
+            [1, 3, 5, 6, 6],
         )
         self.assertEqual(
             downsampled.selected_models,
@@ -445,7 +481,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertIsNone(result.params["recommendation_checkpoint_interval"])
         self.assertEqual(
             [point.event for point in result.recommendation_trajectory],
-            ["after_warm_start", "final"],
+            ["after_warm_start", "recommendation_added", "final"],
         )
 
     def test_trajectory_checkpoint_target_derives_interval(self):
@@ -471,7 +507,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(result.params["recommendation_checkpoint_interval"], 3)
         self.assertEqual(
             [point.cumulative_evaluations for point in result.recommendation_trajectory],
-            [1, 4, 6],
+            [1, 4, 6, 6],
         )
 
     def test_incremental_cache_is_event_for_event_equivalent_to_no_reuse(self):
@@ -543,7 +579,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertAlmostEqual(result.total_cost, 0.275)
         self.assertAlmostEqual(result.cost_reference_usd, 0.01)
         np.testing.assert_allclose(result.prior_mean, (0.6, 0.5125))
-        self.assertEqual(result.selected_models, ["C", "B", "A"])
+        self.assertEqual(result.selected_models, ["A", "B", "C"])
         self.assertAlmostEqual(result.generational_distance, 0.0)
         self.assertAlmostEqual(result.inverted_generational_distance, 0.0)
         self.assertEqual(
@@ -604,6 +640,14 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertEqual(result.selected_models, ["B"])
         self.assertEqual(result.online_raw_archive_models, ["B"])
         self.assertEqual(result.oracle_raw_winner_archive_models, ["B"])
+        # Even with reciprocal acquisition, quality evaluates the empirical
+        # mean-cost objective. Recovering its full frontier has zero regret.
+        self.assertEqual(result.params["cost_model"], "reciprocal")
+        self.assertEqual(result.params["metric_space"], "offline_common_affine_mean_usd")
+        self.assertGreater(result.ground_truth_hypervolume, 0.0)
+        self.assertAlmostEqual(result.hypervolume_regret, 0.0)
+        self.assertAlmostEqual(result.generational_distance, 0.0)
+        self.assertAlmostEqual(result.inverted_generational_distance, 0.0)
 
     def test_oracle_tail_changes_do_not_leak_into_online_raw_archive(self):
         models = ["A", "B"]
@@ -647,26 +691,22 @@ class OfflineRoundRobinTests(unittest.TestCase):
             checkpoints[0].estimated_raw_winner_vectors,
             checkpoints[1].estimated_raw_winner_vectors,
         )
-        self.assertEqual(checkpoints[0].selected_models, ("A", "B"))
-        self.assertEqual(checkpoints[1].selected_models, ("A", "B"))
+        self.assertEqual(checkpoints[0].selected_models, ())
+        self.assertEqual(checkpoints[1].selected_models, ())
         self.assertEqual(
             checkpoints[0].selected_arm_indices,
             checkpoints[0].online_raw_archive_arm_indices,
         )
-        self.assertEqual(
-            checkpoints[0].oracle_raw_winner_archive_models,
-            ("B",),
-        )
-        self.assertEqual(
-            checkpoints[1].oracle_raw_winner_archive_models,
-            ("A",),
-        )
         for checkpoint in checkpoints:
-            self.assertEqual(checkpoint.archive_scope, "provisional")
-            self.assertFalse(checkpoint.is_deployable)
+            # Different unseen tails cannot create a recommendation or even
+            # populate its evidence before any arm is completed.
+            self.assertEqual(checkpoint.oracle_raw_winner_archive_models, ())
+            self.assertEqual(checkpoint.estimated_raw_winner_vectors, ())
+            self.assertEqual(checkpoint.archive_scope, "deployable")
+            self.assertTrue(checkpoint.is_deployable)
             self.assertEqual(checkpoint.completed_arm_indices, ())
 
-    def test_trajectory_switches_from_provisional_to_deployable_at_the_stop(self):
+    def test_fixed_lambda_trajectory_stays_completed_only_before_and_after_stop(self):
         models = ["A", "B"]
         datapoints = [0, 1, 2]
         table = {
@@ -708,27 +748,18 @@ class OfflineRoundRobinTests(unittest.TestCase):
         )
         stop = trajectory[stop_position]
 
-        # Everything before the stop is the all-posterior diagnostic, where the
-        # unfinished arm B still wins its direction.
-        self.assertTrue(
-            all(
-                checkpoint.archive_scope == "provisional"
-                for checkpoint in trajectory[:stop_position]
-            )
-        )
-        self.assertTrue(
-            any(
-                1 in checkpoint.direction_winner_arm_indices
-                for checkpoint in trajectory[:stop_position]
-            )
-        )
-        # From the stop onward every snapshot is the completed-only handover.
-        self.assertTrue(
-            all(
-                checkpoint.is_deployable
-                for checkpoint in trajectory[stop_position:]
-            )
-        )
+        # Warm and partial evidence never become a completed recommendation.
+        # Completion makes A available before the endogenous stop; finishing
+        # the raw-dominated B later must not change that recommendation.
+        self.assertEqual(trajectory[0].selected_arm_indices, ())
+        self.assertTrue(all(checkpoint.is_deployable for checkpoint in trajectory))
+        self.assertTrue(all(
+            set(checkpoint.selected_arm_indices) <= set(checkpoint.completed_arm_indices)
+            for checkpoint in trajectory
+        ))
+        self.assertFalse(any(
+            1 in checkpoint.selected_arm_indices for checkpoint in trajectory
+        ))
 
         self.assertEqual(stop.cumulative_evaluations, 4)
         self.assertEqual(stop.completed_arm_indices, (0,))
@@ -989,7 +1020,8 @@ class OfflineRoundRobinTests(unittest.TestCase):
     def test_soft_expected_cost_guard_reports_realized_overshoot(self):
         models = ["A"]
         datapoints = [0, 1, 2]
-        # With seed=1, question 1 is warm and question 2 is the first tail.
+        # With the historical independent order and seed=1, question 1 is
+        # warm and expensive question 2 is the first tail.
         table = {
             "A": {
                 0: _sample(0.5, 0.1),
@@ -1005,6 +1037,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
             directions=((0.5, 0.5),),
             max_search_cost_usd=0.25,
             seed=1,
+            question_order="independent",
             index_provider=lambda context, arm_index: 10.0,
         )
 
@@ -1034,6 +1067,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
             guaranteed_batch_cost_usd={"A": 0.5},
             max_search_cost_usd=0.6,
             seed=1,
+            question_order="independent",
             index_provider=lambda context, arm_index: 10.0,
         )
 
@@ -1095,7 +1129,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
         self.assertTrue(all(grid.z_size == 513 for grid in cache.grids))
         self.assertTrue(all(grid.boundary_margin_cells == 4 for grid in cache.grids))
 
-    def test_custom_reference_is_used_for_reported_hypervolume(self):
+    def test_acquisition_reference_is_separate_from_completed_mean_cost_metrics(self):
         models = ["A"]
         datapoints = [0, 1]
         table = {"A": {q: _sample(0.6, 1.0) for q in datapoints}}
@@ -1110,8 +1144,12 @@ class OfflineRoundRobinTests(unittest.TestCase):
         )
 
         self.assertEqual(result.selected_models, ["A"])
-        self.assertEqual(result.hypervolume, 0.0)
-        self.assertEqual(result.ground_truth_hypervolume, 0.0)
+        self.assertEqual(result.params["reference_point"], [0.5, 0.5])
+        self.assertEqual(result.params["metric_reference_point"], [0.0, 0.0])
+        self.assertAlmostEqual(result.params["metric_cost_reference_usd"], 1.05)
+        self.assertAlmostEqual(result.hypervolume, .6 * (1. - 1. / 1.05))
+        self.assertAlmostEqual(result.ground_truth_hypervolume, result.hypervolume)
+        self.assertAlmostEqual(result.hypervolume_regret, 0.0)
         self.assertEqual(result.generational_distance, 0.0)
         self.assertEqual(result.inverted_generational_distance, 0.0)
 
@@ -1159,7 +1197,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
         datapoints = [0, 1]
         table = {"A": {q: _sample(0.6, 1.0) for q in datapoints}}
         truth_started = False
-        original_truth = radial_replay._full_truth_vectors
+        original_truth = radial_replay._full_raw_objective_vectors
 
         def timed_truth(*args, **kwargs):
             nonlocal truth_started
@@ -1169,7 +1207,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
         def fake_clock():
             return 100.0 if not truth_started else 999.0
 
-        with mock.patch.object(radial_replay, "_full_truth_vectors", timed_truth), mock.patch.object(
+        with mock.patch.object(radial_replay, "_full_raw_objective_vectors", timed_truth), mock.patch.object(
             radial_replay.time, "perf_counter", fake_clock
         ):
             result = simulate_radial_gittins(
@@ -1181,6 +1219,7 @@ class OfflineRoundRobinTests(unittest.TestCase):
                 index_provider=lambda context, arm_index: 10.0,
             )
 
+        self.assertTrue(truth_started, "the timing probe must exercise the active metric path")
         self.assertEqual(result.policy_wall_time_seconds, 0.0)
 
     def test_multi_seed_summary_keeps_each_fitted_parameter_set(self):
