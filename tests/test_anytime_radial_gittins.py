@@ -286,7 +286,9 @@ class AnytimeRadialGittinsTests(unittest.TestCase):
         for point in trajectory:
             self.assertLessEqual(set(point.selected_arm_indices), set(point.completed_arm_indices))
             self.assertAlmostEqual(point.budget_fraction, point.cumulative_search_cost_usd / 30.3)
-        self.assertAlmostEqual(additions[0].hypervolume, 0.09)
+        # The first completed arm has accuracy .9 and mean cost 9; offline
+        # HV uses the shared mean-USD reference 1.05 * max mean cost.
+        self.assertAlmostEqual(additions[0].hypervolume, .9 * (1. - 9. / (1.05 * 9.)))
         self.assertTrue(all(point.generational_distance == 0 for point in additions))
         self.assertGreater(additions[0].inverted_generational_distance, 0)
         self.assertAlmostEqual(trajectory[-1].inverted_generational_distance, 0)
@@ -301,11 +303,11 @@ class AnytimeRadialGittinsTests(unittest.TestCase):
         self.assertEqual([point.selected_arm_indices for point in additions], [(0,), (1,)])
         self.assertEqual([point.added_arm_indices for point in additions], [(0,), (1,)])
 
-    def test_removal_only_archive_changes_survive_downsampling(self):
+    def test_completed_dominated_direction_winner_does_not_remove_frontier_members(self):
         models, questions, table = _problem(values=((0.3, 1.0), (0.8, 10.0), (0.4, 100.0)))
-        # Arm two eventually wins the cost direction because of its two
-        # free questions, but its high raw mean cost makes arm one dominate
-        # it. Its completion removes arm zero without adding a recommendation.
+        # Arm two wins a posterior cost direction because of two free
+        # questions, but its observed mean cost is dominated by arm one.
+        # Completing it must leave both existing empirical frontier points.
         for question, cost in zip(questions, (0.0, 0.0, 300.0)):
             table[models[2]][question].cost = cost
 
@@ -315,16 +317,17 @@ class AnytimeRadialGittinsTests(unittest.TestCase):
             expected_batch_cost_usd=(1.0, 10.0, 100.0),
         )
         trajectory = result.recommendation_trajectory
-        changes = [point for point in trajectory if point.event == "recommendation_changed"]
-        self.assertEqual(len(changes), 1)
-        self.assertEqual(changes[0].cumulative_evaluations, 9)
-        self.assertEqual(changes[0].selected_arm_indices, (1,))
-        self.assertEqual(changes[0].added_arm_indices, ())
-        self.assertEqual(changes[0].added_models, ())
-        previous_addition = [point for point in trajectory if point.event == "recommendation_added"][-1]
-        self.assertEqual(set(previous_addition.selected_arm_indices), {0, 1})
-        self.assertLess(changes[0].hypervolume, previous_addition.hypervolume)
-        self.assertEqual(result.selected_models, [models[1]])
+        self.assertFalse(any(point.event == "recommendation_changed" for point in trajectory))
+        additions = [point for point in trajectory if point.event == "recommendation_added"]
+        self.assertEqual([point.selected_arm_indices for point in additions], [(0,), (0, 1)])
+        self.assertEqual([point.added_arm_indices for point in additions], [(0,), (1,)])
+        self.assertEqual(trajectory[-1].completed_arm_indices, (0, 1, 2))
+        self.assertEqual(result.selected_models, [models[0], models[1]])
+        self.assertEqual(trajectory[-1].selected_arm_indices, (0, 1))
+        self.assertTrue(all(
+            later.hypervolume >= earlier.hypervolume
+            for earlier, later in zip(trajectory, trajectory[1:])
+        ))
 
     def test_question_budget_applies_across_lambda_stages(self):
         result = _run(max_total_question_evaluations=6)

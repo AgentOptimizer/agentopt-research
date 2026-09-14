@@ -6,7 +6,7 @@ table.  Full-matrix objective vectors are computed after selection only for
 evaluation metrics; they never enter calibration, indices, or stopping.
 
 Everything except the unfinished-arm index is shared infrastructure: the
-uniform warm start, the round-robin direction scheduler, the required-completion
+uniform warm start, the direction scheduler, the required-completion
 stopping convention, the budget guards, and the archive/hypervolume/GD/IGD metrics.
 An alternative acquisition rule therefore only has to supply an
 ``index_provider`` without changing the shared replay engine.
@@ -21,7 +21,7 @@ import math
 import os
 import sys
 import time
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import (
@@ -67,7 +67,10 @@ from agentopt.model_selection.radial_gittins import (
     DEFAULT_ANYTIME_DIRECTIONS,
     DEFAULT_DIRECTIONS,
     GaussianVectorPosterior,
+    ObjectiveNormalizer,
     PerArmQuestionSchedule,
+    QUESTION_ORDERS,
+    build_fixed_prior_calibration,
     fit_empirical_bayes_warm_start,
 )
 from agentopt.model_selection.axis_gittins_dp import AxisGittinsBoundaryCache
@@ -170,8 +173,8 @@ class RadialArmSummary:
     arm_index: int
     posterior_mean: Tuple[float, float]
     posterior_var: Tuple[float, float]
-    observed_accuracy: float
-    observed_mean_cost_usd: float
+    observed_accuracy: Optional[float]
+    observed_mean_cost_usd: Optional[float]
     observed_total_cost_usd: float
     equivalent_posterior_cost_usd: float
     n_samples_evaluated: int
@@ -181,11 +184,17 @@ class RadialArmSummary:
     is_nondominated: bool = False
     is_posterior_nondominated: bool = False
     is_oracle_raw_nondominated: bool = False
+    raw_posterior_mean: Optional[Tuple[float, float]] = None
+    raw_posterior_var: Optional[Tuple[float, float]] = None
 
 
 PROVISIONAL_ARCHIVE_SCOPE = "provisional"
 DEPLOYABLE_ARCHIVE_SCOPE = "deployable"
-ARCHIVE_SCOPES = (PROVISIONAL_ARCHIVE_SCOPE, DEPLOYABLE_ARCHIVE_SCOPE)
+FINITE_ARCHIVE_SCOPE = "finite"
+ARCHIVE_SCOPES = (PROVISIONAL_ARCHIVE_SCOPE, DEPLOYABLE_ARCHIVE_SCOPE, FINITE_ARCHIVE_SCOPE)
+FINITE_RECOMMENDATION_RULES = ("finite_lcb", "finite_mean")
+UNCERTAIN_RECOMMENDATION_RULES = FINITE_RECOMMENDATION_RULES
+RECOMMENDATION_RULES = ("completed_only", *UNCERTAIN_RECOMMENDATION_RULES)
 
 
 @dataclass(frozen=True)
@@ -196,26 +205,36 @@ class RecommendationCheckpoint:
     arms were eligible for it:
 
     ``"provisional"``
-        Every warm-started arm, including unfinished ones.  This is the
-        fixed-budget diagnostic recorded before the policy stops, when the
-        required-completion contract has no recommendation to offer yet.
+        Historical snapshots over warm-started arms, including unfinished
+        ones. Retained for loading older results; new completed-only runs
+        always use the deployable scope.
 
     ``"deployable"``
-        Only ``completed_arm_indices``.  This matches the required-completion
-        stopping contract and the terminal ``RadialSimulationResult``
-        recommendation, and is the scope recorded from the endogenous stop
-        onward.
+        The empirical raw Pareto frontier over all ``completed_arm_indices``.
+        Accuracy and cost are measured full-evaluation means. Neither
+        posterior uncertainty nor exploration directions filter this set.
 
-    Fixed-lambda runs switch scope at most once, so a trajectory is a
-    provisional prefix followed by a deployable suffix. A run that finishes
-    every arm without an endogenous stop stays labelled provisional, where the
-    two scopes coincide because every arm is completed. Full-data oracle fields are diagnostic
-    only and never affect acquisition, stopping, or the archive.
+    ``"finite"``
+        Scope for finite-test recommendation rules, which may include
+        unfinished arms. ``"finite_lcb"`` uses a posterior prediction of each arm's
+        complete finite-test mean, taking the raw accuracy LCB / mean-USD UCB
+        Pareto frontier over every arm. No directional filter is applied.
+        ``"finite_mean"`` uses the same finite-test means without a standard
+        deviation penalty. The finite rules may additionally apply the actual
+        observation-count gate recorded in run parameter ``recommendation_min_samples``.
+        Observed raw vectors and full-data quality metrics are diagnostics.
 
-    Anytime runs use the deployable scope throughout, including an empty
+    Full-data oracle fields are diagnostic only and never affect acquisition,
+    stopping, or the archive. Completed-only runs use deployable scope throughout,
+    including an empty
     warm-start archive when no arm is completed. ``added_arm_indices`` records
     new archive members since the previous recommendation, including a new
     member that replaces an existing one without increasing cardinality.
+
+    For completed-only and finite-test snapshots, the legacy ``direction_winner_*``
+    evidence fields contain the selected frontier, not direction winners.
+    They retain their names for saved-result compatibility. Actual terminal
+    direction winners remain separate acquisition diagnostics on the result.
 
     ``budget_fraction`` is the cost-aware share of brute-force search spend
     (``cumulative_search_cost_usd / bruteforce_search_cost_usd``), not the
@@ -247,6 +266,17 @@ class RecommendationCheckpoint:
     lambda_stage: int = 0
     added_arm_indices: Tuple[int, ...] = ()
     added_models: Tuple[str, ...] = ()
+    removed_arm_indices: Tuple[int, ...] = ()
+    removed_models: Tuple[str, ...] = ()
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
+    recommendation_rule: str = "completed_only"
+    recommendation_beta: float = 1.0
+    recommendation_desirability_vectors: Tuple[Tuple[float, float], ...] = ()
+    direction_winner_sample_counts: Tuple[int, ...] = ()
+    finite_target_mean_vectors: Tuple[Tuple[float, float], ...] = ()
+    finite_target_std_vectors: Tuple[Tuple[float, float], ...] = ()
+    recommendation_raw_vectors: Tuple[Tuple[float, float], ...] = ()
 
     def __post_init__(self) -> None:
         if self.archive_scope not in ARCHIVE_SCOPES:
@@ -254,7 +284,43 @@ class RecommendationCheckpoint:
 
     @property
     def is_deployable(self) -> bool:
-        return self.archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
+        return self.archive_scope in {DEPLOYABLE_ARCHIVE_SCOPE, FINITE_ARCHIVE_SCOPE}
+
+
+@dataclass(frozen=True)
+class RecommendationEvent:
+    """Immutable online evidence for a retained recommendation, without metrics.
+
+    All vectors are copied at the event's time. No live posterior, observation
+    history, full-data metric, or reference to an acquisition cache is retained.
+    """
+
+    cumulative_evaluations: int
+    cumulative_search_cost_usd: float
+    budget_fraction: float
+    selected_arm_indices: Tuple[int, ...]
+    direction_winner_arm_indices: Tuple[int, ...]
+    winner_posterior_means: Tuple[Tuple[float, float], ...]
+    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
+    direction_winner_sample_counts: Tuple[int, ...]
+    event: str
+    completed_arm_indices: Tuple[int, ...] = ()
+    archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE
+    current_lambda: float = 1.0
+    lambda_stage: int = 0
+    added_arm_indices: Tuple[int, ...] = ()
+    removed_arm_indices: Tuple[int, ...] = ()
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
+    recommendation_rule: str = "completed_only"
+    recommendation_beta: float = 1.0
+    recommendation_desirability_vectors: Tuple[Tuple[float, float], ...] = ()
+
+    # Finite-test prediction evidence in raw accuracy / mean USD units, aligned
+    # with direction_winner_arm_indices (selected frontier for finite rules).
+    finite_target_mean_vectors: Tuple[Tuple[float, float], ...] = ()
+    finite_target_std_vectors: Tuple[Tuple[float, float], ...] = ()
+    recommendation_raw_vectors: Tuple[Tuple[float, float], ...] = ()
 
 
 @dataclass
@@ -305,6 +371,14 @@ class RadialSimulationResult:
     stage_timing_events: List[Dict[str, Any]] = field(default_factory=list)
     gittins_stop_triggered: bool = False
     halted_by_gittins: bool = False
+    recommendation_initial_snapshot: Optional[RecommendationCheckpoint] = None
+    recommendation_final_snapshot: Optional[RecommendationCheckpoint] = None
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
+    direction_eta_events: List[Dict[str, Any]] = field(default_factory=list)
+    recommendation_events: List[RecommendationEvent] = field(default_factory=list)
+    recommendation_initial_event: Optional[RecommendationEvent] = None
+    recommendation_final_event: Optional[RecommendationEvent] = None
 
 
 @dataclass(frozen=True)
@@ -315,6 +389,9 @@ class DirectionVisitContext:
     only valid during the visit it was created for.  ``effective_pull_costs``
     holds the frozen per-arm continuation cost in normalized utility units,
     which is the same quantity the boundary dynamic program consumes.
+    With independent eta decay, ``current_lambda`` and ``lambda_stage`` are
+    the visited direction's multiplier/stage; the eta vectors describe all
+    directions. The legacy scalar name is not a scalarization direction.
     """
 
     global_step: int
@@ -332,10 +409,77 @@ class DirectionVisitContext:
     effective_pull_costs: Tuple[float, ...] = ()
     current_lambda: float = 1.0
     lambda_stage: int = 0
+    direction_eta_multipliers: Tuple[float, ...] = ()
+    direction_eta_stages: Tuple[int, ...] = ()
 
 
 IndexProvider = Callable[[DirectionVisitContext, int], float]
 RadialTerminalUtilityProvider = Callable[[int, int], float]
+
+
+class _DirectionScheduler:
+    """Visit direction groups while tracking stops under unchanged observations.
+
+    Accuracy-last drains the other directions first, then the exact accuracy
+    endpoint. An endpoint pull invalidates earlier stops, so the other group
+    must be checked again before the policy may stop or lower lambda.
+    """
+
+    def __init__(self, directions: Sequence[Tuple[float, float]], policy: str):
+        if policy not in {"round_robin", "accuracy_last"}:
+            raise ValueError("direction_scheduler must be 'round_robin' or 'accuracy_last'")
+        self.policy = policy
+        indices = tuple(range(len(directions)))
+        if policy == "accuracy_last":
+            primary = tuple(i for i in indices if _direction_axis(directions[i]) != 0)
+            accuracy = tuple(i for i in indices if _direction_axis(directions[i]) == 0)
+            self.groups = tuple(group for group in (primary, accuracy) if group)
+        else:
+            self.groups = (indices,)
+        self._direction_count = len(directions)
+        self._group = 0
+        self._position = 0
+        self._stopped: set[int] = set()
+
+    @property
+    def direction_index(self) -> int:
+        return self.groups[self._group][self._position]
+
+    @property
+    def all_stopped(self) -> bool:
+        return len(self._stopped) == self._direction_count
+
+    def record_stop(self) -> None:
+        self._stopped.add(self.direction_index)
+
+    def record_observation(self) -> None:
+        self._stopped.clear()
+
+    def advance(self, *, force_round_robin: bool = False) -> int:
+        if force_round_robin:
+            # Fixed-lambda diagnostics can ignore stops after the first global
+            # stop. Keep visiting every direction in that forced continuation.
+            next_index = (self.direction_index + 1) % self._direction_count
+            for group_index, indices in enumerate(self.groups):
+                if next_index in indices:
+                    self._group = group_index
+                    self._position = indices.index(next_index)
+                    break
+            return self.direction_index
+        group = self.groups[self._group]
+        if len(self.groups) > 1 and all(i in self._stopped for i in group):
+            self._group = (self._group + 1) % len(self.groups)
+            self._position = 0
+        else:
+            self._position = (self._position + 1) % len(group)
+        return self.direction_index
+
+    def start_next_stage(self) -> int:
+        self._stopped.clear()
+        if len(self.groups) > 1:
+            self._group = self._position = 0
+            return self.direction_index
+        return self.advance()
 
 
 class _VersionedArmValueCache:
@@ -368,6 +512,10 @@ class _VersionedArmValueCache:
         for namespace in tuple(self._values):
             if isinstance(namespace, tuple) and namespace[0] == "radial_index":
                 del self._values[namespace]
+
+    def clear_direction_radial_indices(self, direction_index: int) -> None:
+        """Invalidate one direction's cost-dependent indices after local decay."""
+        self._values.pop(("radial_index", int(direction_index)), None)
 
     def get_or_compute(
         self,
@@ -962,119 +1110,412 @@ def provisional_archive_from_posteriors(
     return [winners[position] for position in nondominated_indices(winner_points)]
 
 
+class _CompletedRawParetoArchive:
+    """Incremental empirical Pareto frontier of completed observed rows.
+
+    Completed histories are immutable. Each newly completed arm's means are
+    read once; adding rows can only remove old frontier members. Incomplete
+    rows never enter this cache, including when their sample means look worse.
+    """
+
+    def __init__(self) -> None:
+        self.seen: set[int] = set()
+        self.frontier: Dict[int, Tuple[float, float]] = {}
+
+    @staticmethod
+    def _dominates(left: Tuple[float, float], right: Tuple[float, float]) -> bool:
+        return (left[0] >= right[0] and left[1] <= right[1]
+                and (left[0] > right[0] or left[1] < right[1]))
+
+    def update(
+        self,
+        completed_arms: Sequence[int],
+        observed_scores: Mapping[int, Sequence[float]],
+        observed_costs: Mapping[int, Sequence[float]],
+    ) -> None:
+        completed = set(completed_arms)
+        if not self.seen.issubset(completed):
+            raise ValueError("completed raw archive requires a monotone completed-arm set")
+        for arm in sorted(completed - self.seen):
+            scores, costs = observed_scores[arm], observed_costs[arm]
+            if not len(scores) or len(scores) != len(costs):
+                raise ValueError("completed raw archive requires matching nonempty observed scores and costs")
+            point = (float(np.mean(scores)), float(np.mean(costs)))
+            if not all(math.isfinite(value) for value in point):
+                raise ValueError("completed raw archive requires finite observed means")
+            if not any(self._dominates(other, point) for other in self.frontier.values()):
+                removed = [other_arm for other_arm, other in self.frontier.items()
+                           if self._dominates(point, other)]
+                for other_arm in removed:
+                    del self.frontier[other_arm]
+                self.frontier[arm] = point
+            self.seen.add(arm)
+
+
+def finite_test_mean_moments(
+    posterior: GaussianVectorPosterior,
+    observed_sum: Sequence[float],
+    n_observed: int,
+    n_total: int,
+    question_noise_var: Sequence[float],
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Posterior mean/variance of a fixed test set's realized mean.
+
+    Conditional on a latent Gaussian mean, unseen per-question outcomes are
+    independent with the supplied per-question variance. Observed outcomes
+    are fixed. Units must agree with the authoritative posterior (normalized
+    accuracy and mean USD for raw_mean replay). This never mutates that state.
+    The returned uncertainty concerns this finite test set, not generalization.
+    """
+    n_total = _positive_integer(n_total, "n_total")
+    if (isinstance(n_observed, (bool, np.bool_))
+            or not isinstance(n_observed, (int, np.integer))
+            or not 0 <= n_observed <= n_total):
+        raise ValueError("n_observed must be an integer between zero and n_total")
+    observed_sum = np.asarray(observed_sum, dtype=np.float64)
+    noise = np.asarray(question_noise_var, dtype=np.float64)
+    if observed_sum.shape != (2,) or not np.all(np.isfinite(observed_sum)):
+        raise ValueError("observed_sum must be a finite length-2 vector")
+    if noise.shape != (2,) or not np.all(np.isfinite(noise)) or np.any(noise < 0):
+        raise ValueError("question_noise_var must be a finite nonnegative length-2 vector")
+    remaining = n_total - n_observed
+    mean = (observed_sum + remaining * posterior.mean) / n_total
+    variance = (remaining ** 2 * posterior.var + remaining * noise) / n_total ** 2
+    return mean, variance
+
+
+def raw_pareto_front_indices(points: np.ndarray) -> Tuple[int, ...]:
+    """Strict 2-D Pareto front: maximize raw accuracy, minimize mean USD.
+
+    Sorting plus a vectorized cost-group sweep is O(K log K). Equal objective
+    pairs are all retained, with deterministic original arm order.
+    """
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] != 2 or not np.all(np.isfinite(points)):
+        raise ValueError("points must be a finite (K, 2) array")
+    if not len(points):
+        return ()
+    order = np.lexsort((-points[:, 0], points[:, 1]))
+    accuracy, cost = points[order, 0], points[order, 1]
+    starts = np.r_[True, cost[1:] != cost[:-1]]
+    groups = np.cumsum(starts) - 1
+    group_best = accuracy[starts]
+    previous_best = np.r_[-np.inf, np.maximum.accumulate(group_best)[:-1]]
+    keep = ((accuracy == group_best[groups])
+            & (group_best[groups] > previous_best[groups]))
+    return tuple(sorted(int(i) for i in order[keep]))
+
+
+def _validate_recommendation_min_samples(value: int) -> int:
+    if (isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer)) or value < 0):
+        raise ValueError("recommendation_min_samples must be a nonnegative integer")
+    return int(value)
+
+
+class _FiniteRecommendationCache:
+    """Per-arm finite-test predictions; only appended observations are read."""
+
+    def __init__(self, n_total, question_noise_var, normalizer, beta, min_samples=0):
+        self.n_total = tuple(_positive_integer(n, "n_total") for n in n_total)
+        self.min_samples = _validate_recommendation_min_samples(min_samples)
+        self.question_noise_var = np.asarray(question_noise_var, dtype=np.float64)
+        self.normalizer = normalizer
+        self.beta = float(beta)
+        self.counts = np.zeros(len(self.n_total), dtype=np.int64)
+        self.sums = np.zeros((len(self.n_total), 2), dtype=np.float64)
+        self.observed_means = np.zeros_like(self.sums)
+        self.means = np.zeros_like(self.sums)
+        self.stds = np.zeros_like(self.sums)
+        self.conservative = np.zeros_like(self.sums)
+
+    def update(self, arm, posterior, observed_scores, observed_costs):
+        n, before = len(observed_scores), int(self.counts[arm])
+        if len(observed_costs) != n or n < before or n > self.n_total[arm]:
+            raise ValueError("finite recommendation cache needs monotone matching observations")
+        if n == before:
+            return
+        self.sums[arm] += (
+            float(np.sum(observed_scores[before:])),
+            float(np.sum(observed_costs[before:])),
+        )
+        self.counts[arm] = n
+        self.observed_means[arm] = self.sums[arm] / n
+        low, high = self.normalizer.score_bounds
+        span = high - low
+        normalized_sum = self.sums[arm].copy()
+        normalized_sum[0] = (normalized_sum[0] - n * low) / span
+        mean, variance = finite_test_mean_moments(
+            posterior, normalized_sum, n, self.n_total[arm], self.question_noise_var,
+        )
+        self.means[arm] = (low + span * mean[0], mean[1])
+        self.stds[arm] = np.sqrt(variance) * (span, 1.0)
+        if n == self.n_total[arm]:
+            # Use the same summation as completed_only, once, so rounding of
+            # batch sums cannot break exact empirical ties at completion.
+            self.observed_means[arm] = (float(np.mean(observed_scores)), float(np.mean(observed_costs)))
+            self.means[arm] = self.observed_means[arm]
+        self.conservative[arm] = self.means[arm] + self.beta * self.stds[arm] * (-1.0, 1.0)
+
+    def select(self):
+        if np.any(self.counts == 0):
+            raise ValueError("finite recommendation requires every arm's warm observations")
+        eligible = np.flatnonzero(self.counts >= self.min_samples)
+        members = tuple(int(eligible[i]) for i in raw_pareto_front_indices(self.conservative[eligible]))
+        positions = list(members)
+        raw = self.conservative[positions]
+        low, high = self.normalizer.score_bounds
+        reward = raw.copy()
+        reward[:, 0] = (raw[:, 0] - low) / (high - low)
+        reward[:, 1] = 1.0 - raw[:, 1] / self.normalizer.cost_reference_usd
+        freeze = lambda array: tuple(tuple(map(float, row)) for row in array)
+        return _RecommendationSelection(
+            selected_arm_indices=members,
+            direction_winner_arm_indices=members,
+            recommendation_desirability_vectors=freeze(reward),
+            estimated_raw_winner_vectors=freeze(self.observed_means[positions]),
+            finite_target_mean_vectors=freeze(self.means[positions]),
+            finite_target_std_vectors=freeze(self.stds[positions]),
+            recommendation_raw_vectors=freeze(raw),
+        )
+
+
 @dataclass(frozen=True)
-class _CheckpointArchive:
+class _RecommendationSelection:
+    selected_arm_indices: Tuple[int, ...]
     direction_winner_arm_indices: Tuple[int, ...]
-    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...]
-    posterior_archive_arm_indices: Tuple[int, ...]
-    posterior_archive_models: Tuple[str, ...]
-    online_raw_archive_arm_indices: Tuple[int, ...]
-    online_raw_archive_models: Tuple[str, ...]
-    oracle_raw_winner_archive_arm_indices: Tuple[int, ...]
-    oracle_raw_winner_archive_models: Tuple[str, ...]
-    hypervolume: float
-    hypervolume_regret: float
-    generational_distance: float
-    inverted_generational_distance: float
+    recommendation_desirability_vectors: Tuple[Tuple[float, float], ...]
+    # Needed online by the empirical raw and finite-test rules.
+    estimated_raw_winner_vectors: Tuple[Tuple[float, float], ...] = ()
+    finite_target_mean_vectors: Tuple[Tuple[float, float], ...] = ()
+    finite_target_std_vectors: Tuple[Tuple[float, float], ...] = ()
+    recommendation_raw_vectors: Tuple[Tuple[float, float], ...] = ()
 
 
-def _checkpoint_archive(
+def _recommendation_selection(
     *,
-    eligible_arms: Sequence[int],
     posteriors: Mapping[int, GaussianVectorPosterior],
     directions: Sequence[Tuple[float, float]],
-    models: Sequence[str],
     reference_point: Sequence[float],
     stop_tolerance: float,
+    observed_scores: Mapping[int, Sequence[float]],
+    observed_costs: Mapping[int, Sequence[float]],
+    completed_arms: Sequence[int],
+    archive_scope: str,
+    recommendation_rule: str,
+    recommendation_beta: float,
+    completed_raw_archive: Optional[_CompletedRawParetoArchive] = None,
+    finite_recommendation_cache: Optional[_FiniteRecommendationCache] = None,
+) -> _RecommendationSelection:
+    """Select online members without computing any diagnostic archive or metric."""
+    if recommendation_rule not in RECOMMENDATION_RULES:
+        raise ValueError(f"recommendation_rule must be one of {RECOMMENDATION_RULES}")
+    if archive_scope not in ARCHIVE_SCOPES:
+        raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
+    if recommendation_rule in FINITE_RECOMMENDATION_RULES:
+        if finite_recommendation_cache is None:
+            raise ValueError(f"{recommendation_rule} requires a finite recommendation cache")
+        return finite_recommendation_cache.select()
+    archive = completed_raw_archive if completed_raw_archive is not None else _CompletedRawParetoArchive()
+    archive.update(completed_arms, observed_scores, observed_costs)
+    members = tuple(sorted(archive.frontier))
+    return _RecommendationSelection(
+        selected_arm_indices=members,
+        # Legacy evidence slots also support empirical recommendations with
+        # more members than exploration directions. No directional ranking.
+        direction_winner_arm_indices=members,
+        recommendation_desirability_vectors=(),
+        estimated_raw_winner_vectors=tuple(archive.frontier[i] for i in members),
+    )
+
+
+def _capture_recommendation_event(
+    selection: _RecommendationSelection,
+    *,
+    posteriors: Mapping[int, GaussianVectorPosterior],
+    observed_scores: Mapping[int, Sequence[float]],
+    observed_costs: Mapping[int, Sequence[float]],
+    total_evaluations: int,
+    total_cost: float,
+    bruteforce_search_cost_usd: float,
+    event: str,
+    completed_arms: Sequence[int],
+    archive_scope: str,
+    current_lambda: float,
+    lambda_stage: int,
+    direction_eta_multipliers: Tuple[float, ...],
+    direction_eta_stages: Tuple[int, ...],
+    recommendation_rule: str,
+    recommendation_beta: float,
+) -> RecommendationEvent:
+    """Freeze only a retained event's online evidence; never access full truth."""
+    if not math.isfinite(bruteforce_search_cost_usd) or bruteforce_search_cost_usd <= 0.0:
+        raise ValueError("bruteforce_search_cost_usd must be finite and positive")
+    winners = selection.direction_winner_arm_indices
+    raw = selection.estimated_raw_winner_vectors
+    return RecommendationEvent(
+        cumulative_evaluations=int(total_evaluations),
+        cumulative_search_cost_usd=float(total_cost),
+        budget_fraction=float(total_cost) / float(bruteforce_search_cost_usd),
+        selected_arm_indices=selection.selected_arm_indices,
+        direction_winner_arm_indices=winners,
+        winner_posterior_means=tuple(tuple(map(float, posteriors[i].mean)) for i in winners),
+        estimated_raw_winner_vectors=raw,
+        direction_winner_sample_counts=tuple(len(observed_scores[i]) for i in winners),
+        event=event,
+        completed_arm_indices=tuple(int(i) for i in completed_arms),
+        archive_scope=DEPLOYABLE_ARCHIVE_SCOPE if recommendation_rule == "completed_only" else archive_scope,
+        current_lambda=current_lambda,
+        lambda_stage=lambda_stage,
+        direction_eta_multipliers=direction_eta_multipliers,
+        direction_eta_stages=direction_eta_stages,
+        recommendation_rule=recommendation_rule,
+        recommendation_beta=recommendation_beta,
+        recommendation_desirability_vectors=selection.recommendation_desirability_vectors,
+        finite_target_mean_vectors=selection.finite_target_mean_vectors,
+        finite_target_std_vectors=selection.finite_target_std_vectors,
+        recommendation_raw_vectors=selection.recommendation_raw_vectors,
+    )
+
+
+def _materialize_recommendation_event(
+    event: RecommendationEvent,
+    *,
+    models: Sequence[str],
     truth_vectors: np.ndarray,
     truth_front: np.ndarray,
     raw_truth_vectors: np.ndarray,
-    observed_scores: Mapping[int, Sequence[float]],
-    observed_costs: Mapping[int, Sequence[float]],
+    reference_point: Sequence[float],
     ground_truth_hv: float,
-    radial_terminal_utility_provider: Optional[
-        RadialTerminalUtilityProvider
-    ] = None,
-) -> _CheckpointArchive:
-    """Build one online archive for an explicit arm-eligibility scope."""
-    eligible = tuple(int(i) for i in eligible_arms)
-    winner_arms = provisional_direction_winner_arms(
-        posteriors=posteriors,
-        directions=directions,
-        reference_point=reference_point,
-        stop_tolerance=stop_tolerance,
-        candidate_arms=eligible,
-        terminal_utility_provider=radial_terminal_utility_provider,
-        endpoint_tiebreak_provider=lambda direction_index, arm_index: (
-            -float(np.mean(observed_costs[arm_index]))
-            if _direction_axis(directions[direction_index]) == 0
-            else float(np.mean(observed_scores[arm_index]))
-        ),
-    )
-    posterior_points = np.asarray(
-        [posteriors[i].mean for i in winner_arms],
-        dtype=np.float64,
-    ).reshape((-1, 2))
-    posterior_archive_arms = [
-        winner_arms[position]
-        for position in nondominated_indices(posterior_points)
-    ]
-    estimated_raw_points = np.asarray(
-        [
-            (
-                float(np.mean(observed_scores[i])),
-                float(np.mean(observed_costs[i])),
-            )
-            for i in winner_arms
-        ],
-        dtype=np.float64,
-    ).reshape((-1, 2))
-    online_raw_archive_arms = raw_archive_arm_indices(
-        winner_arms,
-        estimated_raw_points,
-    )
-    oracle_raw_points = (
-        raw_truth_vectors[winner_arms]
-        if winner_arms
-        else np.empty((0, 2), dtype=np.float64)
-    )
-    oracle_raw_archive_arms = raw_archive_arm_indices(
-        winner_arms,
-        oracle_raw_points,
-    )
-    selected_truth = (
-        truth_vectors[online_raw_archive_arms]
-        if online_raw_archive_arms
-        else np.empty((0, 2), dtype=np.float64)
-    )
+) -> RecommendationCheckpoint:
+    """Compute diagnostic archives/metrics from frozen evidence, after sampling."""
+    winners = event.direction_winner_arm_indices
+    posterior = np.asarray(event.winner_posterior_means).reshape((-1, 2))
+    posterior_arms = tuple(winners[i] for i in nondominated_indices(posterior))
+    raw_arms = tuple(raw_archive_arm_indices(
+        winners, np.asarray(event.estimated_raw_winner_vectors).reshape((-1, 2)),
+    ))
+    oracle_arms = tuple(raw_archive_arm_indices(
+        winners, raw_truth_vectors[list(winners)] if winners else np.empty((0, 2)),
+    ))
+    selected = list(event.selected_arm_indices)
     quality = front_quality_metrics(
-        selected_truth,
-        truth_front,
-        reference_point,
-        ground_truth_hv,
+        truth_vectors[selected] if selected else np.empty((0, 2)),
+        truth_front, reference_point, ground_truth_hv,
     )
-    return _CheckpointArchive(
-        direction_winner_arm_indices=tuple(winner_arms),
-        estimated_raw_winner_vectors=tuple(
-            (float(point[0]), float(point[1])) for point in estimated_raw_points
-        ),
-        posterior_archive_arm_indices=tuple(posterior_archive_arms),
-        posterior_archive_models=tuple(
-            models[i] for i in posterior_archive_arms
-        ),
-        online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
-        online_raw_archive_models=tuple(
-            models[i] for i in online_raw_archive_arms
-        ),
-        oracle_raw_winner_archive_arm_indices=tuple(oracle_raw_archive_arms),
-        oracle_raw_winner_archive_models=tuple(
-            models[i] for i in oracle_raw_archive_arms
-        ),
+    fields = {key: value for key, value in vars(event).items() if key != "winner_posterior_means"}
+    return RecommendationCheckpoint(
+        **fields,
+        selected_models=tuple(models[i] for i in selected),
+        posterior_archive_arm_indices=posterior_arms,
+        posterior_archive_models=tuple(models[i] for i in posterior_arms),
+        online_raw_archive_arm_indices=raw_arms,
+        online_raw_archive_models=tuple(models[i] for i in raw_arms),
+        oracle_raw_winner_archive_arm_indices=oracle_arms,
+        oracle_raw_winner_archive_models=tuple(models[i] for i in oracle_arms),
+        added_models=tuple(models[i] for i in event.added_arm_indices),
+        removed_models=tuple(models[i] for i in event.removed_arm_indices),
         hypervolume=quality.hypervolume,
         hypervolume_regret=quality.hypervolume_regret,
         generational_distance=quality.generational_distance,
         inverted_generational_distance=quality.inverted_generational_distance,
     )
+
+
+def _materialize_recommendation_events(
+    events: Sequence[RecommendationEvent],
+    initial: Optional[RecommendationEvent],
+    final: Optional[RecommendationEvent],
+    *,
+    models: Sequence[str],
+    truth_vectors: np.ndarray,
+    raw_truth_vectors: np.ndarray,
+    reference_point: Sequence[float],
+    ground_truth_hv: float,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    started = time.perf_counter()
+    truth_front = truth_vectors[nondominated_indices(truth_vectors)]
+    materialized: Dict[RecommendationEvent, RecommendationCheckpoint] = {}
+
+    def materialize(event: Optional[RecommendationEvent]) -> Optional[RecommendationCheckpoint]:
+        if event is None:
+            return None
+        if event not in materialized:
+            materialized[event] = _materialize_recommendation_event(
+                event, models=models, truth_vectors=truth_vectors,
+                truth_front=truth_front, raw_truth_vectors=raw_truth_vectors,
+                reference_point=reference_point, ground_truth_hv=ground_truth_hv,
+            )
+        return materialized[event]
+
+    checkpoints = {
+        "recommendation_trajectory": [materialize(event) for event in events],
+        "recommendation_initial_snapshot": materialize(initial),
+        "recommendation_final_snapshot": materialize(final),
+    }
+    return checkpoints, {
+        "diagnostic_materializations": len(materialized),
+        "diagnostic_wall_time_seconds": time.perf_counter() - started,
+    }
+
+
+def materialize_recommendation_diagnostics(result: RadialSimulationResult) -> None:
+    """Populate legacy checkpoint fields on demand, without replaying acquisition.
+
+    Existing callers get these same diagnostics after sampling by default.
+    Repeated calls are free; event-only JSON can instead use the saved variant.
+    """
+    if result.recommendation_initial_event is None or result.recommendation_initial_snapshot is not None:
+        return
+    checkpoints, stats = _materialize_recommendation_events(
+        result.recommendation_events, result.recommendation_initial_event,
+        result.recommendation_final_event,
+        models=[arm.model_name for arm in result.model_results],
+        truth_vectors=result.truth_vectors, raw_truth_vectors=result.raw_truth_vectors,
+        reference_point=result.params.get("metric_reference_point", result.params["reference_point"]),
+        ground_truth_hv=result.ground_truth_hypervolume,
+    )
+    for name, value in checkpoints.items():
+        setattr(result, name, value)
+    result.params["recommendation_recording"].update(stats)
+
+
+def materialize_saved_recommendation_diagnostics(payload: Dict[str, Any]) -> None:
+    """Expand one event-only JSON result in place, even in a fresh process.
+
+    Accepts one `_jsonable_result` dictionary, or one item of a CLI output's
+    `results` list. No lookup files, live posteriors, or acquisition replay needed.
+    """
+    if payload.get("recommendation_initial_event") is None or payload.get("recommendation_initial_snapshot") is not None:
+        return
+
+    def restore(value: Optional[Mapping[str, Any]]) -> Optional[RecommendationEvent]:
+        if value is None:
+            return None
+        def freeze(item: Any) -> Any:
+            return tuple(freeze(v) for v in item) if isinstance(item, (list, tuple)) else item
+        allowed = {item.name for item in fields(RecommendationEvent)}
+        return RecommendationEvent(**{
+            key: freeze(item) for key, item in value.items() if key in allowed
+        })
+
+    checkpoints, stats = _materialize_recommendation_events(
+        [restore(event) for event in payload["recommendation_events"]],
+        restore(payload["recommendation_initial_event"]),
+        restore(payload["recommendation_final_event"]),
+        models=[arm["model_name"] for arm in payload["model_results"]],
+        truth_vectors=np.asarray(payload["truth_vectors"], dtype=np.float64),
+        raw_truth_vectors=np.asarray(payload["raw_truth_vectors"], dtype=np.float64),
+        reference_point=payload["params"].get("metric_reference_point", payload["params"]["reference_point"]),
+        ground_truth_hv=payload["ground_truth_hypervolume"],
+    )
+    # Match CLI handling of tuple arrays and undefined empty-front distances.
+    payload.update(_jsonable_value({
+        name: [asdict(point) for point in value] if isinstance(value, list)
+        else asdict(value) if value is not None else None
+        for name, value in checkpoints.items()
+    }))
+    payload["params"]["recommendation_recording"].update(stats)
 
 
 def _recommendation_checkpoint(
@@ -1098,65 +1539,43 @@ def _recommendation_checkpoint(
     archive_scope: str = PROVISIONAL_ARCHIVE_SCOPE,
     current_lambda: float = 1.0,
     lambda_stage: int = 0,
-    radial_terminal_utility_provider: Optional[
-        RadialTerminalUtilityProvider
-    ] = None,
+    direction_eta_multipliers: Tuple[float, ...] = (),
+    direction_eta_stages: Tuple[int, ...] = (),
+    recommendation_rule: str = "completed_only",
+    recommendation_beta: float = 1.0,
+    completed_raw_archive: Optional[_CompletedRawParetoArchive] = None,
+    finite_recommendation_cache: Optional[_FiniteRecommendationCache] = None,
 ) -> RecommendationCheckpoint:
-    if archive_scope not in ARCHIVE_SCOPES:
-        raise ValueError(f"archive_scope must be one of {ARCHIVE_SCOPES}")
-    if (
-        not math.isfinite(bruteforce_search_cost_usd)
-        or bruteforce_search_cost_usd <= 0.0
-    ):
-        raise ValueError("bruteforce_search_cost_usd must be finite and positive")
-    completed = tuple(int(i) for i in completed_arms)
-    eligible = (
-        completed
-        if archive_scope == DEPLOYABLE_ARCHIVE_SCOPE
-        else tuple(sorted(posteriors))
+    # Eager compatibility helper for callers constructing one checkpoint.
+    if recommendation_rule == "finite_mean":
+        recommendation_beta = 0.0
+    if recommendation_rule in UNCERTAIN_RECOMMENDATION_RULES:
+        archive_scope = FINITE_ARCHIVE_SCOPE
+    else:
+        archive_scope = DEPLOYABLE_ARCHIVE_SCOPE
+    selection = _recommendation_selection(
+        posteriors=posteriors, directions=directions, reference_point=reference_point,
+        stop_tolerance=stop_tolerance, observed_scores=observed_scores,
+        observed_costs=observed_costs, completed_arms=completed_arms,
+        archive_scope=archive_scope, recommendation_rule=recommendation_rule,
+        recommendation_beta=recommendation_beta,
+        completed_raw_archive=completed_raw_archive,
+        finite_recommendation_cache=finite_recommendation_cache,
     )
-    archive = _checkpoint_archive(
-        eligible_arms=eligible,
-        posteriors=posteriors,
-        directions=directions,
-        models=models,
-        reference_point=reference_point,
-        stop_tolerance=stop_tolerance,
-        truth_vectors=truth_vectors,
-        truth_front=truth_front,
-        raw_truth_vectors=raw_truth_vectors,
-        observed_scores=observed_scores,
-        observed_costs=observed_costs,
+    snapshot = _capture_recommendation_event(
+        selection, posteriors=posteriors, observed_scores=observed_scores,
+        observed_costs=observed_costs, total_evaluations=total_evaluations,
+        total_cost=total_cost, bruteforce_search_cost_usd=bruteforce_search_cost_usd,
+        event=event, completed_arms=completed_arms, archive_scope=archive_scope,
+        current_lambda=current_lambda, lambda_stage=lambda_stage,
+        direction_eta_multipliers=direction_eta_multipliers,
+        direction_eta_stages=direction_eta_stages,
+        recommendation_rule=recommendation_rule, recommendation_beta=recommendation_beta,
+    )
+    return _materialize_recommendation_event(
+        snapshot, models=models, truth_vectors=truth_vectors, truth_front=truth_front,
+        raw_truth_vectors=raw_truth_vectors, reference_point=reference_point,
         ground_truth_hv=ground_truth_hv,
-        radial_terminal_utility_provider=radial_terminal_utility_provider,
-    )
-    return RecommendationCheckpoint(
-        cumulative_evaluations=int(total_evaluations),
-        cumulative_search_cost_usd=float(total_cost),
-        budget_fraction=float(total_cost) / float(bruteforce_search_cost_usd),
-        selected_arm_indices=archive.online_raw_archive_arm_indices,
-        selected_models=archive.online_raw_archive_models,
-        direction_winner_arm_indices=archive.direction_winner_arm_indices,
-        estimated_raw_winner_vectors=archive.estimated_raw_winner_vectors,
-        posterior_archive_arm_indices=archive.posterior_archive_arm_indices,
-        posterior_archive_models=archive.posterior_archive_models,
-        online_raw_archive_arm_indices=archive.online_raw_archive_arm_indices,
-        online_raw_archive_models=archive.online_raw_archive_models,
-        oracle_raw_winner_archive_arm_indices=(
-            archive.oracle_raw_winner_archive_arm_indices
-        ),
-        oracle_raw_winner_archive_models=(
-            archive.oracle_raw_winner_archive_models
-        ),
-        hypervolume=archive.hypervolume,
-        hypervolume_regret=archive.hypervolume_regret,
-        generational_distance=archive.generational_distance,
-        inverted_generational_distance=archive.inverted_generational_distance,
-        event=event,
-        completed_arm_indices=completed,
-        archive_scope=archive_scope,
-        current_lambda=current_lambda,
-        lambda_stage=lambda_stage,
     )
 
 
@@ -1201,28 +1620,6 @@ def _equivalent_cost(cost_reference_usd: float, desirability: float) -> float:
     return float(cost_reference_usd * (1.0 - desirability) / desirability)
 
 
-def _full_truth_vectors(
-    models: Sequence[str],
-    datapoints: Sequence[int],
-    table: LookupTable,
-    normalizer: Any,
-) -> np.ndarray:
-    vectors = np.empty((len(models), 2), dtype=np.float64)
-    for arm_index, model_name in enumerate(models):
-        normalized: List[np.ndarray] = []
-        model_data = table.get(model_name, {})
-        for question_id in datapoints:
-            sample = model_data.get(question_id)
-            if sample is None:
-                continue
-            score, cost, _ = _sample_values(sample)
-            normalized.append(normalizer.normalize_batch([score], [cost])[0])
-        if not normalized:
-            raise ValueError(f"model {model_name!r} has no available observations")
-        vectors[arm_index] = np.mean(np.asarray(normalized), axis=0)
-    return vectors
-
-
 def _full_raw_objective_vectors(
     models: Sequence[str],
     datapoints: Sequence[int],
@@ -1248,16 +1645,38 @@ def _full_raw_objective_vectors(
     return vectors
 
 
+def mean_cost_metric_vectors(raw_vectors: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Offline-only common affine metric space covering the full benchmark.
+
+    The reference is 5% above the largest full-data mean USD cost. It is never
+    used for calibration, acquisition, recommendation or numerical DP bounds.
+    Use this same transform to reevaluate saved recommendations from baselines.
+    """
+    raw = np.asarray(raw_vectors, dtype=np.float64).reshape((-1, 2))
+    largest = float(np.max(raw[:, 1]))
+    reference = 1.05 * largest if largest > 0.0 else 1.0
+    return np.column_stack((raw[:, 0], 1.0 - raw[:, 1] / reference)), reference
+
+
 def simulate_radial_gittins(
     models: List[str],
     datapoints: List[int],
     table: LookupTable,
     *,
     batch_size: int = 4,
+    warm_start_batch_size: Optional[int] = None,
+    warm_start_question_order: str = "shared",
     directions: Optional[Iterable[Sequence[float]]] = None,
+    direction_scheduler: str = "round_robin",
+    eta_decay_schedule: str = "global_stop",
+    recommendation_rule: str = "completed_only",
+    recommendation_beta: float = 1.0,
+    recommendation_min_samples: int = 0,
+    fixed_prior_mean: Optional[Sequence[float] | float] = None,
     prior_variance: Sequence[float] | float = 0.04,
     obs_noise_variance: Optional[Sequence[float] | float] = None,
     cost_reference_usd: Optional[float] = None,
+    cost_model: str = "reciprocal",
     reference_point: Sequence[float] = (0.0, 0.0),
     search_cost_scale_eta: float = 1.0,
     expected_batch_cost_usd: Optional[
@@ -1275,6 +1694,7 @@ def simulate_radial_gittins(
     horizon_bin_width: int = 1,
     stop_tolerance: float = 1e-9,
     seed: int = 42,
+    question_order: str = "shared",
     history: Optional[List[Dict[str, Any]]] = None,
     run_metadata: Optional[Dict[str, Any]] = None,
     boundary_grid: Optional[RadialGittinsGrid] = None,
@@ -1291,14 +1711,33 @@ def simulate_radial_gittins(
     record_recommendation_trajectory: bool = False,
     recommendation_checkpoint_interval: Optional[int] = None,
     recommendation_checkpoint_target: Optional[int] = None,
+    recommendation_changes_only: bool = False,
+    defer_recommendation_diagnostics: bool = False,
     selector_name: str = "radial_gittins",
     extra_params: Optional[Mapping[str, Any]] = None,
 ) -> RadialSimulationResult:
-    """Replay the complete warm-start + round-robin radial-Gittins policy.
+    """Replay the complete warm-start and directional radial-Gittins policy.
+
+    ``warm_start_batch_size=None`` preserves the historical size of one batch.
+    ``warm_start_question_order='shared'`` preserves the historical paired
+    warm questions, while ``'independent'`` draws a separate seeded warm batch
+    for each arm. Setting the warm-start size to zero enables an explicit cold
+    start: ``fixed_prior_mean`` and
+    ``cost_reference_usd`` are then required, reciprocal cost normalization is
+    used, and no response-matrix cell is consumed before adaptive selection.
+    The fixed cost-prior mean also supplies the generic expected pull cost when
+    ``expected_batch_cost_usd`` is omitted.
 
     The default benchmark universe is the complete question intersection, so
     every arm is judged on the same questions. ``question_universe='per_arm'``
     retains ragged arm-specific tails as an explicitly diagnostic mode.
+
+    By default, every arm follows the same seeded random question order with
+    its own cursor. The paired warm batch and its calibration match the
+    historical ``question_order='independent'`` mode exactly. Shared mode
+    changes which questions follow the warm batch; posterior updates remain
+    per arm and do not infer cross-arm covariance. In ragged mode each arm
+    follows the common order restricted to its available questions.
 
     Adaptive replay uses full batches, then one smaller final batch when the
     remaining questions do not fill ``batch_size``. Gittins tables still plan
@@ -1326,6 +1765,13 @@ def simulate_radial_gittins(
     approximately the requested number of ordinary checkpoints. Mandatory
     warm-start, recommendation-change, lambda-stop, and final points remain.
 
+    During sampling, membership is checked online and retained events freeze
+    only their online evidence. Diagnostic archives and checkpoint HV/GD/IGD
+    are materialized after sampling. With ``defer_recommendation_diagnostics``,
+    only ``recommendation_events`` and the independent warm/final events are
+    returned; call ``materialize_recommendation_diagnostics(result)`` later to
+    populate the legacy checkpoint fields without replaying the policy.
+
     ``anytime=True`` starts at ``lambda_initial`` and multiplies lambda by
     ``lambda_decay`` whenever every direction stops without an intervening
     observation. Lambda multiplies ``search_cost_scale_eta`` in the frozen
@@ -1338,9 +1784,77 @@ def simulate_radial_gittins(
     plus the exact accuracy endpoint ``(1, 0)``; fixed-lambda runs use the nine
     interior directions. An explicit direction sequence replaces the default.
 
-    Anytime trajectories always recommend only completed arms. Each archive
-    membership change and lambda stop is retained regardless of checkpoint
-    interval.
+    ``direction_scheduler='accuracy_last'`` runs the other directions round-robin
+    until all stop, then runs the exact accuracy endpoint until it stops. Any
+    new observation invalidates every earlier stop, so the other directions
+    are revisited after endpoint acquisition before global stopping. Each new
+    lambda stage starts with the other directions. Completed arms are reused;
+    partially observed arms retain their posteriors and remaining questions.
+    The default ``'round_robin'`` keeps all directions in one cycle.
+
+    ``recommendation_rule='completed_only'`` directly recommends the empirical
+    raw Pareto frontier of all completed arms, in both fixed-lambda and anytime
+    runs. No completed arm means no recommendation. Raw means are cached once
+    at completion; posterior means, uncertainty and directions never rank or
+    filter this recommendation.
+
+    ``recommendation_rule='finite_lcb'`` requires raw_mean cost. For each
+    actual N-question evaluation set, n observed outcomes with sum S and a
+    latent Gaussian posterior (m, v) imply finite-test prediction mean
+    (S + (N-n)*m)/N and variance ((N-n)**2*v + (N-n)*question_noise)/N**2.
+    Question noise is the frozen warm batch-mean noise times the warm batch
+    size. Prediction moments are converted to raw accuracy / mean USD, then
+    all arms' (accuracy mean - beta*std, cost mean + beta*std) points are
+    filtered by strict Pareto dominance. Completed predictions naturally
+    equal empirical means with zero uncertainty. Means/sums are updated only
+    for the evaluated arm; membership uses a two-dimensional sorting sweep.
+    Acquisition and its latent posterior stay unchanged. These are Gaussian
+    model-based conservative coordinates, not a joint confidence guarantee
+    or an optimality result for the finite-test target.
+
+    ``recommendation_rule='finite_mean'`` uses those same finite-test means
+    without any uncertainty penalty (effective beta is always zero). Both
+    finite rules support ``recommendation_min_samples``: only arms with at
+    least that many actual observed questions enter the Pareto comparison.
+    The default zero preserves ungated selection. If no arm qualifies, the
+    recommendation is empty; even completion does not waive this strict gate.
+    The threshold changes recommendation eligibility only, not acquisition.
+
+    ``cost_model='raw_mean'`` changes the statistical cost objective to mean
+    USD. The frozen warm prior mean is the mean of arm means, its cost variance
+    is their sample variance, and per-question cost noise is the average
+    within-arm sample variance. Both variances have a ``1e-12 * R**2`` floor.
+    R defaults to the largest warm arm mean (or ``cost_reference_usd``).
+    Gaussian states are updated in raw USD; directional helpers receive the
+    equivalent affine view ``(accuracy, 1 - cost/R)`` and scaled variances.
+    Accuracy calibration is unchanged. Legacy ``posterior_*`` summary/trace
+    fields describe reward coordinates; added ``raw_posterior_*`` fields
+    expose the authoritative state. Generic prior/noise arguments affect only
+    accuracy in raw mode; the cost entries are estimated from warm data.
+
+    Raw-mode DP bounds grow from observed posterior evidence without changing
+    R or clipping costs. Values beyond R are allowed; a fixed reference and
+    finite direction set still need not cover every raw Pareto arm. Offline
+    metrics for raw-mode or empirical completed-only recommendations use a
+    separate affine scale 5% above the largest full mean cost so expensive
+    frontier points remain visible to HV. That scale never enters acquisition,
+    recommendation, or the numerical DP bounds.
+
+    ``eta_decay_schedule='direction_stop'`` requires anytime round-robin.
+    A direction that stops halves only its own cost multiplier, then yields
+    to the next direction. It is reconsidered on its next visit using shared
+    observations. Legacy ``current_lambda`` / ``lambda_stage`` fields refer
+    to the visited direction in this mode; per-direction eta vectors are the
+    complete state. A numerical-floor stop is rechecked after observations,
+    and the run ends only when every direction stops at its own floor without
+    intervening observations. The default ``'global_stop'`` retains one shared
+    multiplier and the existing global stage trigger.
+
+    ``recommendation_changes_only=True`` checks membership after every pull
+    and records only changes, including removals. Initial/final snapshots and
+    lambda-stop events are stored separately, so unchanged stops and endpoints
+    do not create duplicate recommendation checkpoints. Otherwise each anytime
+    membership change and lambda stop survives checkpoint downsampling.
     Runs finish at a budget, full completion, or a numerical lambda floor:
     the largest remaining cumulative penalty is below stopping precision.
     This floor is a numerical safeguard, not an exact zero-cost optimality
@@ -1358,12 +1872,68 @@ def simulate_radial_gittins(
     """
     wall_start = time.perf_counter()
     timing_origin = wall_start
+    if cost_model not in {"reciprocal", "raw_mean"}:
+        raise ValueError("cost_model must be 'reciprocal' or 'raw_mean'")
+    if recommendation_rule not in RECOMMENDATION_RULES:
+        raise ValueError(f"recommendation_rule must be one of {RECOMMENDATION_RULES}")
+    if not math.isfinite(recommendation_beta) or recommendation_beta < 0.0:
+        raise ValueError("recommendation_beta must be finite and nonnegative")
+    recommendation_min_samples = _validate_recommendation_min_samples(recommendation_min_samples)
+    if recommendation_min_samples and recommendation_rule not in FINITE_RECOMMENDATION_RULES:
+        raise ValueError("recommendation_min_samples requires a finite recommendation rule")
+    if recommendation_rule == "finite_mean":
+        recommendation_beta = 0.0
+    finite_recommendation = recommendation_rule in FINITE_RECOMMENDATION_RULES
+    uncertain_recommendation = recommendation_rule in UNCERTAIN_RECOMMENDATION_RULES
+    if finite_recommendation and cost_model != "raw_mean":
+        raise ValueError(f"{recommendation_rule} requires cost_model='raw_mean'")
+    completed_raw_archive_cache = _CompletedRawParetoArchive() if recommendation_rule == "completed_only" else None
     batch_size = _positive_integer(batch_size, "batch_size")
+    if warm_start_batch_size is None:
+        resolved_warm_start_batch_size = batch_size
+    else:
+        if (
+            isinstance(warm_start_batch_size, bool)
+            or int(warm_start_batch_size) != warm_start_batch_size
+            or warm_start_batch_size < 0
+        ):
+            raise ValueError("warm_start_batch_size must be a nonnegative integer")
+        resolved_warm_start_batch_size = int(warm_start_batch_size)
+    if resolved_warm_start_batch_size not in {0, batch_size}:
+        raise ValueError(
+            "warm_start_batch_size must be zero or equal to batch_size"
+        )
+    cold_start = resolved_warm_start_batch_size == 0
+    if cold_start:
+        if fixed_prior_mean is None:
+            raise ValueError(
+                "fixed_prior_mean is required when warm_start_batch_size=0"
+            )
+        if cost_model != "reciprocal":
+            raise ValueError(
+                "warm_start_batch_size=0 currently requires cost_model='reciprocal'"
+            )
+        if cost_reference_usd is None:
+            raise ValueError(
+                "cost_reference_usd is required when warm_start_batch_size=0"
+            )
+    elif fixed_prior_mean is not None:
+        raise ValueError(
+            "fixed_prior_mean is only valid when warm_start_batch_size=0"
+        )
     horizon_bin_width = _positive_integer(horizon_bin_width, "horizon_bin_width")
     resolved_directions = _validate_directions(
         (DEFAULT_ANYTIME_DIRECTIONS if anytime else DEFAULT_DIRECTIONS)
         if directions is None else directions
     )
+    scheduler = _DirectionScheduler(resolved_directions, direction_scheduler)
+    if eta_decay_schedule not in {"global_stop", "direction_stop"}:
+        raise ValueError("eta_decay_schedule must be 'global_stop' or 'direction_stop'")
+    independent_eta = eta_decay_schedule == "direction_stop"
+    if independent_eta and not anytime:
+        raise ValueError("eta_decay_schedule='direction_stop' requires anytime=True")
+    if independent_eta and direction_scheduler != "round_robin":
+        raise ValueError("eta_decay_schedule='direction_stop' requires direction_scheduler='round_robin'")
     requested_checkpoint_interval = (
         None
         if recommendation_checkpoint_interval is None
@@ -1413,6 +1983,8 @@ def simulate_radial_gittins(
         raise ValueError("effective_cost_bin_anchor must be finite and positive")
     if question_universe not in {"common", "per_arm"}:
         raise ValueError("question_universe must be 'common' or 'per_arm'")
+    if question_order not in QUESTION_ORDERS:
+        raise ValueError(f"question_order must be one of {QUESTION_ORDERS}")
     reference_array = np.asarray(reference_point, dtype=np.float64)
     if reference_array.shape != (2,) or not np.all(np.isfinite(reference_array)):
         raise ValueError("reference_point must be a finite length-2 vector")
@@ -1478,11 +2050,13 @@ def simulate_radial_gittins(
 
     schedule = PerArmQuestionSchedule.create_from_available(
         available_by_arm,
-        warm_start_batch_size=batch_size,
+        warm_start_batch_size=resolved_warm_start_batch_size,
         seed=seed,
+        question_order=question_order,
+        warm_start_question_order=warm_start_question_order,
     )
     warm_batches = schedule.take_uniform_warm_start()
-    warm_required = n_arms * batch_size
+    warm_required = n_arms * resolved_warm_start_batch_size
     fraction_cap = int(math.ceil(observation_budget_fraction * n_available))
     question_cap = fraction_cap
     if max_total_question_evaluations is not None:
@@ -1501,8 +2075,12 @@ def simulate_radial_gittins(
     ):
         raise ValueError("max_search_cost_usd must be finite and positive")
 
-    warm_scores = np.empty((n_arms, batch_size), dtype=np.float64)
-    warm_costs = np.empty((n_arms, batch_size), dtype=np.float64)
+    warm_scores = np.empty(
+        (n_arms, resolved_warm_start_batch_size), dtype=np.float64
+    )
+    warm_costs = np.empty(
+        (n_arms, resolved_warm_start_batch_size), dtype=np.float64
+    )
     observed_scores: Dict[int, List[float]] = {i: [] for i in range(n_arms)}
     observed_costs: Dict[int, List[float]] = {i: [] for i in range(n_arms)}
     observed_latencies: Dict[int, List[float]] = {i: [] for i in range(n_arms)}
@@ -1530,16 +2108,53 @@ def simulate_radial_gittins(
             f"warm cost ${total_cost:.6f}, cap ${max_search_cost_usd:.6f}"
         )
 
-    calibration = fit_empirical_bayes_warm_start(
-        warm_scores,
-        warm_costs,
-        arm_ids=range(n_arms),
-        question_ids=schedule.warm_start_question_ids,
-        prior_variance=prior_variance,
-        obs_noise_variance=obs_noise_variance,
-        cost_reference_usd=cost_reference_usd,
+    calibration = (
+        build_fixed_prior_calibration(
+            range(n_arms),
+            observation_batch_size=batch_size,
+            cost_reference_usd=float(cost_reference_usd),
+            prior_mean=fixed_prior_mean,
+            prior_variance=prior_variance,
+            obs_noise_variance=obs_noise_variance,
+        )
+        if cold_start
+        else fit_empirical_bayes_warm_start(
+            warm_scores,
+            warm_costs,
+            arm_ids=range(n_arms),
+            # Independent warm batches have no shared dataset question IDs;
+            # calibration only needs stable column labels for those B draws.
+            question_ids=(
+                schedule.warm_start_question_ids
+                if warm_start_question_order == "shared"
+                else None
+            ),
+            prior_variance=prior_variance,
+            obs_noise_variance=obs_noise_variance,
+            cost_reference_usd=cost_reference_usd,
+            cost_model=cost_model,
+        )
     )
-    posteriors = calibration.initialize_posteriors()
+    model_posteriors = calibration.initialize_posteriors()
+    # Raw USD is the authoritative statistical state. Existing directional
+    # helpers consume an affine reward view, refreshed after each observation.
+    posteriors = (
+        {arm: calibration.reward_posterior(p) for arm, p in model_posteriors.items()}
+        if cost_model == "raw_mean" else model_posteriors
+    )
+    finite_recommendation_cache = None
+    if finite_recommendation:
+        finite_recommendation_cache = _FiniteRecommendationCache(
+            [len(available_by_arm[i]) for i in range(n_arms)],
+            calibration.warm_obs_noise_var * batch_size,
+            calibration.normalizer,
+            recommendation_beta,
+            min_samples=recommendation_min_samples,
+        )
+        for arm in range(n_arms):
+            finite_recommendation_cache.update(
+                arm, model_posteriors[arm], observed_scores[arm], observed_costs[arm],
+            )
     total_evaluations = warm_required
     expected_batch_costs = _resolve_per_arm_costs(
         expected_batch_cost_usd,
@@ -1570,6 +2185,13 @@ def simulate_radial_gittins(
 
     current_lambda = float(lambda_initial) if anytime else 1.0
     lambda_stage = 0
+    direction_eta_multipliers = [current_lambda] * len(resolved_directions)
+    direction_eta_stages = [0] * len(resolved_directions)
+    direction_eta_events: List[Dict[str, Any]] = []
+    # Only certifications at the unchanged current multiplier belong here.
+    # A pre-decay stop does not certify the newly lowered multiplier.
+    direction_floor_stops: set[int] = set()
+    active_eta_direction_index = 0
     base_raw_effective_pull_costs = search_cost_scale_eta * expected_batch_costs
     base_effective_pull_costs = _quantize_effective_costs(
         base_raw_effective_pull_costs,
@@ -1603,6 +2225,14 @@ def simulate_radial_gittins(
         Tuple[Tuple[float, float], int, float], float
     ] = {}
     boundary_grid_expansions: List[Dict[str, Any]] = []
+    objective_grid_lower = np.zeros(2)
+    objective_grid_upper = np.ones(2)
+    objective_grid_expansions: List[Dict[str, Any]] = []
+    if cost_model == "raw_mean":
+        warm_reward_means = np.asarray([p.mean for p in posteriors.values()])
+        warm_reward_std = np.sqrt(next(iter(posteriors.values())).var)
+        objective_grid_lower[1] = min(0.0, float(np.min(warm_reward_means[:, 1]) - 6 * warm_reward_std[1]))
+        objective_grid_upper[1] = max(1.0, float(np.max(warm_reward_means[:, 1]) + 6 * warm_reward_std[1]))
 
     def padding_for_arm(arm_index: int) -> float:
         return max(
@@ -1634,8 +2264,8 @@ def simulate_radial_gittins(
         )
         direction_array = np.asarray(direction, dtype=np.float64)
         factors = float(np.max(direction_array)) / direction_array
-        scaled_lower = factors * (np.zeros(2) - reference_array)
-        scaled_upper = factors * (np.ones(2) - reference_array)
+        scaled_lower = factors * (objective_grid_lower - reference_array)
+        scaled_upper = factors * (objective_grid_upper - reference_array)
         reachable_delta_min = float(scaled_lower[0] - scaled_upper[1])
         reachable_delta_max = float(scaled_upper[0] - scaled_lower[1])
         reachable_u_min = float(np.sum(scaled_lower) / 2.0)
@@ -1654,6 +2284,7 @@ def simulate_radial_gittins(
                 base_boundary_grid.z_max,
                 6.0 + z_padding,
                 reachable_u_max + z_padding,
+                (max(abs(reachable_delta_min), abs(reachable_delta_max)) + 0.2) / 2.0 + z_padding,
             ),
             delta_min=min(
                 base_boundary_grid.delta_min,
@@ -1669,6 +2300,8 @@ def simulate_radial_gittins(
             base_grid=expanded_base,
             reference=resolved_reference,
             z_padding=z_padding,
+            objective_lower=objective_grid_lower,
+            objective_upper=objective_grid_upper,
         )
         resolved_boundary_grids[key] = resolved
         return resolved
@@ -1683,7 +2316,7 @@ def simulate_radial_gittins(
             try:
                 return build()
             except BoundaryGridError as error:
-                if not anytime or attempt == _ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES:
+                if (not anytime and cost_model != "raw_mean") or attempt == _ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES:
                     raise
                 keys_seen = set()
                 for arm_index in arm_indices:
@@ -1751,7 +2384,7 @@ def simulate_radial_gittins(
     )
     adaptive_pulls = np.zeros(n_arms, dtype=np.int64)
     initial_var = next(iter(posteriors.values())).var.copy()
-    noise_var = calibration.warm_obs_noise_var.copy()
+    noise_var = calibration.reward_obs_noise_var.copy()
     cache = (
         boundary_cache
         if boundary_cache is not None
@@ -1780,6 +2413,33 @@ def simulate_radial_gittins(
     }
     auto_jax_disabled = False
     auto_jax_workload_skips = 0
+
+    def _expand_observed_objective_grid(arm_index: int, evaluations: int) -> None:
+        """Expand from observed posterior evidence without clipping or oracle bounds."""
+        if cost_model != "raw_mean":
+            return
+        posterior = posteriors[arm_index]
+        radius = 6.0 * math.sqrt(float(posterior.var[1]))
+        lower = float(posterior.mean[1]) - radius
+        upper = float(posterior.mean[1]) + radius
+        if lower >= objective_grid_lower[1] and upper <= objective_grid_upper[1]:
+            return
+        old_lower, old_upper = objective_grid_lower.copy(), objective_grid_upper.copy()
+        # Geometric growth prevents tiny successive excursions from rebuilding
+        # every table. The statistical model and frozen reference do not move.
+        span = float(objective_grid_upper[1] - objective_grid_lower[1])
+        if lower < objective_grid_lower[1]:
+            objective_grid_lower[1] = min(lower, objective_grid_lower[1] - span)
+        if upper > objective_grid_upper[1]:
+            objective_grid_upper[1] = max(upper, objective_grid_upper[1] + span)
+        objective_grid_expansions.append({
+            "arm_index": int(arm_index), "evaluations": int(evaluations),
+            "old_lower": old_lower.tolist(), "old_upper": old_upper.tolist(),
+            "new_lower": objective_grid_lower.tolist(), "new_upper": objective_grid_upper.tolist(),
+        })
+        resolved_boundary_grids.clear()
+        direction_boundary_tables.clear()
+        online_value_cache.clear_radial_indices()
 
     def _prewarm_direction_boundaries(
         direction: Tuple[float, float],
@@ -1902,8 +2562,16 @@ def simulate_radial_gittins(
 
     def _observed_endpoint_tiebreak(direction: Sequence[float], arm_index: int) -> float:
         if _direction_axis(direction) == 0:
-            return -float(np.mean(observed_costs[arm_index]))
-        return float(np.mean(observed_scores[arm_index]))
+            return (
+                -float(np.mean(observed_costs[arm_index]))
+                if observed_costs[arm_index]
+                else float(posteriors[arm_index].mean[1])
+            )
+        return (
+            float(np.mean(observed_scores[arm_index]))
+            if observed_scores[arm_index]
+            else float(posteriors[arm_index].mean[0])
+        )
 
     trace: List[Dict[str, Any]] = []
 
@@ -1911,7 +2579,7 @@ def simulate_radial_gittins(
         if record_trace:
             trace.append(event)
 
-    for arm_index in range(n_arms):
+    for arm_index in (range(n_arms) if not cold_start else ()):
         _append_trace(
             {
                 "event": "warm_start",
@@ -1938,6 +2606,10 @@ def simulate_radial_gittins(
                 ),
                 "posterior_mean_after": posteriors[arm_index].mean.tolist(),
                 "posterior_var_after": posteriors[arm_index].var.tolist(),
+                **({
+                    "raw_posterior_mean_after": model_posteriors[arm_index].mean.tolist(),
+                    "raw_posterior_var_after": model_posteriors[arm_index].var.tolist(),
+                } if cost_model == "raw_mean" else {}),
                 "cumulative_evaluations": (arm_index + 1) * batch_size,
                 "cumulative_search_cost_usd": float(
                     np.sum(warm_costs[: arm_index + 1])
@@ -1945,14 +2617,23 @@ def simulate_radial_gittins(
             }
         )
 
-    direction_index = 0
-    skipped_since_last_evaluation = 0
+    direction_index = scheduler.direction_index
     visit_counts = np.zeros(len(resolved_directions), dtype=np.int64)
     global_step = 0
     stop_reason = "all_directions_gittins_stop"
     gittins_stop_evaluations: Optional[int] = None
     gittins_stop_cost_usd: Optional[float] = None
-    recommendation_trajectory: List[RecommendationCheckpoint] = []
+    recommendation_events: List[RecommendationEvent] = []
+    recommendation_initial_event: Optional[RecommendationEvent] = None
+    recommendation_final_event: Optional[RecommendationEvent] = None
+    recommendation_recording = {
+        "membership_checks": 0,
+        "membership_wall_time_seconds": 0.0,
+        "captured_events": 0,
+        "event_capture_wall_time_seconds": 0.0,
+        "diagnostic_materializations": 0,
+        "diagnostic_wall_time_seconds": 0.0,
+    }
     adaptive_checkpoint_pulls = 0
     past_gittins_stop = False
     lambda_stop_events: List[Dict[str, Any]] = []
@@ -1961,23 +2642,19 @@ def simulate_radial_gittins(
     last_deployable_archive: set[int] = set()
     stopping_index_scale = 1.0
 
-    # Truth metrics are diagnostics for budget curves / final HV. Compute them
-    # before the adaptive loop so trajectory checkpoints can reuse the vectors
-    # without re-scanning the lookup table after every pull.
+    # Full-data diagnostic inputs are computed once. Online membership and
+    # event capture never read these arrays; retained checkpoint diagnostics
+    # use them only after sampling (or on an explicit materialization request).
     truth_metric_start = time.perf_counter()
-    truth_vectors = _full_truth_vectors(
-        models,
-        evaluation_datapoints,
-        table,
-        calibration.normalizer,
-    )
     raw_truth_vectors = _full_raw_objective_vectors(
         models,
         evaluation_datapoints,
         table,
     )
+    truth_vectors, metric_cost_reference_usd = mean_cost_metric_vectors(raw_truth_vectors)
+    metric_reference = (0.0, 0.0)
     truth_front = truth_vectors[nondominated_indices(truth_vectors)]
-    ground_truth_hv = hypervolume_2d(truth_front, resolved_reference)
+    ground_truth_hv = hypervolume_2d(truth_front, metric_reference)
     wall_start += time.perf_counter() - truth_metric_start
 
     def _append_recommendation_checkpoint(
@@ -1986,7 +2663,15 @@ def simulate_radial_gittins(
         completed_arm_changed: bool = False,
     ) -> None:
         nonlocal last_deployable_archive
+        nonlocal recommendation_initial_event, recommendation_final_event
         if not record_recommendation_trajectory:
+            return
+        if (
+            not uncertain_recommendation and recommendation_changes_only
+            and event == "adaptive_pull" and not completed_arm_changed
+        ):
+            # Completed measurements are immutable; without a new completion
+            # the empirical frontier cannot change. No histories or DP reads.
             return
         ordinary_checkpoint_due = (
             event != "adaptive_pull"
@@ -1997,32 +2682,59 @@ def simulate_radial_gittins(
                 == 0
             )
         )
-        if not ordinary_checkpoint_due and not (anytime and completed_arm_changed):
+        inspect_every_pull = recommendation_changes_only or uncertain_recommendation
+        if (
+            not ordinary_checkpoint_due
+            and not inspect_every_pull
+            and not completed_arm_changed
+        ):
             return
         completed_at_checkpoint = tuple(
             i
             for i in range(n_arms)
             if adaptive_pulls[i] >= actual_horizons[i]
         )
-        # Fixed-lambda trajectories keep their historical provisional prefix.
-        # Anytime recommendations are available after any arm completes.
+        # Completed-only has the same empirical contract at every checkpoint.
         archive_scope = (
-            DEPLOYABLE_ARCHIVE_SCOPE
-            if anytime or gittins_stop_evaluations is not None
-            else PROVISIONAL_ARCHIVE_SCOPE
+            FINITE_ARCHIVE_SCOPE if uncertain_recommendation else DEPLOYABLE_ARCHIVE_SCOPE
         )
-        checkpoint = _recommendation_checkpoint(
+        recommendation_recording["membership_checks"] += 1
+        membership_started = time.perf_counter()
+        selection = _recommendation_selection(
             posteriors=posteriors,
             directions=resolved_directions,
-            models=models,
             reference_point=resolved_reference,
             stop_tolerance=stop_tolerance,
-            truth_vectors=truth_vectors,
-            truth_front=truth_front,
-            raw_truth_vectors=raw_truth_vectors,
             observed_scores=observed_scores,
             observed_costs=observed_costs,
-            ground_truth_hv=ground_truth_hv,
+            completed_arms=completed_at_checkpoint,
+            archive_scope=archive_scope,
+            recommendation_rule=recommendation_rule,
+            recommendation_beta=recommendation_beta,
+            completed_raw_archive=completed_raw_archive_cache,
+            finite_recommendation_cache=finite_recommendation_cache,
+        )
+        recommendation_recording["membership_wall_time_seconds"] += time.perf_counter() - membership_started
+        archive_members = set(selection.selected_arm_indices)
+        membership_changed = archive_members != last_deployable_archive
+        added = tuple(sorted(archive_members - last_deployable_archive))
+        removed = tuple(sorted(last_deployable_archive - archive_members))
+        last_deployable_archive = archive_members
+        retain = (
+            membership_changed
+            or (ordinary_checkpoint_due and not recommendation_changes_only)
+        )
+        # Warm/final preserve their own current evidence even if their set is
+        # unchanged. Discarded LCB pulls never scan histories; no discarded
+        # pull constructs diagnostic archives or metrics.
+        if not retain and event not in {"after_warm_start", "initial_prior", "final"}:
+            return
+        capture_started = time.perf_counter()
+        checkpoint = _capture_recommendation_event(
+            selection,
+            posteriors=posteriors,
+            observed_scores=observed_scores,
+            observed_costs=observed_costs,
             total_evaluations=total_evaluations,
             total_cost=total_cost,
             bruteforce_search_cost_usd=bruteforce_search_cost_usd,
@@ -2031,32 +2743,42 @@ def simulate_radial_gittins(
             archive_scope=archive_scope,
             current_lambda=current_lambda,
             lambda_stage=lambda_stage,
-            radial_terminal_utility_provider=_cached_radial_terminal_utility,
+            direction_eta_multipliers=tuple(direction_eta_multipliers),
+            direction_eta_stages=tuple(direction_eta_stages),
+            recommendation_rule=recommendation_rule,
+            recommendation_beta=recommendation_beta,
         )
-        if anytime:
-            archive_members = set(checkpoint.selected_arm_indices)
-            membership_changed = archive_members != last_deployable_archive
-            added = tuple(sorted(archive_members - last_deployable_archive))
-            last_deployable_archive = archive_members
-            if added:
-                checkpoint = replace(
-                    checkpoint,
-                    event=(
-                        "recommendation_added" if event == "adaptive_pull" else event
-                    ),
-                    added_arm_indices=added,
-                    added_models=tuple(models[i] for i in added),
-                )
-            elif membership_changed and event == "adaptive_pull":
-                checkpoint = replace(checkpoint, event="recommendation_changed")
-            if not ordinary_checkpoint_due and not membership_changed:
-                return
-        recommendation_trajectory.append(checkpoint)
+        recommendation_recording["captured_events"] += 1
+        recommendation_recording["event_capture_wall_time_seconds"] += time.perf_counter() - capture_started
+        if event in {"after_warm_start", "initial_prior"}:
+            recommendation_initial_event = checkpoint
+        if event == "final":
+            recommendation_final_event = checkpoint
+        if not retain:
+            return
+        checkpoint = replace(
+            checkpoint,
+            added_arm_indices=added,
+            removed_arm_indices=removed,
+        )
+        if added:
+            checkpoint = replace(
+                checkpoint,
+                event=(
+                    "recommendation_added" if event == "adaptive_pull" else event
+                ),
+                added_arm_indices=added,
+            )
+        elif membership_changed and event == "adaptive_pull":
+            checkpoint = replace(checkpoint, event="recommendation_changed")
+        recommendation_events.append(checkpoint)
 
-    _append_recommendation_checkpoint("after_warm_start")
+    _append_recommendation_checkpoint(
+        "initial_prior" if cold_start else "after_warm_start"
+    )
     lambda_stage_wall_start = time.perf_counter()
     stage_timing_events.append({
-        "event": "warm_start_complete",
+        "event": "cold_start_complete" if cold_start else "warm_start_complete",
         "lambda_stage": 0,
         "current_lambda": current_lambda,
         "stage_wall_time_seconds": float(lambda_stage_wall_start - timing_origin),
@@ -2113,6 +2835,12 @@ def simulate_radial_gittins(
             break
 
         direction = resolved_directions[direction_index]
+        if independent_eta:
+            active_eta_direction_index = direction_index
+            current_lambda = direction_eta_multipliers[direction_index]
+            lambda_stage = direction_eta_stages[direction_index]
+            raw_effective_pull_costs = current_lambda * base_raw_effective_pull_costs
+            effective_pull_costs = current_lambda * base_effective_pull_costs
         context = DirectionVisitContext(
             global_step=global_step,
             direction_index=direction_index,
@@ -2129,6 +2857,8 @@ def simulate_radial_gittins(
             ),
             current_lambda=current_lambda,
             lambda_stage=lambda_stage,
+            direction_eta_multipliers=tuple(direction_eta_multipliers),
+            direction_eta_stages=tuple(direction_eta_stages),
         )
         visit_counts[direction_index] += 1
 
@@ -2262,22 +2992,85 @@ def simulate_radial_gittins(
             "cumulative_search_cost_usd": total_cost,
         } if record_trace or history is not None else {}
 
+        if independent_eta and status.should_stop:
+            _append_trace(visit_event)
+            if history is not None:
+                history.append(dict(visit_event))
+            remaining_penalty = max(
+                float(planning_horizons[i] - adaptive_pulls[i])
+                * float(effective_pull_costs[i]) for i in unfinished
+            )
+            index_scale = max(1.0, abs(status.best_completed_index), abs(status.best_unfinished_index))
+            lambda_numerical_threshold = max(
+                stop_tolerance, float(np.finfo(np.float64).eps) * index_scale,
+            )
+            next_multiplier = current_lambda * lambda_decay
+            next_raw_costs = next_multiplier * base_raw_effective_pull_costs
+            next_effective_costs = next_multiplier * base_effective_pull_costs
+            floor_reason = None
+            if remaining_penalty <= lambda_numerical_threshold:
+                floor_reason = "numerical_floor"
+            elif (
+                not 0.0 < next_multiplier < current_lambda
+                or np.any(next_raw_costs <= 0.0)
+                or np.any(next_effective_costs <= 0.0)
+            ):
+                floor_reason = "underflow"
+            if floor_reason is None:
+                direction_eta_multipliers[direction_index] = next_multiplier
+                direction_eta_stages[direction_index] += 1
+                direction_floor_stops.discard(direction_index)
+                direction_boundary_tables.pop(direction, None)
+                online_value_cache.clear_direction_radial_indices(direction_index)
+            else:
+                direction_floor_stops.add(direction_index)
+            eta_event = {
+                "event": "direction_eta_decay" if floor_reason is None else "direction_eta_floor_stop",
+                "global_step": global_step, "direction_index": direction_index,
+                "direction": list(direction), "current_lambda": current_lambda,
+                "lambda_stage": lambda_stage,
+                "next_lambda": next_multiplier if floor_reason is None else None,
+                "next_stage": direction_eta_stages[direction_index],
+                "direction_eta_multipliers": list(direction_eta_multipliers),
+                "direction_eta_stages": list(direction_eta_stages),
+                "floor_reason": floor_reason,
+                "max_remaining_effective_penalty": remaining_penalty,
+                "numerical_penalty_threshold": lambda_numerical_threshold,
+                "cumulative_evaluations": int(total_evaluations),
+                "cumulative_search_cost_usd": float(total_cost),
+                "budget_fraction": total_cost / bruteforce_search_cost_usd,
+            }
+            direction_eta_events.append(eta_event)
+            _append_trace(dict(eta_event))
+            # This is a local event, not a common-price global lambda stop.
+            # A local price change cannot change completed-only winners.
+            # Record prices here; recommendation checkpoints are retained at
+            # completions and at the final state, without duplicate archives.
+            global_step += 1
+            if len(direction_floor_stops) == len(resolved_directions):
+                stop_reason = "direction_eta_numerical_floor"
+                gittins_stop_evaluations = int(total_evaluations)
+                gittins_stop_cost_usd = float(total_cost)
+                break
+            direction_index = scheduler.advance()
+            continue
+
         if status.should_stop and not past_gittins_stop:
-            skipped_since_last_evaluation += 1
+            scheduler.record_stop()
             stopping_index_scale = max(
                 stopping_index_scale,
                 abs(status.best_completed_index),
                 abs(status.best_unfinished_index),
             )
-            if skipped_since_last_evaluation == len(resolved_directions):
+            if scheduler.all_stopped:
                 if gittins_stop_evaluations is None:
                     gittins_stop_evaluations = int(total_evaluations)
                     gittins_stop_cost_usd = float(total_cost)
                     if not anytime:
                         _append_recommendation_checkpoint("gittins_stop")
                 if anytime:
-                    # A complete no-observation sweep certifies this lambda
-                    # stage's stop. Recompute every direction after decay;
+                    # Stops from every direction since the last observation
+                    # certify this stage's stop. Recompute after decay;
                     # none of the old skip decisions is valid at a new cost.
                     _append_trace(visit_event)
                     global_step += 1
@@ -2351,13 +3144,14 @@ def simulate_radial_gittins(
                         break
                     current_lambda = next_lambda
                     lambda_stage += 1
+                    direction_eta_multipliers[:] = [current_lambda] * len(resolved_directions)
+                    direction_eta_stages[:] = [lambda_stage] * len(resolved_directions)
                     raw_effective_pull_costs = next_raw_costs
                     effective_pull_costs = next_effective_costs
                     direction_boundary_tables.clear()
                     online_value_cache.clear_radial_indices()
-                    skipped_since_last_evaluation = 0
                     stopping_index_scale = 1.0
-                    direction_index = (direction_index + 1) % len(resolved_directions)
+                    direction_index = scheduler.start_next_stage()
                     lambda_stage_wall_start = stage_stopped_at
                     continue
                 if halt_on_gittins_stop:
@@ -2366,12 +3160,11 @@ def simulate_radial_gittins(
                     stop_reason = "all_directions_gittins_stop"
                     break
                 past_gittins_stop = True
-                skipped_since_last_evaluation = 0
                 # Fall through and force-pull under the remaining budget.
             else:
                 _append_trace(visit_event)
                 global_step += 1
-                direction_index = (direction_index + 1) % len(resolved_directions)
+                direction_index = scheduler.advance()
                 continue
 
         selected_arm = status.best_unfinished_arm
@@ -2453,29 +3246,40 @@ def simulate_radial_gittins(
         for question_id in question_ids:
             observed_cells.add((selected_arm, question_id))
 
-        normalized_observation = calibration.normalizer.normalize_batch(
+        model_observation = calibration.posterior_observations(
             batch_scores,
             batch_costs,
         ).mean(axis=0)
         posterior = posteriors[selected_arm]
         mean_before = posterior.mean.copy()
         var_before = posterior.var.copy()
-        posterior.update(
-            normalized_observation,
+        model_posterior = model_posteriors[selected_arm]
+        raw_mean_before = model_posterior.mean.copy()
+        raw_var_before = model_posterior.var.copy()
+        model_posterior.update(
+            model_observation,
             _scaled_batch_noise(
-                noise_var,
+                calibration.warm_obs_noise_var,
                 full_batch_size=batch_size,
                 actual_batch_size=planned_batch_size,
             ),
             batch_size=planned_batch_size,
         )
+        if cost_model == "raw_mean":
+            posterior = calibration.reward_posterior(model_posterior)
+            posteriors[selected_arm] = posterior
         adaptive_pulls[selected_arm] += 1
         online_value_cache.invalidate(selected_arm)
         observed_scores[selected_arm].extend(batch_scores)
         observed_costs[selected_arm].extend(batch_costs)
         observed_latencies[selected_arm].extend(batch_latencies)
+        if finite_recommendation_cache is not None:
+            finite_recommendation_cache.update(
+                selected_arm, model_posterior, observed_scores[selected_arm], observed_costs[selected_arm],
+            )
         total_cost += realized_batch_cost
         total_evaluations += planned_batch_size
+        _expand_observed_objective_grid(selected_arm, total_evaluations)
 
         visit_event.update(
             {
@@ -2489,6 +3293,12 @@ def simulate_radial_gittins(
                 "posterior_mean_after": posterior.mean.tolist(),
                 "posterior_var_before": var_before.tolist(),
                 "posterior_var_after": posterior.var.tolist(),
+                **({
+                    "raw_posterior_mean_before": raw_mean_before.tolist(),
+                    "raw_posterior_mean_after": model_posterior.mean.tolist(),
+                    "raw_posterior_var_before": raw_var_before.tolist(),
+                    "raw_posterior_var_after": model_posterior.var.tolist(),
+                } if cost_model == "raw_mean" else {}),
                 "cumulative_evaluations": total_evaluations,
                 "cumulative_search_cost_usd": total_cost,
                 "cost_budget_overshoot_usd_after": (
@@ -2508,10 +3318,11 @@ def simulate_radial_gittins(
                 adaptive_pulls[selected_arm] >= actual_horizons[selected_arm]
             ),
         )
-        skipped_since_last_evaluation = 0
+        scheduler.record_observation()
+        direction_floor_stops.clear()
         stopping_index_scale = 1.0
         global_step += 1
-        direction_index = (direction_index + 1) % len(resolved_directions)
+        direction_index = scheduler.advance(force_round_robin=past_gittins_stop)
 
     completed_final = [
         i for i in range(n_arms) if adaptive_pulls[i] >= actual_horizons[i]
@@ -2554,6 +3365,7 @@ def simulate_radial_gittins(
     for winner in direction_winners:
         if winner.arm_index not in unique_winner_arms:
             unique_winner_arms.append(winner.arm_index)
+
     if unique_winner_arms:
         winner_points = np.asarray(
             [posteriors[i].mean for i in unique_winner_arms],
@@ -2586,14 +3398,29 @@ def simulate_radial_gittins(
         posterior_archive_arms = []
         online_raw_archive_arms = []
         oracle_raw_archive_arms = []
-    # The deployable recommendation is filtered only with observations that
-    # the selector actually acquired. The oracle archive is diagnostic-only.
-    archive_arms = online_raw_archive_arms
-    selected_models = [models[i] for i in online_raw_archive_arms]
+    if finite_recommendation:
+        assert finite_recommendation_cache is not None
+        archive_arms = list(finite_recommendation_cache.select().selected_arm_indices)
+        online_raw_archive_arms = raw_archive_arm_indices(
+            archive_arms, finite_recommendation_cache.observed_means[archive_arms],
+        )
+        oracle_raw_archive_arms = raw_archive_arm_indices(archive_arms, raw_truth_vectors[archive_arms])
+    else:
+        assert completed_raw_archive_cache is not None
+        completed_raw_archive_cache.update(completed_final, observed_scores, observed_costs)
+        archive_arms = sorted(completed_raw_archive_cache.frontier)
+        online_raw_archive_arms = list(archive_arms)
+        # Full-data values only describe a separately named diagnostic;
+        # membership above depends exclusively on completed observed means.
+        oracle_raw_archive_arms = raw_archive_arm_indices(
+            completed_final,
+            raw_truth_vectors[completed_final] if completed_final else np.empty((0, 2)),
+        )
+    selected_models = [models[i] for i in archive_arms]
 
     model_results: List[RadialArmSummary] = []
     winner_arm_set = set(unique_winner_arms)
-    archive_arm_set = set(online_raw_archive_arms)
+    archive_arm_set = set(archive_arms)
     posterior_archive_arm_set = set(posterior_archive_arms)
     oracle_raw_archive_arm_set = set(oracle_raw_archive_arms)
     for arm_index, model_name in enumerate(models):
@@ -2606,10 +3433,10 @@ def simulate_radial_gittins(
                 arm_index=arm_index,
                 posterior_mean=tuple(float(x) for x in posterior.mean),
                 posterior_var=tuple(float(x) for x in posterior.var),
-                observed_accuracy=float(np.mean(scores)),
-                observed_mean_cost_usd=float(np.mean(costs)),
+                observed_accuracy=float(np.mean(scores)) if scores else None,
+                observed_mean_cost_usd=float(np.mean(costs)) if costs else None,
                 observed_total_cost_usd=float(sum(costs)),
-                equivalent_posterior_cost_usd=_equivalent_cost(
+                equivalent_posterior_cost_usd=float(model_posteriors[arm_index].mean[1]) if cost_model == "raw_mean" else _equivalent_cost(
                     calibration.cost_reference_usd,
                     float(posterior.mean[1]),
                 ),
@@ -2620,6 +3447,8 @@ def simulate_radial_gittins(
                 is_nondominated=arm_index in archive_arm_set,
                 is_posterior_nondominated=arm_index in posterior_archive_arm_set,
                 is_oracle_raw_nondominated=arm_index in oracle_raw_archive_arm_set,
+                raw_posterior_mean=tuple(float(x) for x in model_posteriors[arm_index].mean) if cost_model == "raw_mean" else None,
+                raw_posterior_var=tuple(float(x) for x in model_posteriors[arm_index].var) if cost_model == "raw_mean" else None,
             )
         )
 
@@ -2647,9 +3476,10 @@ def simulate_radial_gittins(
     # Preserve the historical stopped_by_gittins diagnostic, which also counts
     # earlier stops in fixed-budget force-continuation runs. These explicit
     # fields distinguish a stage trigger from the reason this run actually ends.
-    gittins_stop_triggered = gittins_stop_evaluations is not None
+    gittins_stop_triggered = gittins_stop_evaluations is not None or bool(direction_eta_events)
     halted_by_gittins = stop_reason in {
-        "all_directions_gittins_stop", "lambda_numerical_floor", "lambda_underflow"
+        "all_directions_gittins_stop", "lambda_numerical_floor", "lambda_underflow",
+        "direction_eta_numerical_floor",
     }
     gittins_stop_budget_fraction = (
         float(gittins_stop_cost_usd) / float(bruteforce_search_cost_usd)
@@ -2672,6 +3502,12 @@ def simulate_radial_gittins(
         "cumulative_search_cost_usd": float(total_cost),
         "budget_fraction": float(total_cost) / float(bruteforce_search_cost_usd),
     })
+    if independent_eta:
+        stage_timing_events[-1].update({
+            "lambda_scope": "visited_direction",
+            "direction_eta_multipliers": list(direction_eta_multipliers),
+            "direction_eta_stages": list(direction_eta_stages),
+        })
     selected_truth = (
         truth_vectors[archive_arms]
         if archive_arms
@@ -2680,7 +3516,7 @@ def simulate_radial_gittins(
     quality = front_quality_metrics(
         selected_truth,
         truth_front,
-        resolved_reference,
+        metric_reference,
         ground_truth_hv,
     )
     selected_hv = quality.hypervolume
@@ -2724,11 +3560,107 @@ def simulate_radial_gittins(
 
     params: Dict[str, Any] = {
         "batch_size": batch_size,
-        "recommendation_space": "observed_raw_accuracy_mean_cost_usd",
+        "warm_start_batch_size": resolved_warm_start_batch_size,
+        "warm_start_question_order": warm_start_question_order,
+        "initialization": (
+            "fixed_general_prior_without_warm_start"
+            if cold_start
+            else "empirical_bayes_uniform_shared_question_warm_start"
+            if warm_start_question_order == "shared"
+            else "empirical_bayes_uniform_independent_question_warm_start"
+        ),
+        "warm_start_question_ids": list(schedule.warm_start_question_ids),
+        "warm_start_question_ids_by_arm": [
+            list(schedule.warm_start_question_ids_by_arm[i])
+            for i in range(n_arms)
+        ],
+        "cost_model": cost_model,
+        "metric_space": "offline_common_affine_mean_usd",
+        "metric_cost_reference_usd": metric_cost_reference_usd,
+        "metric_reference_point": list(metric_reference),
+        "metric_reference_source": "offline_full_mean_cost_max_times_1.05",
+        "posterior_state_space": "normalized_accuracy_mean_cost_usd" if cost_model == "raw_mean" else "normalized_desirability",
+        "posterior_summary_space": "reward_desirability",
+        "cost_reference_source": "explicit" if cost_reference_usd is not None else (
+            "max_warm_arm_mean_usd" if cost_model == "raw_mean" else "median_warm_arm_mean_usd"
+        ),
+        "reward_prior_mean": calibration.reward_posterior(GaussianVectorPosterior(calibration.prior_mean, calibration.prior_var)).mean.tolist(),
+        "reward_prior_variance": calibration.reward_posterior(GaussianVectorPosterior(calibration.prior_mean, calibration.prior_var)).var.tolist(),
+        "reward_obs_noise_variance": noise_var.tolist(),
+        "raw_cost_question_noise_variance_usd2": float(calibration.warm_obs_noise_var[1] * batch_size) if cost_model == "raw_mean" else None,
+        "raw_cost_prior_variance_estimate_usd2": calibration.raw_cost_prior_variance_estimate_usd2,
+        "raw_cost_observation_variance_estimate_usd2": calibration.raw_cost_observation_variance_estimate_usd2,
+        "raw_cost_variance_floor_usd2": calibration.raw_cost_variance_floor_usd2,
+        "objective_grid_lower": objective_grid_lower.tolist(),
+        "objective_grid_upper": objective_grid_upper.tolist(),
+        "objective_grid_expansions": objective_grid_expansions,
+        "objective_grid_evidence": "observed_posterior_with_six_std_padding" if cost_model == "raw_mean" else "bounded_normalized_objectives",
+        "recommendation_space": (
+            "finite_test_mean_accuracy_mean_usd" if recommendation_rule == "finite_mean" else
+            "finite_test_mean_accuracy_lcb_mean_usd_ucb" if finite_recommendation else
+            "observed_raw_accuracy_mean_cost_usd"
+        ),
+        "recommendation_rule": recommendation_rule,
+        "recommendation_beta": recommendation_beta,
+        "recommendation_min_samples": recommendation_min_samples,
+        "recommendation_completed_std_penalty": 0.0,
+        "recommendation_eligibility": (
+            "observed_question_count_at_least_min_samples" if recommendation_min_samples
+            else "all_arms" if uncertain_recommendation else "completed_only"
+        ),
+        "recommendation_direction_score": None,
+        "recommendation_endpoint_score": None,
+        "recommendation_endpoint_tie_break": None,
+        "recommendation_filter": (
+            "eligible_arms_finite_test_mean_raw_pareto" if recommendation_rule == "finite_mean" else
+            "eligible_arms_finite_test_lcb_raw_pareto" if finite_recommendation and recommendation_min_samples else
+            "all_arms_finite_test_lcb_raw_pareto" if finite_recommendation else
+            "all_completed_empirical_raw_pareto"
+        ),
+        "recommendation_evidence_scope": (
+            "selected_finite_test_mean_frontier" if recommendation_rule == "finite_mean" else
+            "selected_finite_test_lcb_frontier" if finite_recommendation else
+            "selected_completed_empirical_frontier"
+        ),
+        "direction_winners_role": "acquisition_diagnostic_only",
+        **({
+            "finite_target_question_counts": list(finite_recommendation_cache.n_total),
+            "finite_target_question_noise_variance": finite_recommendation_cache.question_noise_var.tolist(),
+            "finite_target_noise_space": "normalized_accuracy_mean_usd",
+            "finite_target_mean_formula": "(observed_sum + (N-n)*posterior_mean)/N",
+            "finite_target_variance_formula": "((N-n)^2*posterior_variance + (N-n)*question_noise_variance)/N^2",
+            "finite_target_assumptions": "conditionally_independent_gaussian_questions_fixed_warm_noise",
+            "recommendation_desirability_space": (
+                "normalized_accuracy_mean_affine_cost_mean" if recommendation_rule == "finite_mean"
+                else "normalized_accuracy_lcb_affine_cost_ucb"
+            ),
+            "recommendation_raw_space": (
+                "accuracy_mean_mean_usd" if recommendation_rule == "finite_mean" else "accuracy_lcb_mean_usd_ucb"
+            ),
+            "recommendation_confidence_guarantee": (
+                "none_minimum_sample_gate_is_not_a_confidence_guarantee" if recommendation_rule == "finite_mean"
+                else "componentwise_model_based_heuristic_not_joint_or_anytime_coverage"
+            ),
+        } if finite_recommendation else {}),
+        "stopping_eligibility": "completed_only",
+        "stopping_value": "required_completion_gittins",
+        "recommendation_changes_acquisition": False,
+        "recommendation_changes_only": bool(recommendation_changes_only),
+        "defer_recommendation_diagnostics": bool(defer_recommendation_diagnostics),
+        "recommendation_recording": recommendation_recording,
         "posterior_archive_space": "normalized_posterior_mean_desirability",
         "oracle_raw_winner_archive_is_diagnostic": True,
         "directions": [list(x) for x in resolved_directions],
+        "direction_scheduler": direction_scheduler,
+        "eta_decay_schedule": eta_decay_schedule,
+        "lambda_scope": "visited_direction" if independent_eta else "global",
+        "lambda_direction_index": active_eta_direction_index if independent_eta else None,
+        "direction_eta_multipliers": list(direction_eta_multipliers),
+        "direction_eta_stages": list(direction_eta_stages),
+        "direction_eta_event_count": len(direction_eta_events),
+        "direction_scheduler_groups": [list(group) for group in scheduler.groups],
         "endpoint_direction_policy": {
+            "scope": "acquisition_and_stopping",
             "directions": [
                 list(direction) for direction in resolved_directions
                 if _direction_axis(direction) is not None
@@ -2758,7 +3690,7 @@ def simulate_radial_gittins(
         ),
         "lambda_numerical_penalty_threshold": lambda_numerical_threshold,
         "gittins_stop_action": (
-            "decay_lambda" if anytime else (
+            "decay_direction_eta" if independent_eta else "decay_lambda" if anytime else (
                 "halt" if halt_on_gittins_stop else "force_continuation"
             )
         ),
@@ -2766,7 +3698,7 @@ def simulate_radial_gittins(
         "boundary_minimum_z_padding": 2.0 if anytime else 1.0,
         "boundary_grid_expansions": boundary_grid_expansions,
         "boundary_max_widening_retries": (
-            _ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES if anytime else 0
+            _ANYTIME_BOUNDARY_MAX_WIDENING_RETRIES if anytime or cost_model == "raw_mean" else 0
         ),
         "expected_batch_costs_usd": expected_batch_costs.tolist(),
         "guaranteed_batch_costs_usd": (
@@ -2799,6 +3731,31 @@ def simulate_radial_gittins(
         "actual_horizons": actual_horizons.tolist(),
         "planning_horizons": planning_horizons.tolist(),
         "question_universe": question_universe,
+        "question_order": question_order,
+        "question_order_semantics": (
+            "global_random_order_with_independent_arm_cursors"
+            if cold_start and question_order == "shared" else
+            "independent_random_per_arm_orders"
+            if cold_start else
+            "shared_warm_then_global_random_tail_restricted_to_each_arm_with_independent_cursors"
+            if warm_start_question_order == "shared" and question_order == "shared" else
+            "shared_warm_then_independent_random_per_arm_tails"
+            if warm_start_question_order == "shared" else
+            "independent_warm_then_global_random_tail_restricted_to_each_arm_with_independent_cursors"
+            if question_order == "shared" else
+            "independent_warm_then_independent_random_per_arm_tails"
+        ),
+        "question_order_rng_scheme": (
+            "shared_global_rng" if cold_start and question_order == "shared"
+            else "spawned_per_arm_full_orders" if cold_start
+            else "shared_warm_rng_continuation"
+            if warm_start_question_order == "shared" and question_order == "shared"
+            else "spawned_per_arm_tails"
+            if warm_start_question_order == "shared"
+            else "spawned_per_arm_warm_then_shared_global_tail"
+            if question_order == "shared"
+            else "spawned_per_arm_full_orders"
+        ),
         "common_question_count": len(common_questions),
         "benchmark_question_count": (
             len(evaluation_datapoints)
@@ -2923,13 +3880,18 @@ def simulate_radial_gittins(
         model_results=model_results,
         trace=trace,
         observed_cells=tuple(sorted(observed_cells)),
-        recommendation_trajectory=recommendation_trajectory,
+        recommendation_events=recommendation_events,
+        recommendation_initial_event=recommendation_initial_event,
+        recommendation_final_event=recommendation_final_event,
         gittins_stop_evaluations=gittins_stop_evaluations,
         gittins_stop_cost_usd=gittins_stop_cost_usd,
         gittins_stop_budget_fraction=gittins_stop_budget_fraction,
         current_lambda=current_lambda,
         lambda_stage=lambda_stage,
         lambda_stop_events=lambda_stop_events,
+        direction_eta_multipliers=tuple(direction_eta_multipliers),
+        direction_eta_stages=tuple(direction_eta_stages),
+        direction_eta_events=direction_eta_events,
         stage_timing_events=stage_timing_events,
         gittins_stop_triggered=gittins_stop_triggered,
         halted_by_gittins=halted_by_gittins,
@@ -2938,12 +3900,14 @@ def simulate_radial_gittins(
         posterior_archive_arm_indices=tuple(posterior_archive_arms),
         posterior_archive_models=[models[i] for i in posterior_archive_arms],
         online_raw_archive_arm_indices=tuple(online_raw_archive_arms),
-        online_raw_archive_models=list(selected_models),
+        online_raw_archive_models=[models[i] for i in online_raw_archive_arms],
         oracle_raw_winner_archive_arm_indices=tuple(oracle_raw_archive_arms),
         oracle_raw_winner_archive_models=[
             models[i] for i in oracle_raw_archive_arms
         ],
     )
+    if not defer_recommendation_diagnostics:
+        materialize_recommendation_diagnostics(result)
     if run_metadata is not None:
         run_metadata.update(
             {
@@ -2953,6 +3917,15 @@ def simulate_radial_gittins(
                 "current_lambda": current_lambda,
                 "lambda_stage": lambda_stage,
                 "lambda_stop_count": len(lambda_stop_events),
+                "eta_decay_schedule": eta_decay_schedule,
+                "recommendation_rule": recommendation_rule,
+                "recommendation_beta": recommendation_beta,
+                "recommendation_min_samples": recommendation_min_samples,
+                "stopping_eligibility": "completed_only",
+                "lambda_scope": "visited_direction" if independent_eta else "global",
+                "direction_eta_multipliers": list(direction_eta_multipliers),
+                "direction_eta_stages": list(direction_eta_stages),
+                "direction_eta_events": list(direction_eta_events),
                 "stage_timing_events": list(stage_timing_events),
                 "gittins_stop_triggered": gittins_stop_triggered,
                 "halted_by_gittins": halted_by_gittins,
@@ -3056,7 +4029,7 @@ def print_radial_result(result: RadialSimulationResult) -> None:
             f"  {winner.direction}: {winner.model_name} "
             f"(terminal={winner.terminal_utility:.6f})"
         )
-    print(f"online raw-space recommendation: {result.selected_models}")
+    print(f"recommendation ({result.params['recommendation_space']}): {result.selected_models}")
     print(f"posterior-desirability archive: {result.posterior_archive_models}")
     print(
         "offline oracle raw winner archive: "
@@ -3064,24 +4037,25 @@ def print_radial_result(result: RadialSimulationResult) -> None:
     )
 
 
-def _jsonable_result(result: RadialSimulationResult) -> Dict[str, Any]:
-    def json_safe(value: Any) -> Any:
-        if isinstance(value, float):
-            return value if math.isfinite(value) else None
-        if isinstance(value, np.floating):
-            resolved = float(value)
-            return resolved if math.isfinite(resolved) else None
-        if isinstance(value, np.integer):
-            return int(value)
-        if isinstance(value, np.ndarray):
-            return json_safe(value.tolist())
-        if isinstance(value, Mapping):
-            return {str(key): json_safe(item) for key, item in value.items()}
-        if isinstance(value, (list, tuple)):
-            return [json_safe(item) for item in value]
-        return value
+def _jsonable_value(value: Any) -> Any:
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, np.floating):
+        resolved = float(value)
+        return resolved if math.isfinite(resolved) else None
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.ndarray):
+        return _jsonable_value(value.tolist())
+    if isinstance(value, Mapping):
+        return {str(key): _jsonable_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_value(item) for item in value]
+    return value
 
-    return json_safe(asdict(result))
+
+def _jsonable_result(result: RadialSimulationResult) -> Dict[str, Any]:
+    return _jsonable_value(asdict(result))
 
 
 def main() -> None:
@@ -3095,6 +4069,14 @@ def main() -> None:
     )
     parser.add_argument("--seeds", type=int, default=1)
     parser.add_argument("--base-seed", type=int, default=42)
+    parser.add_argument(
+        "--question-order", choices=QUESTION_ORDERS, default="shared",
+        help="Share the seeded adaptive tail across arms (default), or use independent per-arm tails",
+    )
+    parser.add_argument(
+        "--warm-start-question-order", choices=QUESTION_ORDERS, default="shared",
+        help="Use the same warm questions for every arm (default), or draw each arm's warm questions independently",
+    )
     parser.add_argument("--batch-size", type=int, choices=(4, 8), default=4)
     parser.add_argument(
         "--budget-fraction",
@@ -3118,6 +4100,9 @@ def main() -> None:
         help="Optional per-batch upper bound in USD, shared by every arm",
     )
     parser.add_argument("--eta", type=float, default=1.0)
+    parser.add_argument("--cost-model", choices=("reciprocal", "raw_mean"), default="reciprocal")
+    parser.add_argument("--cost-reference-usd", type=float, default=None,
+                        help="Frozen cost scale/reference; raw_mean defaults to the largest warm arm mean")
     parser.add_argument(
         "--extra-direction",
         type=float,
@@ -3139,6 +4124,28 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--direction-scheduler", choices=("round_robin", "accuracy_last"),
+        default="round_robin",
+        help="Run (1, 0) only after the other directions stop with accuracy_last",
+    )
+    parser.add_argument(
+        "--eta-decay-schedule", choices=("global_stop", "direction_stop"),
+        default="global_stop",
+        help="Decay the shared eta after global stopping, or each direction's eta after its local stop",
+    )
+    parser.add_argument(
+        "--recommendation-rule", choices=RECOMMENDATION_RULES, default="completed_only",
+        help="completed_only empirical frontier; finite_lcb/finite_mean full-test predictive Pareto (requires raw_mean); stopping unchanged",
+    )
+    parser.add_argument(
+        "--recommendation-beta", type=float, default=1.0,
+        help="Nonnegative posterior-standard-deviation multiplier for LCB recommendations (default: 1)",
+    )
+    parser.add_argument(
+        "--recommendation-min-samples", type=int, default=0,
+        help="Minimum actual observed questions per eligible arm for finite_lcb/finite_mean (default: 0)",
+    )
+    parser.add_argument(
         "--lambda-initial", type=float, default=1.0,
         help="Initial continuation-cost multiplier in anytime mode (default: 1.0)",
     )
@@ -3155,6 +4162,14 @@ def main() -> None:
         "--no-trace",
         action="store_true",
         help="Do not retain per-direction-visit diagnostic trace events",
+    )
+    parser.add_argument(
+        "--recommendation-changes-only", action="store_true",
+        help="Record only recommendation membership changes, checking after every pull",
+    )
+    parser.add_argument(
+        "--defer-recommendation-diagnostics", action="store_true",
+        help="Save lightweight recommendation events; compute checkpoint diagnostics later on demand",
     )
     parser.add_argument("--effective-cost-bin-ratio", type=float, default=2.0)
     parser.add_argument("--effective-cost-bin-anchor", type=float, default=1e-4)
@@ -3222,7 +4237,6 @@ def main() -> None:
     )
     parser.add_argument("--output", default=None, help="Optional JSON output path")
     args = parser.parse_args()
-
     if args.pickle:
         path = _require_data_path(args.pickle)
         models, datapoints, table = load_pickle(path)
@@ -3257,10 +4271,17 @@ def main() -> None:
             models,
             datapoints,
             table,
+            cost_model=args.cost_model,
+            cost_reference_usd=args.cost_reference_usd,
             batch_size=args.batch_size,
             directions=_cli_directions(
                 anytime=args.anytime, extra_directions=args.extra_direction
             ),
+            direction_scheduler=args.direction_scheduler,
+            eta_decay_schedule=args.eta_decay_schedule,
+            recommendation_rule=args.recommendation_rule,
+            recommendation_beta=args.recommendation_beta,
+            recommendation_min_samples=args.recommendation_min_samples,
             observation_budget_fraction=args.budget_fraction,
             max_search_cost_usd=args.max_search_cost,
             guaranteed_batch_cost_usd=args.guaranteed_batch_cost,
@@ -3269,11 +4290,17 @@ def main() -> None:
             lambda_initial=args.lambda_initial,
             lambda_decay=args.lambda_decay,
             record_trace=not args.no_trace,
-            record_recommendation_trajectory=(args.record_trajectory or args.anytime),
+            record_recommendation_trajectory=(
+                args.record_trajectory or args.anytime or args.recommendation_changes_only
+            ),
+            recommendation_changes_only=args.recommendation_changes_only,
+            defer_recommendation_diagnostics=args.defer_recommendation_diagnostics,
             effective_cost_bin_ratio=args.effective_cost_bin_ratio,
             effective_cost_bin_anchor=args.effective_cost_bin_anchor,
             horizon_bin_width=args.horizon_bin_width,
             seed=args.base_seed + offset,
+            question_order=args.question_order,
+            warm_start_question_order=args.warm_start_question_order,
             boundary_grid=grid,
             boundary_cache=cache,
             boundary_build_backend=args.boundary_build_backend,

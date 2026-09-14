@@ -261,6 +261,7 @@ def main():
                     observation_budget_fraction=1.0,
                     search_cost_scale_eta=args.eta,
                     seed=seed,
+                    question_order="independent",  # Keep this historical random comparison unchanged.
                     boundary_grid=RadialGittinsGrid(
                         z_size=args.grid_size,
                         delta_size=args.grid_size,
@@ -338,6 +339,7 @@ def main():
 
         cache_path(slug).parent.mkdir(parents=True, exist_ok=True)
         cache_values = {
+            "question_order": first.params["question_order"],
             "raw_vectors": raw_vectors,
             "recommended": np.asarray(
                 stop_point.deployable_online_raw_archive_arm_indices, dtype=np.int64

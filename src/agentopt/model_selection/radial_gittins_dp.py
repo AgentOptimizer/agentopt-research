@@ -197,7 +197,11 @@ def direction_aware_grid(
     reachable_u_max = float((scaled_upper[0] + scaled_upper[1]) / 2.0)
 
     z_min = min(0.0, reachable_u_min) - z_padding
-    z_max = max(0.0, reachable_u_max) + z_padding
+    # The rectangular (u, delta) domain includes imbalances whose retirement
+    # root approaches |delta|/2 even if that pair is not a physical objective
+    # point. Negative objective support can make this exceed reachable_u_max.
+    imbalance_root = (max(abs(reachable_delta_min), abs(reachable_delta_max)) + delta_padding) / 2.0
+    z_max = max(0.0, reachable_u_max, imbalance_root) + z_padding
     delta_min = reachable_delta_min - delta_padding
     delta_max = reachable_delta_max + delta_padding
     if (

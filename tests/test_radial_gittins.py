@@ -8,6 +8,7 @@ from agentopt.model_selection.radial_gittins import (
     GaussianVectorPosterior,
     ObjectiveNormalizer,
     PerArmQuestionSchedule,
+    build_fixed_prior_calibration,
     default_batch_observation_noise,
     direction_scale,
     expected_min_of_two_normals,
@@ -108,6 +109,26 @@ class GaussianVectorPosteriorTests(unittest.TestCase):
 
 
 class EmpiricalBayesWarmStartTests(unittest.TestCase):
+    def test_fixed_prior_calibration_consumes_no_observations(self):
+        calibration = build_fixed_prior_calibration(
+            ("a", "b"),
+            observation_batch_size=4,
+            cost_reference_usd=0.01,
+            prior_mean=(0.5, 0.5),
+            prior_variance=0.04,
+        )
+
+        self.assertEqual(calibration.question_ids, ())
+        self.assertEqual(calibration.total_question_evaluations, 0)
+        self.assertEqual(calibration.warm_start_cost_usd, 0.0)
+        np.testing.assert_allclose(calibration.raw_cost_means_usd, [0.01, 0.01])
+        np.testing.assert_allclose(calibration.warm_obs_noise_var, [0.0625, 0.0625])
+        for posterior in calibration.initialize_posteriors().values():
+            np.testing.assert_allclose(posterior.mean, [0.5, 0.5])
+            np.testing.assert_allclose(posterior.var, [0.04, 0.04])
+            self.assertEqual(posterior.n_batches, 0)
+            self.assertEqual(posterior.n_questions, 0)
+
     def test_reference_is_median_of_arm_batch_means(self):
         # Arm means are 50, 2, and 3, so C_ref is 3.  The median over all
         # individual cells would instead be 2.5.
@@ -289,6 +310,22 @@ class EmpiricalBayesWarmStartTests(unittest.TestCase):
 
 
 class PerArmQuestionScheduleTests(unittest.TestCase):
+    def test_zero_warm_start_leaves_every_question_for_adaptive_sampling(self):
+        schedule = PerArmQuestionSchedule.create(
+            ("a", "b"),
+            n_questions=12,
+            warm_start_batch_size=0,
+            seed=17,
+            question_order="independent",
+        )
+
+        self.assertEqual(schedule.warm_start_question_ids, ())
+        self.assertEqual(schedule.take_uniform_warm_start(), {"a": (), "b": ()})
+        self.assertTrue(all(position == 0 for position in schedule.positions.values()))
+        self.assertEqual(len(schedule.next_batch("a", 4)), 4)
+        self.assertEqual(schedule.remaining("a"), 8)
+        self.assertEqual(schedule.remaining("b"), 12)
+
     def test_ragged_available_constructor_uses_shared_prefix_and_arm_tails(self):
         available = {
             "a": (0, 1, 2, 3, 4, 5),

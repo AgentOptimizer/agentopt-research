@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run decaying-lambda radial Gittins and plot every recommendation addition.
+"""Run decaying-lambda radial Gittins and plot recommendation membership changes.
 
 Run from the repository root. Defaults replay HotpotQA and MathQA, with one
 shared warm start per benchmark, nine interior directions plus (1, 0),
@@ -56,30 +56,35 @@ DISPLAY_NAMES = {"hotpotqa": "HotpotQA", "mathqa": "MathQA"}
 
 
 def key_checkpoints(run: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Retain post-warmup additions to the deployable set, even replacements.
+    """Retain additions, removals, and replacements.
 
     Comparing membership instead of cardinality preserves an improvement that
     replaces a previous recommendation without increasing the archive size.
-    Calibration snapshots establish the initial set but never receive a C label,
-    including when a small benchmark completes some arms during warmup itself.
+    Legacy calibration snapshots establish the initial set without a C label.
+    With strict changes-only recording, a nonempty warmup archive is itself a
+    recorded membership change and receives a label.
     """
+    initial = run.get("recommendation_initial_snapshot")
+    changes_only = run["params"].get("recommendation_changes_only", False)
     warmup_evaluations = max(
         (p["cumulative_evaluations"] for p in run["recommendation_trajectory"]
          if p["event"] in {"warm_start", "after_warm_start"}),
-        default=0,
+        default=initial["cumulative_evaluations"] if initial else 0,
     )
-    previous: set[int] = set()
+    previous: set[int] = (
+        set(initial["selected_arm_indices"]) if initial and not changes_only else set()
+    )
     checkpoints = []
     for point in run["recommendation_trajectory"]:
         if point["archive_scope"] != "deployable":
             continue
         selected = set(point["selected_arm_indices"])
-        if point["cumulative_evaluations"] <= warmup_evaluations:
+        if not changes_only and point["cumulative_evaluations"] <= warmup_evaluations:
             previous = selected
             continue
         added = selected - previous
         removed = previous - selected
-        if added:
+        if added or removed:
             checkpoints.append({
                 **point,
                 "checkpoint": f"C{len(checkpoints) + 1}",
@@ -90,8 +95,32 @@ def key_checkpoints(run: Mapping[str, Any]) -> list[dict[str, Any]]:
     return checkpoints
 
 
-def _save_figure(fig: Any, path: Path) -> None:
-    fig.savefig(path.with_suffix(".png"), dpi=180, facecolor="white")
+def _final_budget_fraction(run: Mapping[str, Any]) -> float:
+    """Use actual run spend even when the last change occurred much earlier."""
+    return run["total_cost"] / run["params"]["bruteforce_search_cost_usd"]
+
+
+def _plot_trajectory(run: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Include boundary states in plots without adding recorded checkpoints."""
+    points = list(run["recommendation_trajectory"])
+    initial = run.get("recommendation_initial_snapshot")
+    final = run.get("recommendation_final_snapshot")
+    if initial and (not points or points[0] != initial):
+        points.insert(0, initial)
+    if final and (not points or points[-1] != final):
+        points.append(final)
+    return points
+
+
+def _completion_columns(point: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "archive_scope": point["archive_scope"],
+        "completed_arms": len(point.get("completed_arm_indices", [])),
+    }
+
+
+def _save_figure(fig: Any, path: Path, *, dpi: int = 180) -> None:
+    fig.savefig(path.with_suffix(".png"), dpi=dpi, facecolor="white")
     fig.savefig(path.with_suffix(".svg"), facecolor="white")
     plt.close(fig)
     print(f"wrote {path.with_suffix('.png')}", flush=True)
@@ -108,20 +137,23 @@ def _metric_axis(
     ax: Any, run: Mapping[str, Any], field: str, label: str,
     *, cost_limit: float | None = None, label_checkpoints: bool = False,
 ) -> None:
-    trajectory = run["recommendation_trajectory"]
+    trajectory = _plot_trajectory(run)
     xs = [p["budget_fraction"] for p in trajectory]
     values = [_metric_value(p, run, field) for p in trajectory]
     ys = [np.nan if value is None else value for value in values]
+    end = _final_budget_fraction(run)
+    if xs and xs[-1] < end:
+        xs.append(end)
+        ys.append(ys[-1])
     ax.step(xs, ys, where="post", color=BLUE, linewidth=1.8,
             label="Current recommendation")
     keys = key_checkpoints(run)
     finite_keys = [p for p in keys if _metric_value(p, run, field) is not None]
     ax.scatter([p["budget_fraction"] for p in finite_keys],
                [_metric_value(p, run, field) for p in finite_keys], color=BLUE, s=24, zorder=4,
-               label="Recommendation addition")
+               label="Recommendation change")
     # Several lambda halvings can happen at exactly the same spend.
-    stop_fractions = sorted({p["budget_fraction"] for p in trajectory
-                             if p["event"] == "lambda_stop"})
+    stop_fractions = sorted({p["budget_fraction"] for p in run["lambda_stop_events"]})
     for i, fraction in enumerate(stop_fractions):
         ax.axvline(fraction, color=ORANGE, linestyle=":", alpha=0.55,
                    linewidth=0.9, label="Stopping / λ update" if i == 0 else None)
@@ -129,7 +161,24 @@ def _metric_axis(
         ax.axhline(0, color="#65717e", linestyle="--",
                    linewidth=1.1, label="Zero regret (full-data HV)")
         if label_checkpoints:
-            for i, point in enumerate(finite_keys):
+            # Keep every change in the data and scatter, but spread text labels
+            # across the cost axis when there are many recommendation changes.
+            label_points = finite_keys
+            if len(finite_keys) > 12:
+                spacing = (cost_limit if cost_limit is not None else end) / 9.0
+                label_points = [finite_keys[0]]
+                for point in finite_keys[1:]:
+                    if point["budget_fraction"] - label_points[-1]["budget_fraction"] >= spacing:
+                        label_points.append(point)
+                if label_points[-1] is not finite_keys[-1]:
+                    if len(label_points) > 1 and (
+                        finite_keys[-1]["budget_fraction"] - label_points[-1]["budget_fraction"]
+                        < spacing / 2.0
+                    ):
+                        label_points[-1] = finite_keys[-1]
+                    else:
+                        label_points.append(finite_keys[-1])
+            for i, point in enumerate(label_points):
                 ax.annotate(point["checkpoint"],
                             (point["budget_fraction"], _metric_value(point, run, field)),
                             xytext=(3, 7 + 14 * (i % 2)), textcoords="offset points",
@@ -141,7 +190,6 @@ def _metric_axis(
                    "No completed recommendation\nGD / IGD are undefined (∞)")
         ax.text(0.5, 0.5, message,
                 transform=ax.transAxes, ha="center", fontsize=9)
-    end = trajectory[-1]["budget_fraction"]
     ax.set_xlim(0, cost_limit if cost_limit is not None else max(0.02, end * 1.045))
     ax.set_ylim(bottom=0)
     if field == "relative_hv_regret_percent":
@@ -167,7 +215,7 @@ def plot_metrics(runs: Mapping[str, Any], outdir: Path) -> None:
             axes[row, col].set_title(f"{DISPLAY_NAMES[name]} · {label}")
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=4, frameon=False, fontsize=9)
-    fig.suptitle("Anytime radial Gittins · completed combinations · λ halves at stopping", fontsize=15)
+    fig.suptitle("Anytime radial Gittins · completed combinations · λ halves at stopping", fontsize=14)
     fig.tight_layout(rect=(0, 0.06, 1, 0.95))
     _save_figure(fig, outdir / "metrics")
     # Preserve the full cost axis above, and give early changes enough room to
@@ -176,7 +224,7 @@ def plot_metrics(runs: Mapping[str, Any], outdir: Path) -> None:
     for row, (name, run) in enumerate(runs.items()):
         keys = key_checkpoints(run)
         stops = run["lambda_stop_events"]
-        final_fraction = run["recommendation_trajectory"][-1]["budget_fraction"]
+        final_fraction = _final_budget_fraction(run)
         last_change = keys[-1]["budget_fraction"] if keys else final_fraction
         first_stop = stops[0]["budget_fraction"] if stops else last_change
         cost_limit = max(0.02, min(final_fraction, max(last_change, first_stop)) * 1.15)
@@ -203,14 +251,14 @@ def plot_lambda_schedule(runs: Mapping[str, Any], outdir: Path) -> None:
     """Show actual lambda updates, including repeated stops at equal spend."""
     fig, axes = plt.subplots(1, len(runs), figsize=(6 * len(runs), 4.4), squeeze=False)
     for ax, (name, run) in zip(axes[0], runs.items()):
-        trajectory = run["recommendation_trajectory"]
+        trajectory = _plot_trajectory(run)
         updates = [stop for stop in run["lambda_stop_events"] if stop["continued"]]
-        fractions = [trajectory[0]["budget_fraction"]]
+        fractions = [trajectory[0]["budget_fraction"] if trajectory else 0.0]
         lambdas = [run["params"]["lambda_initial"]]
         for stop in updates:
             fractions.append(stop["budget_fraction"])
             lambdas.append(stop["next_lambda"])
-        fractions.append(trajectory[-1]["budget_fraction"])
+        fractions.append(_final_budget_fraction(run))
         lambdas.append(run["current_lambda"])
         ax.step(fractions, lambdas, where="post", color=BLUE, linewidth=1.8)
         ax.scatter(fractions[1:-1], lambdas[1:-1], color=ORANGE, s=22, zorder=3,
@@ -224,14 +272,17 @@ def plot_lambda_schedule(runs: Mapping[str, Any], outdir: Path) -> None:
         ax.spines[["top", "right"]].set_visible(False)
         ax.grid(alpha=0.18)
         ax.legend(fontsize=8, frameon=False)
-    fig.suptitle("Recorded lambda schedule · prior warmup is not a key checkpoint", fontsize=13)
+    fig.suptitle("Recorded lambda schedule · updates retained separately from recommendation changes", fontsize=13)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     _save_figure(fig, outdir / "lambda_schedule")
 
 
 def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
     keys = key_checkpoints(run)
-    final = run["recommendation_trajectory"][-1]
+    trajectory = _plot_trajectory(run)
+    if not trajectory:
+        return
+    final = trajectory[-1]
     panels = list(keys)
     if not panels or final["cumulative_evaluations"] != panels[-1]["cumulative_evaluations"]:
         panels.append({**final, "checkpoint": "Final", "added_arm_indices": []})
@@ -251,14 +302,13 @@ def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
                     label="Full-data Pareto frontier")
             selected = point["selected_arm_indices"]
             if selected:
-                # Completed configurations have observed every common question;
-                # use recorded online values, not oracle membership, for the line.
+                # Every recommended combination has completed evaluation.
                 vectors = dict(zip(point["direction_winner_arm_indices"],
                                    point["estimated_raw_winner_vectors"]))
                 front = np.asarray([vectors[i] for i in selected])
                 front = front[np.argsort(front[:, 1])]
                 ax.plot(front[:, 1], front[:, 0], "o-", color=BLUE, markersize=5,
-                        linewidth=1.8, label="Recommended frontier", zorder=3)
+                        linewidth=1.8, label="Recommended (observed estimates)", zorder=3)
                 for arm in selected:
                     accuracy, cost = vectors[arm]
                     ax.annotate(f"A{arm + 1}", (cost, accuracy), xytext=(4, 5),
@@ -273,11 +323,18 @@ def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
                 ax.text(0.5, 0.5, "No completed recommendation", ha="center", transform=ax.transAxes)
             if log_cost:
                 ax.set_xscale("log")
-            ax.set_ylim(max(0, raw[:, 0].min() - 0.05), min(1.02, raw[:, 0].max() + 0.08))
+            observed_accuracy = front[:, 0] if selected else np.array([])
+            accuracy_extent = np.concatenate((raw[:, 0], observed_accuracy))
+            ax.set_ylim(max(0, accuracy_extent.min() - 0.05),
+                        min(1.02, accuracy_extent.max() + 0.08))
             ax.set_xlabel("Mean deployment cost (USD" + (", log scale)" if log_cost else ")"))
             ax.set_ylabel("Accuracy")
-            ax.set_title(f"{point['checkpoint']} · {point['budget_fraction']:.3%} of exhaustive cost\n"
-                         f"λ={point['current_lambda']:.4g} · {len(selected)} recommended", fontsize=10)
+            ax.set_title(
+                f"{point['checkpoint']} · {point['budget_fraction']:.3%} of exhaustive cost\n"
+                f"η multiplier={point['current_lambda']:.4g} · "
+                f"{len(selected)} recommended completed combinations",
+                fontsize=10,
+            )
             ax.grid(alpha=0.18)
             ax.spines[["top", "right"]].set_visible(False)
         for ax in list(axes.flat)[len(page):]:
@@ -297,7 +354,7 @@ def plot_frontiers(name: str, run: Mapping[str, Any], outdir: Path) -> None:
 
 
 def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
-    trajectory_rows, key_rows, combo_rows, stop_rows, timing_rows = [], [], [], [], []
+    trajectory_rows, key_rows, combo_rows, stop_rows, timing_rows, arm_rows = [], [], [], [], [], []
     for name, run in runs.items():
         keys = key_checkpoints(run)
         for p in run["recommendation_trajectory"]:
@@ -308,12 +365,16 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
                 "evaluations": p["cumulative_evaluations"],
                 "lambda": p["current_lambda"], "lambda_stage": p["lambda_stage"],
                 "recommendations": len(p["selected_arm_indices"]),
+                "selected_ids": "; ".join(f"A{i + 1}" for i in p["selected_arm_indices"]),
+                **_completion_columns(p),
                 **{label: p[field] for field, label in (("hypervolume", "HV"),
                     ("generational_distance", "GD"), ("inverted_generational_distance", "IGD"))},
                 "HV_regret": p["hypervolume_regret"],
                 "relative_HV_regret_percent": _metric_value(p, run, "relative_hv_regret_percent"),
             })
         for point in keys:
+            completed = set(point.get("completed_arm_indices", []))
+            added = set(point["added_arm_indices"])
             key_rows.append({
                 "benchmark": name, "checkpoint": point["checkpoint"],
                 "cost_percent": 100 * point["budget_fraction"],
@@ -321,6 +382,8 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
                 "evaluations": point["cumulative_evaluations"],
                 "lambda": point["current_lambda"], "lambda_stage": point["lambda_stage"],
                 "recommendations": len(point["selected_arm_indices"]),
+                **_completion_columns(point),
+                "added_completed_arms": len(added & completed),
                 "added_ids": "; ".join(f"A{i + 1}" for i in point["added_arm_indices"]),
                 "removed_ids": "; ".join(f"A{i + 1}" for i in point["removed_arm_indices"]),
                 "selected_ids": "; ".join(f"A{i + 1}" for i in point["selected_arm_indices"]),
@@ -331,6 +394,19 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
                 "HV_regret": point["hypervolume_regret"],
                 "relative_HV_regret_percent": _metric_value(point, run, "relative_hv_regret_percent"),
             })
+            vectors = dict(zip(point["direction_winner_arm_indices"],
+                               point["estimated_raw_winner_vectors"]))
+            for arm in point["selected_arm_indices"]:
+                arm_rows.append({
+                    "benchmark": name, "checkpoint": point["checkpoint"],
+                    "cost_percent": 100 * point["budget_fraction"],
+                    "id": f"A{arm + 1}", "model": run["model_results"][arm]["model_name"],
+                    "newly_recommended": arm in added, "completed": arm in completed,
+                    "estimated_accuracy": vectors[arm][0],
+                    "estimated_mean_deployment_cost_usd": vectors[arm][1],
+                    "full_data_accuracy": run["raw_truth_vectors"][arm][0],
+                    "full_data_mean_deployment_cost_usd": run["raw_truth_vectors"][arm][1],
+                })
         for model, raw in zip(run["model_results"], run["raw_truth_vectors"]):
             combo_rows.append({"benchmark": name, "id": f"A{model['arm_index'] + 1}",
                                "model": model["model_name"], "accuracy": raw[0],
@@ -340,7 +416,7 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
         for timing in run.get("stage_timing_events", []):
             timing_rows.append({"benchmark": name, **timing})
     for filename, rows in (("trajectory.csv", trajectory_rows), ("checkpoints.csv", key_rows),
-                           ("combinations.csv", combo_rows)):
+                           ("combinations.csv", combo_rows), ("checkpoint_arms.csv", arm_rows)):
         if not rows:
             continue
         with (outdir / filename).open("w", newline="") as handle:
@@ -363,8 +439,15 @@ def export_tables(runs: Mapping[str, Any], outdir: Path) -> None:
                "cost_percent": 100 * run["total_cost"] / run["params"]["bruteforce_search_cost_usd"],
                "total_cost_usd": run["total_cost"], "evaluations": run["total_evaluations"],
                "key_checkpoints": len(key_checkpoints(run)),
+               "recorded_checkpoints": len(run["recommendation_trajectory"]),
+               "recommendation_eligibility": "completed_only",
+               "recommendation_changes_only": run["params"].get("recommendation_changes_only", False),
+               "final_completion": _completion_columns(_plot_trajectory(run)[-1])
+                   if _plot_trajectory(run) else None,
                "selected_models": run["selected_models"],
                "directions": run["params"]["directions"],
+               "direction_scheduler": run["params"].get("direction_scheduler", "round_robin"),
+               "question_order": run["params"].get("question_order", "independent"),
                "HV": run["hypervolume"], "reference_HV": run["ground_truth_hypervolume"],
                "HV_regret": run["hypervolume_regret"],
                "relative_HV_regret_percent": _metric_value(run, run, "relative_hv_regret_percent"),
@@ -381,6 +464,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                         default=ROOT / "experiments/combined_objective/results/anytime_radial_gittins")
     parser.add_argument("--lambda-initial", type=float, default=1.0)
     parser.add_argument("--lambda-decay", type=float, default=0.5)
+    parser.add_argument("--direction-scheduler", choices=("round_robin", "accuracy_last"),
+                        default="round_robin",
+                        help="Defer (1, 0) until the other directions stop with accuracy_last")
     parser.add_argument("--eta", type=float, default=1.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch-size", type=int, default=4)
@@ -396,6 +482,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     parser.add_argument("--boundary-build-backend", choices=("auto", "scipy", "jax"), default="auto")
     parser.add_argument("--trajectory-checkpoint-interval", type=int, default=10)
     parser.add_argument("--trajectory-target-checkpoints", type=int)
+    parser.add_argument("--recommendation-changes-only", action="store_true",
+                        help="Record only changes in recommended membership, including removals")
     parser.add_argument("--plot-only", action="store_true")
     args = parser.parse_args(argv)
     outdir = args.outdir.resolve()
@@ -406,6 +494,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_path = outdir / f"{name}_run.json"
         if args.plot_only:
             runs[name] = json.loads(run_path.read_text())
+            if any(
+                point["archive_scope"] != "deployable"
+                or not set(point["selected_arm_indices"]).issubset(point["completed_arm_indices"])
+                for point in _plot_trajectory(runs[name])
+            ):
+                parser.error(
+                    f"{run_path} does not use completed-only recommendations; "
+                    "rerun without --plot-only"
+                )
             continue
         path = _require_data_path(str(ROOT / "experiments/data/lookup" / f"{name}_lookup.pkl"))
         models, datapoints, table = load_pickle(path)
@@ -415,7 +512,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             models, datapoints, table,
             anytime=True, lambda_initial=args.lambda_initial, lambda_decay=args.lambda_decay,
             search_cost_scale_eta=args.eta, seed=args.seed, batch_size=args.batch_size,
+            question_order="independent",  # Preserve this historical entry point's design.
             directions=_cli_directions(anytime=True, extra_directions=args.extra_direction),
+            direction_scheduler=args.direction_scheduler,
             observation_budget_fraction=args.budget_fraction,
             max_search_cost_usd=args.max_search_cost_usd,
             boundary_grid=RadialGittinsGrid(z_size=args.grid_size, delta_size=args.grid_size,
@@ -426,6 +525,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             record_recommendation_trajectory=True,
             recommendation_checkpoint_interval=args.trajectory_checkpoint_interval,
             recommendation_checkpoint_target=args.trajectory_target_checkpoints,
+            recommendation_changes_only=args.recommendation_changes_only,
         )
         runs[name] = _jsonable_result(result)
         run_path.write_text(json.dumps(runs[name], indent=2, allow_nan=False) + "\n")
