@@ -47,8 +47,14 @@ DATASETS = {
     "restaurant_valid": ("scope", "data/scope/restaurant_valid"),
 }
 
+GAUSS_RADAU_TWO_POINT_INTERIOR = 1.0 / 3.0
+
 PAIRS = {
     "cost_near__accuracy_axis": ((0.1, 0.9), (1.0, 0.0)),
+    "gauss_radau_accuracy_endpoint": (
+        (GAUSS_RADAU_TWO_POINT_INTERIOR, 1.0 - GAUSS_RADAU_TWO_POINT_INTERIOR),
+        (1.0, 0.0),
+    ),
     "symmetric_interior": ((0.1, 0.9), (0.9, 0.1)),
     "exact_axes": ((0.0, 1.0), (1.0, 0.0)),
 }
