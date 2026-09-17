@@ -7,6 +7,7 @@ insertion is a separate algorithmic question and is not mixed into these runs.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -42,9 +43,12 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
 DATASETS = {
     "hotpotqa": ("pickle", "experiments/data/lookup/hotpotqa_lookup.pkl"),
     "mathqa": ("pickle", "experiments/data/lookup/mathqa_lookup.pkl"),
+    "restaurant_test": ("scope", "data/scope/restaurant_test"),
     "stackoverflow": ("scope", "data/scope/stackoverflow"),
     "bird_dev": ("scope", "data/scope/bird_dev"),
     "restaurant_valid": ("scope", "data/scope/restaurant_valid"),
+    "bing_querylogs": ("scope", "data/scope/bing_querylogs"),
+    "bird_mini_dev": ("scope", "data/scope/bird_mini_dev"),
 }
 
 GAUSS_RADAU_TWO_POINT_INTERIOR = 1.0 / 3.0
@@ -70,6 +74,88 @@ DEFAULT_OUTDIR = (
 def _json_dump(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
+
+
+def _recommendation_membership_intervals(
+    points: list[dict[str, Any]], terminal_cost_fraction: float
+) -> dict[int, list[tuple[float, float]]]:
+    intervals: dict[int, list[tuple[float, float]]] = {}
+    active: dict[int, float] = {}
+    previous: set[int] = set()
+    for point in points:
+        cost_fraction = float(point["cost_fraction"])
+        current = set(map(int, point["selected_arm_indices"]))
+        for arm in previous - current:
+            intervals.setdefault(arm, []).append((active.pop(arm), cost_fraction))
+        for arm in current - previous:
+            active[arm] = cost_fraction
+        previous = current
+    for arm, start in active.items():
+        intervals.setdefault(arm, []).append((start, terminal_cost_fraction))
+    return intervals
+
+
+def build_plotting_payload(
+    run: dict[str, Any], targets: tuple[float, ...] = (0.10, 0.30)
+) -> dict[str, Any]:
+    """Freeze every value needed by the 10%/30% frontier and persistence plot."""
+    points = run["points"]
+    terminal = float(run["cost_fraction"])
+    intervals = _recommendation_membership_intervals(points, terminal)
+    truth = run["raw_truth_vectors"]
+    model_names = run["model_names"]
+    target_payloads: list[dict[str, Any]] = []
+    for target in targets:
+        eligible = [point for point in points if float(point["cost_fraction"]) <= target]
+        if not eligible or target > terminal + 1e-12:
+            target_payloads.append(
+                {
+                    "target_cost_fraction": target,
+                    "available": False,
+                    "terminal_cost_fraction": terminal,
+                }
+            )
+            continue
+        point = eligible[-1]
+        selected = list(map(int, point["selected_arm_indices"]))
+        target_payloads.append(
+            {
+                "target_cost_fraction": target,
+                "available": True,
+                "source_snapshot_cost_fraction": float(point["cost_fraction"]),
+                "source_snapshot_evaluations": int(point["evaluations"]),
+                "selected_arm_indices": selected,
+                "selected_model_names": [model_names[arm] for arm in selected],
+                "selected_full_data_vectors": [truth[arm] for arm in selected],
+                "selected_membership_intervals": {
+                    str(arm): [
+                        [start, end]
+                        for start, end in intervals.get(arm, [])
+                        if start <= target < end
+                    ]
+                    for arm in selected
+                },
+                "pareto_precision": point["pareto_precision"],
+                "pareto_recall": point["pareto_recall"],
+                "pareto_false_positive_count": point["pareto_false_positive_count"],
+                "pareto_false_negative_count": point["pareto_false_negative_count"],
+                "relative_hv_regret": point["relative_hv_regret"],
+            }
+        )
+    return {
+        "schema_version": 1,
+        "targets": target_payloads,
+        "terminal_cost_fraction": terminal,
+        "full_data_pareto_arm_indices": run["full_data_pareto_arm_indices"],
+        "full_data_pareto_vectors": [
+            truth[arm] for arm in run["full_data_pareto_arm_indices"]
+        ],
+        "canonical_background_fields": {
+            "model_names": "run.model_names",
+            "full_data_vectors": "run.raw_truth_vectors",
+            "membership_change_points": "run.points",
+        },
+    }
 
 
 def _input_files(kind: str, path: Path) -> list[Path]:
@@ -232,15 +318,19 @@ def run_one(
     outdir: Path,
     observation_budget_fraction: float,
 ) -> dict[str, Any]:
+    run_started_at_utc = datetime.now(timezone.utc).isoformat()
+    run_started = time.perf_counter()
     directions = PAIRS[pair_name]
     output_path = outdir / pair_name / benchmark / "result.json"
     if output_path.exists():
         print(f"Reusing {output_path}", flush=True)
         return json.loads(output_path.read_text())
 
+    load_started = time.perf_counter()
     models, questions, table, hashes = load_benchmark(benchmark)
+    data_load_wall_time = time.perf_counter() - load_started
     cache = RadialGittinsBoundaryCache(cache_dir=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR)
-    started = time.perf_counter()
+    simulation_started = time.perf_counter()
     print(
         f"Running {benchmark} / {pair_name}: directions={directions}, seed={seed}",
         flush=True,
@@ -281,9 +371,12 @@ def run_one(
         recommendation_changes_only=True,
         defer_recommendation_diagnostics=True,
     )
-    elapsed = time.perf_counter() - started
+    simulation_wall_time = time.perf_counter() - simulation_started
+    postprocess_started = time.perf_counter()
     run = enrich_frontier_metrics(compact_lcb_run(result))
     eta_events = list(result.direction_eta_events)
+    plotting = build_plotting_payload(run)
+    postprocess_wall_time = time.perf_counter() - postprocess_started
     payload = {
         "config": {
             "benchmark": benchmark,
@@ -308,9 +401,15 @@ def run_one(
                 (ROOT / "experiments/combined_objective/offline_radial_gittins.py").read_bytes()
             ).hexdigest(),
             "runner_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            "wall_time_seconds": elapsed,
+            "wall_time_seconds": simulation_wall_time,
+            "wall_time_scope": "simulate_radial_gittins_only",
+            "run_started_at_utc": run_started_at_utc,
+            "data_load_wall_time_seconds": data_load_wall_time,
+            "postprocess_wall_time_seconds": postprocess_wall_time,
+            "pre_write_wall_time_seconds": time.perf_counter() - run_started,
         },
         "summary": summarize_run(run, eta_events),
+        "plotting": plotting,
         "direction_eta_events": eta_events,
         "run": run,
         "parameters": result.params,
@@ -318,7 +417,7 @@ def run_one(
     _json_dump(output_path, payload)
     print(
         f"Finished {benchmark} / {pair_name}: BF={run['cost_fraction']:.3%}, "
-        f"stop={run['stop_reason']}, time={elapsed:.1f}s",
+        f"stop={run['stop_reason']}, time={simulation_wall_time:.1f}s",
         flush=True,
     )
     return payload

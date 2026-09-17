@@ -37,11 +37,14 @@ DEFAULT_RESULTS = (
 )
 DEFAULT_PAIR = "cost_near__accuracy_axis"
 DEFAULT_BENCHMARKS = (
+    "restaurant_test",
     "hotpotqa",
     "mathqa",
     "stackoverflow",
     "bird_dev",
     "restaurant_valid",
+    "bing_querylogs",
+    "bird_mini_dev",
 )
 
 
