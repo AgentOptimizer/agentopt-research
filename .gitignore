@@ -9,6 +9,7 @@ experiments/cached_results/
 experiments/combined_objective/plots/
 /plot/
 /analysis/
+/tmp/
 .mplconfig/
 
 # Python
