@@ -291,6 +291,15 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--qnehvi-refit-every", type=int, default=32)
     parser.add_argument(
+        "--trajectory-checkpoint-interval",
+        type=int,
+        default=10,
+        help=(
+            "Retain one baseline trajectory point every N policy batches "
+            "(default: %(default)s; use 1 for the legacy full trace)"
+        ),
+    )
+    parser.add_argument(
         "--from-csv",
         type=Path,
         default=None,
@@ -338,6 +347,9 @@ def main() -> None:
                         seed=seed,
                         batch_size=args.batch_size,
                         qnehvi_refit_every=args.qnehvi_refit_every,
+                        recommendation_checkpoint_interval=(
+                            args.trajectory_checkpoint_interval
+                        ),
                     )
                     print(
                         f"regret={result.hypervolume_regret:.5f} "

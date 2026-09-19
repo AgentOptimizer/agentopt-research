@@ -33,6 +33,8 @@ _REPO_ROOT = _EXPERIMENTS_DIR.parent
 _SRC_DIR = _REPO_ROOT / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 if str(_EXPERIMENTS_DIR) not in sys.path:
     sys.path.insert(0, str(_EXPERIMENTS_DIR))
 
@@ -45,6 +47,7 @@ sys.modules.setdefault("offline_selector_sim_v2", _offline_sim)
 LookupTable = _offline_sim.LookupTable
 _require_data_path = _offline_sim._require_data_path
 load_pickle = _offline_sim.load_pickle
+load_scope = _offline_sim.load_scope
 
 from agentopt.model_selection.pareto_identification import (  # noqa: E402
     APE_K,
@@ -74,6 +77,7 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
 QNEHVI = "qnehvi"
 METHODS = (EGE_SH, EGE_SR, APE_K, QNEHVI)
 DEFAULT_BATCH_SIZE = 4
+DEFAULT_RECOMMENDATION_CHECKPOINT_INTERVAL = 10
 
 
 @dataclass(frozen=True)
@@ -300,7 +304,7 @@ def _run_ege(
     batch_size: int,
     cell_budget: int,
     fallback_cost_reference: float,
-    record: Callable[[str, Sequence[int]], None],
+    record: Callable[[str, Optional[Sequence[int]]], None],
 ) -> Tuple[Tuple[int, ...], str, float]:
     n_arms = puller.n_arms
     active: Tuple[int, ...] = tuple(range(n_arms))
@@ -340,7 +344,7 @@ def _run_ege(
                 if pulled <= 0:
                     break
                 remaining_for_arm -= pulled
-                record("ege_pull", empirical_raw_pareto_arms(puller))
+                record("ege_pull", None)
         if not np.all(puller.n_pulls[list(active)] > 0):
             break
         cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
@@ -355,7 +359,7 @@ def _run_ege(
         )
         accepted.extend(newly_accepted)
         active = survivors
-        record("ege_eliminate", empirical_raw_pareto_arms(puller))
+        record("ege_eliminate", None)
 
     # Leftover budget: keep sampling surviving / accepted arms, then anyone else.
     leftover_order = list(ege_recommended_arms(accepted, active)) or list(range(n_arms))
@@ -378,7 +382,7 @@ def _run_ege(
             arm,
             min(batch_size, cell_budget - puller.total_evaluations, puller.remaining_count(arm)),
         )
-        record("ege_leftover", empirical_raw_pareto_arms(puller))
+        record("ege_leftover", None)
 
     recommended = empirical_raw_pareto_arms(puller)
     stop = (
@@ -398,11 +402,11 @@ def _run_ape(
     epsilon1: float,
     delta: float,
     k1: float,
-    record: Callable[[str, Sequence[int]], None],
+    record: Callable[[str, Optional[Sequence[int]]], None],
 ) -> Tuple[Tuple[int, ...], str, float]:
     _warm_start_all(puller, batch_size=1, cell_budget=cell_budget)
     cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
-    record("ape_warm_start", empirical_raw_pareto_arms(puller))
+    record("ape_warm_start", None)
     while puller.total_evaluations < cell_budget and puller.has_remaining():
         means = puller.maximization_means(cost_reference)
         arm = ape_select_arm(
@@ -421,7 +425,7 @@ def _run_ape(
             arm,
             min(batch_size, cell_budget - puller.total_evaluations, puller.remaining_count(arm)),
         )
-        record("ape_pull", empirical_raw_pareto_arms(puller))
+        record("ape_pull", None)
     stop = (
         "question_budget"
         if puller.total_evaluations >= cell_budget
@@ -442,13 +446,13 @@ def _run_qnehvi(
     mc_samples: int,
     refit_every: int,
     seed: int,
-    record: Callable[[str, Sequence[int]], None],
+    record: Callable[[str, Optional[Sequence[int]]], None],
 ) -> Tuple[Tuple[int, ...], str, float]:
     from agentopt.model_selection.qnehvi import select_qnehvi_index
 
     _warm_start_all(puller, batch_size=batch_size, cell_budget=cell_budget)
     cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
-    record("qnehvi_warm_start", empirical_raw_pareto_arms(puller))
+    record("qnehvi_warm_start", None)
     sticky_arm: Optional[int] = None
     steps_since_refit = refit_every
     while puller.total_evaluations < cell_budget and puller.has_remaining():
@@ -486,7 +490,7 @@ def _run_qnehvi(
             arm,
             min(batch_size, cell_budget - puller.total_evaluations, puller.remaining_count(arm)),
         )
-        record("qnehvi_pull", empirical_raw_pareto_arms(puller))
+        record("qnehvi_pull", None)
     stop = (
         "question_budget"
         if puller.total_evaluations >= cell_budget
@@ -505,6 +509,9 @@ def simulate_pareto_baseline(
     batch_size: int = DEFAULT_BATCH_SIZE,
     observation_budget_fraction: float = 1.0,
     record_recommendation_trajectory: bool = True,
+    recommendation_checkpoint_interval: int = (
+        DEFAULT_RECOMMENDATION_CHECKPOINT_INTERVAL
+    ),
     epsilon1: float = 0.0,
     ape_delta: float = 0.1,
     ape_k1: float = 1.0,
@@ -515,10 +522,21 @@ def simulate_pareto_baseline(
     evaluation_question_ids: Optional[Sequence[int]] = None,
     complete_only: bool = False,
 ) -> ParetoBaselineResult:
-    """Run one full-budget Pareto identification baseline on a lookup table."""
+    """Run one full-budget Pareto identification baseline on a lookup table.
+
+    Recommendation diagnostics are retained every
+    ``recommendation_checkpoint_interval`` ordinary policy batches. Warm
+    start, elimination, and terminal events are always retained. This changes
+    trajectory resolution only, never acquisition or the final recommendation.
+    Set the interval to 1 for the legacy every-batch trajectory.
+    """
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")
     batch_size = _positive_int(batch_size, "batch_size")
+    recommendation_checkpoint_interval = _positive_int(
+        recommendation_checkpoint_interval,
+        "recommendation_checkpoint_interval",
+    )
     fraction = _validate_fraction(observation_budget_fraction)
     questions = tuple(
         evaluation_question_ids
@@ -550,12 +568,26 @@ def simulate_pareto_baseline(
     cell_budget = max(1, int(math.floor(fraction * len(models) * len(questions))))
     puller = _QuestionPuller(models, questions, table, seed=seed)
     trajectory: List[BaselineCheckpoint] = []
+    ordinary_checkpoint_events = 0
+    skipped_checkpoint_events = 0
 
-    def record(event: str, selected: Sequence[int]) -> None:
+    def record(event: str, selected: Optional[Sequence[int]]) -> None:
+        nonlocal ordinary_checkpoint_events, skipped_checkpoint_events
         if not record_recommendation_trajectory:
             return
+        if event in {"ege_pull", "ege_leftover", "ape_pull", "qnehvi_pull"}:
+            ordinary_checkpoint_events += 1
+            if (
+                ordinary_checkpoint_events
+                % recommendation_checkpoint_interval
+                != 0
+            ):
+                skipped_checkpoint_events += 1
+                return
         if trajectory and trajectory[-1].cumulative_evaluations == puller.total_evaluations:
             return
+        if selected is None:
+            selected = empirical_raw_pareto_arms(puller)
         trajectory.append(
             _checkpoint(
                 puller,
@@ -637,6 +669,11 @@ def simulate_pareto_baseline(
         "reference_point": list(reference),
         "halt_on_identification_stop": False,
         "complete_only": bool(complete_only),
+        "recommendation_checkpoint_interval": (
+            recommendation_checkpoint_interval
+        ),
+        "recommendation_checkpoint_events_seen": ordinary_checkpoint_events,
+        "recommendation_checkpoint_events_skipped": skipped_checkpoint_events,
     }
     if method == APE_K:
         params.update(
@@ -700,7 +737,12 @@ def write_trajectory_csv(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pickle", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--pickle")
+    source.add_argument(
+        "--scope",
+        help="SCOPE dataset directory (alternative to --pickle)",
+    )
     parser.add_argument(
         "--methods",
         nargs="+",
@@ -715,13 +757,25 @@ def main() -> None:
     parser.add_argument("--qnehvi-mc-samples", type=int, default=64)
     parser.add_argument("--qnehvi-refit-every", type=int, default=8)
     parser.add_argument(
+        "--trajectory-checkpoint-interval",
+        type=int,
+        default=DEFAULT_RECOMMENDATION_CHECKPOINT_INTERVAL,
+        help=(
+            "Retain one ordinary recommendation checkpoint every N policy "
+            "batches (default: %(default)s; use 1 for every batch)"
+        ),
+    )
+    parser.add_argument(
         "--outdir",
         type=Path,
         default=Path("experiments/combined_objective/results/pareto_baselines"),
     )
     args = parser.parse_args()
-    pickle_path = _require_data_path(args.pickle)
-    models, datapoints, table = load_pickle(pickle_path)
+    if args.scope is not None:
+        models, datapoints, table = load_scope(args.scope)
+    else:
+        pickle_path = _require_data_path(args.pickle)
+        models, datapoints, table = load_pickle(pickle_path)
     outdir = args.outdir if args.outdir.is_absolute() else _REPO_ROOT / args.outdir
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -743,6 +797,9 @@ def main() -> None:
                 ape_k=args.ape_k,
                 qnehvi_mc_samples=args.qnehvi_mc_samples,
                 qnehvi_refit_every=args.qnehvi_refit_every,
+                recommendation_checkpoint_interval=(
+                    args.trajectory_checkpoint_interval
+                ),
             )
             method_runs.append(result)
             print(

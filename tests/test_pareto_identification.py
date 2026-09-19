@@ -111,6 +111,49 @@ class APESamplingTests(unittest.TestCase):
         arm = ape_select_arm(means, pulls)
         self.assertIn(arm, range(4))
 
+    def test_vectorized_ape_matches_scalar_definition(self):
+        rng = np.random.default_rng(321)
+        for n_arms in (2, 3, 9, 25):
+            for _ in range(5):
+                means = rng.normal(size=(n_arms, 2))
+                pulls = rng.integers(1, 100, size=n_arms)
+                epsilon1 = float(rng.choice([0.0, 0.05]))
+                M_ij = pairwise_M(means)
+                bonuses = np.asarray(
+                    [
+                        [
+                            ape_pairwise_bonus(
+                                int(pulls[i]), int(pulls[j]),
+                                delta=0.1, k1=1.0,
+                            )
+                            for j in range(n_arms)
+                        ]
+                        for i in range(n_arms)
+                    ]
+                )
+                lower = M_ij - bonuses
+                np.fill_diagonal(lower, np.inf)
+                expected_mask = np.min(lower, axis=1) + epsilon1 > 0.0
+                np.testing.assert_array_equal(
+                    ape_opt_mask(means, pulls, epsilon1=epsilon1),
+                    expected_mask,
+                )
+
+                unfinished = np.flatnonzero(~expected_mask)
+                if unfinished.size == 0:
+                    expected_arm = int(np.argmin(pulls))
+                else:
+                    upper = M_ij + bonuses
+                    np.fill_diagonal(upper, np.inf)
+                    scores = np.min(upper[unfinished], axis=1)
+                    b_t = int(unfinished[int(np.argmax(scores))])
+                    c_t = int(np.argmin(lower[b_t]))
+                    expected_arm = b_t if pulls[b_t] <= pulls[c_t] else c_t
+                self.assertEqual(
+                    ape_select_arm(means, pulls, epsilon1=epsilon1),
+                    expected_arm,
+                )
+
 
 class ConfigurationFeatureTests(unittest.TestCase):
     def test_two_role_names_become_two_categoricals(self):

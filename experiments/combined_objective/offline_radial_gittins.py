@@ -845,24 +845,44 @@ def evaluate_direction_status(
 
 
 def nondominated_indices(points: np.ndarray) -> List[int]:
-    """Return indices not strictly dominated under maximization of both columns."""
+    """Return indices not strictly dominated under maximization of both columns.
+
+    The two-objective sweep is exact and preserves the input order (including
+    duplicate nondominated points).  Sorting replaces the former all-pairs
+    scan, which made diagnostic checkpoints quadratic in the number of
+    configurations on the large SCOPE matrices.
+    """
     points = np.asarray(points, dtype=np.float64)
     if points.ndim != 2 or points.shape[1] != 2:
         raise ValueError("points must have shape (n, 2)")
     if not np.all(np.isfinite(points)):
         raise ValueError("points must be finite")
-    keep: List[int] = []
-    for i in range(points.shape[0]):
-        dominated = False
-        for j in range(points.shape[0]):
-            if i == j:
-                continue
-            if np.all(points[j] >= points[i]) and np.any(points[j] > points[i]):
-                dominated = True
-                break
-        if not dominated:
-            keep.append(i)
-    return keep
+    n_points = int(points.shape[0])
+    if n_points == 0:
+        return []
+
+    # Visit equal-x groups from largest x to smallest.  Within one group only
+    # points attaining its largest y can survive.  Such a point is dominated
+    # by an earlier (strictly larger x) group exactly when that prefix already
+    # contains y >= its own.  Equal duplicate maxima survive together because
+    # neither strictly dominates the other.
+    order = np.argsort(-points[:, 0], kind="stable")
+    keep_mask = np.zeros(n_points, dtype=bool)
+    prefix_max_y = -math.inf
+    start = 0
+    while start < n_points:
+        stop = start + 1
+        x_value = points[order[start], 0]
+        while stop < n_points and points[order[stop], 0] == x_value:
+            stop += 1
+        group = order[start:stop]
+        group_max_y = float(np.max(points[group, 1]))
+        if prefix_max_y < group_max_y:
+            maxima = group[points[group, 1] == group_max_y]
+            keep_mask[maxima] = True
+        prefix_max_y = max(prefix_max_y, group_max_y)
+        start = stop
+    return np.flatnonzero(keep_mask).tolist()
 
 
 def raw_nondominated_indices(points: np.ndarray) -> List[int]:
