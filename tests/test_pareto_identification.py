@@ -17,7 +17,10 @@ from agentopt.model_selection.pareto_identification import (
     pairwise_M,
     pairwise_m,
 )
-from agentopt.model_selection.qnehvi import encode_configuration_features
+from agentopt.model_selection.qnehvi import (
+    encode_configuration_features,
+    select_qnehvi_index,
+)
 
 
 class PairwiseGapTests(unittest.TestCase):
@@ -173,6 +176,39 @@ class ConfigurationFeatureTests(unittest.TestCase):
         self.assertEqual(features.shape, (3, 1))
         self.assertEqual(dims, [0])
         self.assertEqual(features[0, 0], features[2, 0])
+
+    def test_qnehvi_candidate_batching_preserves_selection(self):
+        try:
+            import botorch  # noqa: F401
+            import torch  # noqa: F401
+        except ImportError:
+            self.skipTest("botorch is not installed")
+        features = np.arange(6, dtype=np.float64).reshape(-1, 1)
+        objectives = np.asarray(
+            [[0.15, 0.95], [0.35, 0.75], [0.55, 0.58],
+             [0.72, 0.42], [0.86, 0.27], [0.96, 0.12]],
+            dtype=np.float64,
+        )
+        common = dict(
+            categorical_dims=[0],
+            mc_samples=8,
+            seed=19,
+        )
+        unbatched = select_qnehvi_index(
+            features,
+            objectives,
+            features,
+            candidate_batch_size=None,
+            **common,
+        )
+        batched = select_qnehvi_index(
+            features,
+            objectives,
+            features,
+            candidate_batch_size=2,
+            **common,
+        )
+        self.assertEqual(batched, unbatched)
 
 
 if __name__ == "__main__":

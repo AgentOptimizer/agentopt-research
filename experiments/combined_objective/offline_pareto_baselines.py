@@ -445,6 +445,7 @@ def _run_qnehvi(
     reference_point: Sequence[float],
     mc_samples: int,
     refit_every: int,
+    candidate_batch_size: Optional[int],
     seed: int,
     record: Callable[[str, Optional[Sequence[int]]], None],
 ) -> Tuple[Tuple[int, ...], str, float]:
@@ -476,6 +477,7 @@ def _run_qnehvi(
                     reference_point=reference_point,
                     mc_samples=mc_samples,
                     seed=seed + puller.total_evaluations,
+                    candidate_batch_size=candidate_batch_size,
                 )
                 arm = remaining_arms[local]
             except ImportError:
@@ -518,6 +520,7 @@ def simulate_pareto_baseline(
     ape_k: int = 3,
     qnehvi_mc_samples: int = 64,
     qnehvi_refit_every: int = 8,
+    qnehvi_candidate_batch_size: Optional[int] = 64,
     reference_point: Sequence[float] = (0.0, 0.0),
     evaluation_question_ids: Optional[Sequence[int]] = None,
     complete_only: bool = False,
@@ -636,6 +639,7 @@ def simulate_pareto_baseline(
             reference_point=reference,
             mc_samples=qnehvi_mc_samples,
             refit_every=_positive_int(qnehvi_refit_every, "qnehvi_refit_every"),
+            candidate_batch_size=qnehvi_candidate_batch_size,
             seed=seed,
             record=record,
         )
@@ -690,6 +694,7 @@ def simulate_pareto_baseline(
             {
                 "qnehvi_mc_samples": int(qnehvi_mc_samples),
                 "qnehvi_refit_every": int(qnehvi_refit_every),
+                "qnehvi_candidate_batch_size": qnehvi_candidate_batch_size,
             }
         )
 
@@ -756,6 +761,7 @@ def main() -> None:
     parser.add_argument("--ape-k", type=int, default=3)
     parser.add_argument("--qnehvi-mc-samples", type=int, default=64)
     parser.add_argument("--qnehvi-refit-every", type=int, default=8)
+    parser.add_argument("--qnehvi-candidate-batch-size", type=int, default=64)
     parser.add_argument(
         "--trajectory-checkpoint-interval",
         type=int,
@@ -797,6 +803,7 @@ def main() -> None:
                 ape_k=args.ape_k,
                 qnehvi_mc_samples=args.qnehvi_mc_samples,
                 qnehvi_refit_every=args.qnehvi_refit_every,
+                qnehvi_candidate_batch_size=args.qnehvi_candidate_batch_size,
                 recommendation_checkpoint_interval=(
                     args.trajectory_checkpoint_interval
                 ),
