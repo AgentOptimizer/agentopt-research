@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=gauss-radau-20seed
 #SBATCH --account=torch_pr_790_general
-#SBATCH --array=0-159%16
+#SBATCH --array=0-159
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G
 #SBATCH --time=24:00:00
