@@ -7,6 +7,8 @@ experiments/results/
 experiments/cached_results/
 /plot/
 /analysis/
+/data/scope/
+/slurm-*.out
 
 # Python
 __pycache__/

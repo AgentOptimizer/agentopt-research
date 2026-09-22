@@ -93,6 +93,7 @@ def select_qnehvi_index(
     reference_point: Sequence[float] = (0.0, 0.0),
     mc_samples: int = 64,
     seed: int = 0,
+    candidate_batch_size: Optional[int] = 64,
 ) -> int:
     """Return the candidate index with largest qNEHVI.
 
@@ -132,6 +133,8 @@ def select_qnehvi_index(
     cat_dims = [int(dim) for dim in categorical_dims]
     if not cat_dims:
         raise ValueError("categorical_dims must be nonempty")
+    if candidate_batch_size is not None and int(candidate_batch_size) < 1:
+        raise ValueError("candidate_batch_size must be positive or None")
 
     torch_seed = int(seed) % (2**31)
     torch.manual_seed(torch_seed)
@@ -163,9 +166,17 @@ def select_qnehvi_index(
         sampler=sampler,
         prune_baseline=True,
     )
+    batch_size = (
+        cand_x.shape[0]
+        if candidate_batch_size is None
+        else min(int(candidate_batch_size), cand_x.shape[0])
+    )
+    score_chunks = []
     with torch.no_grad():
-        values = acq(x_cand.unsqueeze(1))
-    scores = values.detach().cpu().reshape(-1).numpy()
+        for start in range(0, cand_x.shape[0], batch_size):
+            values = acq(x_cand[start : start + batch_size].unsqueeze(1))
+            score_chunks.append(values.detach().cpu().reshape(-1))
+    scores = torch.cat(score_chunks).numpy()
     if scores.size != cand_x.shape[0]:
         raise RuntimeError("qNEHVI returned a score vector of unexpected length")
     return int(np.argmax(scores))

@@ -74,6 +74,8 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
 QNEHVI = "qnehvi"
 METHODS = (EGE_SH, EGE_SR, APE_K, QNEHVI)
 DEFAULT_BATCH_SIZE = 4
+DEFAULT_RECOMMENDATION_CHECKPOINT_INTERVAL = 25
+DEFAULT_COST_CHECKPOINT_FRACTIONS = tuple(i / 10 for i in range(1, 11))
 
 
 @dataclass(frozen=True)
@@ -300,7 +302,7 @@ def _run_ege(
     batch_size: int,
     cell_budget: int,
     fallback_cost_reference: float,
-    record: Callable[[str, Sequence[int]], None],
+    record: Callable[[str, Optional[Sequence[int]]], None],
 ) -> Tuple[Tuple[int, ...], str, float]:
     n_arms = puller.n_arms
     active: Tuple[int, ...] = tuple(range(n_arms))
@@ -340,7 +342,7 @@ def _run_ege(
                 if pulled <= 0:
                     break
                 remaining_for_arm -= pulled
-                record("ege_pull", empirical_raw_pareto_arms(puller))
+                record("ege_pull", None)
         if not np.all(puller.n_pulls[list(active)] > 0):
             break
         cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
@@ -355,7 +357,7 @@ def _run_ege(
         )
         accepted.extend(newly_accepted)
         active = survivors
-        record("ege_eliminate", empirical_raw_pareto_arms(puller))
+        record("ege_eliminate", None)
 
     # Leftover budget: keep sampling surviving / accepted arms, then anyone else.
     leftover_order = list(ege_recommended_arms(accepted, active)) or list(range(n_arms))
@@ -378,7 +380,7 @@ def _run_ege(
             arm,
             min(batch_size, cell_budget - puller.total_evaluations, puller.remaining_count(arm)),
         )
-        record("ege_leftover", empirical_raw_pareto_arms(puller))
+        record("ege_leftover", None)
 
     recommended = empirical_raw_pareto_arms(puller)
     stop = (
@@ -398,11 +400,11 @@ def _run_ape(
     epsilon1: float,
     delta: float,
     k1: float,
-    record: Callable[[str, Sequence[int]], None],
+    record: Callable[[str, Optional[Sequence[int]]], None],
 ) -> Tuple[Tuple[int, ...], str, float]:
     _warm_start_all(puller, batch_size=1, cell_budget=cell_budget)
     cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
-    record("ape_warm_start", empirical_raw_pareto_arms(puller))
+    record("ape_warm_start", None)
     while puller.total_evaluations < cell_budget and puller.has_remaining():
         means = puller.maximization_means(cost_reference)
         arm = ape_select_arm(
@@ -421,7 +423,7 @@ def _run_ape(
             arm,
             min(batch_size, cell_budget - puller.total_evaluations, puller.remaining_count(arm)),
         )
-        record("ape_pull", empirical_raw_pareto_arms(puller))
+        record("ape_pull", None)
     stop = (
         "question_budget"
         if puller.total_evaluations >= cell_budget
@@ -441,14 +443,15 @@ def _run_qnehvi(
     reference_point: Sequence[float],
     mc_samples: int,
     refit_every: int,
+    candidate_batch_size: Optional[int],
     seed: int,
-    record: Callable[[str, Sequence[int]], None],
+    record: Callable[[str, Optional[Sequence[int]]], None],
 ) -> Tuple[Tuple[int, ...], str, float]:
     from agentopt.model_selection.qnehvi import select_qnehvi_index
 
     _warm_start_all(puller, batch_size=batch_size, cell_budget=cell_budget)
     cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
-    record("qnehvi_warm_start", empirical_raw_pareto_arms(puller))
+    record("qnehvi_warm_start", None)
     sticky_arm: Optional[int] = None
     steps_since_refit = refit_every
     while puller.total_evaluations < cell_budget and puller.has_remaining():
@@ -472,6 +475,7 @@ def _run_qnehvi(
                     reference_point=reference_point,
                     mc_samples=mc_samples,
                     seed=seed + puller.total_evaluations,
+                    candidate_batch_size=candidate_batch_size,
                 )
                 arm = remaining_arms[local]
             except ImportError:
@@ -486,7 +490,7 @@ def _run_qnehvi(
             arm,
             min(batch_size, cell_budget - puller.total_evaluations, puller.remaining_count(arm)),
         )
-        record("qnehvi_pull", empirical_raw_pareto_arms(puller))
+        record("qnehvi_pull", None)
     stop = (
         "question_budget"
         if puller.total_evaluations >= cell_budget
@@ -505,20 +509,35 @@ def simulate_pareto_baseline(
     batch_size: int = DEFAULT_BATCH_SIZE,
     observation_budget_fraction: float = 1.0,
     record_recommendation_trajectory: bool = True,
+    recommendation_checkpoint_interval: int = DEFAULT_RECOMMENDATION_CHECKPOINT_INTERVAL,
+    recommendation_cost_checkpoint_fractions: Sequence[float] = DEFAULT_COST_CHECKPOINT_FRACTIONS,
     epsilon1: float = 0.0,
     ape_delta: float = 0.1,
     ape_k1: float = 1.0,
     ape_k: int = 3,
     qnehvi_mc_samples: int = 64,
     qnehvi_refit_every: int = 8,
+    qnehvi_candidate_batch_size: Optional[int] = 64,
     reference_point: Sequence[float] = (0.0, 0.0),
     evaluation_question_ids: Optional[Sequence[int]] = None,
     complete_only: bool = False,
 ) -> ParetoBaselineResult:
-    """Run one full-budget Pareto identification baseline on a lookup table."""
+    """Run one full-budget Pareto identification baseline on a lookup table.
+
+    Recommendation snapshots are retained at each requested fraction of the
+    exhaustive evaluation cost, plus occasional ordinary policy batches and
+    terminal/structural events. Recording changes diagnostics only; it never
+    changes the arm selected by the policy.
+    """
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")
     batch_size = _positive_int(batch_size, "batch_size")
+    recommendation_checkpoint_interval = _positive_int(
+        recommendation_checkpoint_interval, "recommendation_checkpoint_interval"
+    )
+    cost_checkpoint_fractions = tuple(
+        sorted({_validate_fraction(value) for value in recommendation_cost_checkpoint_fractions})
+    )
     fraction = _validate_fraction(observation_budget_fraction)
     questions = tuple(
         evaluation_question_ids
@@ -550,12 +569,12 @@ def simulate_pareto_baseline(
     cell_budget = max(1, int(math.floor(fraction * len(models) * len(questions))))
     puller = _QuestionPuller(models, questions, table, seed=seed)
     trajectory: List[BaselineCheckpoint] = []
+    ordinary_checkpoint_events = 0
+    next_cost_checkpoint = 0
 
-    def record(event: str, selected: Sequence[int]) -> None:
-        if not record_recommendation_trajectory:
-            return
-        if trajectory and trajectory[-1].cumulative_evaluations == puller.total_evaluations:
-            return
+    def append_checkpoint(event: str, selected: Optional[Sequence[int]]) -> None:
+        if selected is None:
+            selected = empirical_raw_pareto_arms(puller)
         trajectory.append(
             _checkpoint(
                 puller,
@@ -568,6 +587,33 @@ def simulate_pareto_baseline(
                 reference=reference,
             )
         )
+
+    def record(event: str, selected: Optional[Sequence[int]]) -> None:
+        nonlocal ordinary_checkpoint_events, next_cost_checkpoint
+        if not record_recommendation_trajectory:
+            return
+        current_fraction = float(puller.total_cost_usd) / float(bruteforce_cost)
+        crossed: list[float] = []
+        while (
+            next_cost_checkpoint < len(cost_checkpoint_fractions)
+            and current_fraction + 1e-12 >= cost_checkpoint_fractions[next_cost_checkpoint]
+        ):
+            crossed.append(cost_checkpoint_fractions[next_cost_checkpoint])
+            next_cost_checkpoint += 1
+        if crossed:
+            current = selected if selected is not None else empirical_raw_pareto_arms(puller)
+            for threshold in crossed:
+                append_checkpoint(f"cost_checkpoint_{int(round(100 * threshold))}pct", current)
+
+        structural = event in {"ege_eliminate", "ape_warm_start", "qnehvi_warm_start", "terminal"}
+        ordinary = event in {"ege_pull", "ege_leftover", "ape_pull", "qnehvi_pull"}
+        if ordinary:
+            ordinary_checkpoint_events += 1
+        keep_ordinary = ordinary and ordinary_checkpoint_events % recommendation_checkpoint_interval == 0
+        if structural or keep_ordinary:
+            if trajectory and trajectory[-1].cumulative_evaluations == puller.total_evaluations:
+                return
+            append_checkpoint(event, selected)
 
     wall_start = time.perf_counter()
     if method in (EGE_SH, EGE_SR):
@@ -604,6 +650,7 @@ def simulate_pareto_baseline(
             reference_point=reference,
             mc_samples=qnehvi_mc_samples,
             refit_every=_positive_int(qnehvi_refit_every, "qnehvi_refit_every"),
+            candidate_batch_size=qnehvi_candidate_batch_size,
             seed=seed,
             record=record,
         )
@@ -637,6 +684,8 @@ def simulate_pareto_baseline(
         "reference_point": list(reference),
         "halt_on_identification_stop": False,
         "complete_only": bool(complete_only),
+        "recommendation_checkpoint_interval": recommendation_checkpoint_interval,
+        "recommendation_cost_checkpoint_fractions": list(cost_checkpoint_fractions),
     }
     if method == APE_K:
         params.update(
@@ -653,6 +702,7 @@ def simulate_pareto_baseline(
             {
                 "qnehvi_mc_samples": int(qnehvi_mc_samples),
                 "qnehvi_refit_every": int(qnehvi_refit_every),
+                "qnehvi_candidate_batch_size": qnehvi_candidate_batch_size,
             }
         )
 
