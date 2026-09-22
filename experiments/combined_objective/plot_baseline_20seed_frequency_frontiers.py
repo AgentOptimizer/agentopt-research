@@ -14,6 +14,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap, to_rgb
+from matplotlib.lines import Line2D
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -27,6 +28,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 
 from experiments.combined_objective.plot_gittins_20seed_frequency_frontiers import (  # noqa: E402
     DATASETS,
+    SHARED_AXIS_LABEL_FONTSIZE,
     _draw_panel,
     _load_landscape,
 )
@@ -231,7 +233,7 @@ def make_figure(
 ) -> tuple[Path, Path]:
     cmap = _method_colormap(method)
     norm = mpl.colors.Normalize(vmin=1, vmax=20)
-    fig, axes = plt.subplots(2, 4, figsize=(20.0, 10.5))
+    fig, axes = plt.subplots(2, 4, figsize=(24.0, 14.5))
     for ax, dataset in zip(axes.flat, DATASETS):
         summary = _summary(
             results_root=results_root,
@@ -252,28 +254,66 @@ def make_figure(
 
     fig.supxlabel(
         "Mean deployment cost (USD per query, log scale)",
-        fontsize=24,
+        fontsize=SHARED_AXIS_LABEL_FONTSIZE,
         fontweight="normal",
-        y=0.035,
+        y=0.115,
     )
     fig.supylabel(
         "Mean accuracy",
-        fontsize=24,
+        fontsize=SHARED_AXIS_LABEL_FONTSIZE,
         fontweight="normal",
         x=0.022,
     )
     fig.suptitle(
-        f"{METHOD_LABELS[method]} recommendations across 20 seeds ({target:.0%} checkpoint)",
-        fontsize=27,
-        y=0.985,
+        f"{METHOD_LABELS[method]} recommendations across 20 seeds "
+        f"(total search-cost budget: {target:.0%})",
+        fontsize=35,
+        y=0.950,
     )
-    fig.subplots_adjust(left=0.075, right=0.885, bottom=0.105, top=0.84, wspace=0.25, hspace=0.48)
-    colorbar_ax = fig.add_axes([0.915, 0.165, 0.014, 0.64])
+    fig.legend(
+        handles=(
+            Line2D(
+                [], [], linestyle="none", marker="o", markersize=13,
+                markerfacecolor="#c0c5cc", markeredgecolor="none",
+                label="All configurations",
+            ),
+            Line2D(
+                [], [], color="#25282c", linewidth=2.0, marker="o",
+                markersize=10, markerfacecolor="white", markeredgewidth=1.25,
+                label="Full-data Pareto frontier",
+            ),
+            Line2D(
+                [], [], linestyle="none", marker="o", markersize=15,
+                markerfacecolor=cmap(norm(12)), markeredgecolor="#6f4a22",
+                label="Recommendations (color = frequency)",
+            ),
+        ),
+        loc="lower center",
+        bbox_to_anchor=(0.48, 0.035),
+        ncol=3,
+        frameon=False,
+        fontsize=SHARED_AXIS_LABEL_FONTSIZE - 1,
+        columnspacing=2.2,
+        handletextpad=0.65,
+    )
+    fig.subplots_adjust(
+        left=0.080,
+        right=0.865,
+        bottom=0.205,
+        top=0.780,
+        wspace=0.26,
+        hspace=0.82,
+    )
+    colorbar_ax = fig.add_axes([0.900, 0.245, 0.021, 0.52])
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     colorbar = fig.colorbar(scalar, cax=colorbar_ax)
-    colorbar.set_label("Recommendation frequency (out of 20 seeds)", fontsize=18, labelpad=12)
+    colorbar.set_label(
+        "Recommendation frequency (out of 20 seeds)",
+        fontsize=30,
+        labelpad=19,
+    )
     colorbar.set_ticks((1, 5, 10, 15, 20))
-    colorbar.ax.tick_params(labelsize=14)
+    colorbar.ax.tick_params(labelsize=26)
 
     method_output = output_dir / method
     method_output.mkdir(parents=True, exist_ok=True)

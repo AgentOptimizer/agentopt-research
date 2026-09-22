@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot 20-seed Gauss--Radau Gittins recommendation frequencies.
+"""Plot 20-seed Radial Gittins recommendation frequencies.
 
 The two paper-preview figures use the same 2x4 layout.  One summarizes the
 recommendations saved for the nominal 10% checkpoint and the other summarizes
@@ -19,6 +19,7 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter, MaxNLocator, NullFormatter
 
 
@@ -51,10 +52,10 @@ DATASET_LABELS = {
     "bird_mini_dev": "BIRD Mini Dev",
 }
 EXPECTED_SEEDS = set(range(42, 62))
-PANEL_TITLE_FONTSIZE = 24
-PANEL_SUBTITLE_FONTSIZE = 18
-TICK_LABEL_FONTSIZE = 17
-SHARED_AXIS_LABEL_FONTSIZE = 24
+PANEL_TITLE_FONTSIZE = 30
+PANEL_SUBTITLE_FONTSIZE = PANEL_TITLE_FONTSIZE - 1
+TICK_LABEL_FONTSIZE = 25
+SHARED_AXIS_LABEL_FONTSIZE = 32
 
 
 mpl.rcParams.update(
@@ -82,7 +83,7 @@ def _frequency_colormap() -> LinearSegmentedColormap:
 def _load_landscape(results_root: Path, dataset: str) -> dict[str, object]:
     result_path = results_root / "radial_gittins" / dataset / "seed-42" / "result.json"
     if not result_path.exists():
-        raise FileNotFoundError(f"missing Gauss--Radau result: {result_path}")
+        raise FileNotFoundError(f"missing Radial Gittins result: {result_path}")
     payload = json.loads(result_path.read_text(encoding="utf-8"))
     run = payload["run"]
     truth = np.asarray(run["raw_truth_vectors"], dtype=np.float64)
@@ -181,9 +182,9 @@ def _draw_panel(
     ax.scatter(
         truth[:, 1],
         truth[:, 0],
-        s=15,
-        color="#cfd3d8",
-        alpha=0.58,
+        s=48,
+        color="#c0c5cc",
+        alpha=0.64,
         edgecolors="none",
         zorder=1,
     )
@@ -197,7 +198,7 @@ def _draw_panel(
     ax.scatter(
         truth[frontier, 1],
         truth[frontier, 0],
-        s=45,
+        s=72,
         facecolors="white",
         edgecolors="#25282c",
         linewidths=1.25,
@@ -214,9 +215,9 @@ def _draw_panel(
             c=shown_counts,
             cmap=cmap,
             norm=norm,
-            s=105,
+            s=175,
             edgecolors="#6f4a22",
-            linewidths=0.9,
+            linewidths=1.1,
             zorder=4,
         )
 
@@ -226,26 +227,31 @@ def _draw_panel(
         if available
         else float("nan")
     )
-    ax.set_title(
+    ax.text(
+        0.5,
+        1.36,
         DATASET_LABELS[dataset],
+        transform=ax.transAxes,
+        ha="center",
+        va="bottom",
         fontsize=PANEL_TITLE_FONTSIZE,
-        pad=32,
         fontweight="normal",
     )
     ax.text(
         0.5,
-        1.015,
+        1.35,
         (
-            f"Mean cost: {_usd(summary['mean_spend_usd'])}  |  "
+            f"Mean cost: {_usd(summary['mean_spend_usd'])}\n"
             f"Actual: {actual_cost_fraction:.1%}"
             if available
             else "Recommendation sets unavailable"
         ),
         transform=ax.transAxes,
         ha="center",
-        va="bottom",
+        va="top",
         fontsize=PANEL_SUBTITLE_FONTSIZE,
-        color="#4e5359",
+        linespacing=1.15,
+        color="#000000",
     )
 
     positive_costs = truth[:, 1][truth[:, 1] > 0.0]
@@ -270,7 +276,7 @@ def make_figure(
     rows = _load_targets(aggregate_dir)
     cmap = _frequency_colormap()
     norm = mpl.colors.Normalize(vmin=1, vmax=20)
-    fig, axes = plt.subplots(2, 4, figsize=(20.0, 10.5))
+    fig, axes = plt.subplots(2, 4, figsize=(24.0, 14.5))
 
     for ax, dataset in zip(axes.flat, DATASETS):
         landscape = _load_landscape(results_root, dataset)
@@ -295,7 +301,7 @@ def make_figure(
         "Mean deployment cost (USD per query, log scale)",
         fontsize=SHARED_AXIS_LABEL_FONTSIZE,
         fontweight="normal",
-        y=0.035,
+        y=0.115,
     )
     fig.supylabel(
         "Mean accuracy",
@@ -304,17 +310,55 @@ def make_figure(
         x=0.022,
     )
     fig.suptitle(
-        f"Gauss\u2013Radau Gittins recommendations across 20 seeds ({target:.0%} checkpoint)",
-        fontsize=27,
-        y=0.985,
+        "Radial Gittins recommendations across 20 seeds "
+        f"(total search-cost budget: {target:.0%})",
+        fontsize=35,
+        y=0.950,
     )
-    fig.subplots_adjust(left=0.075, right=0.885, bottom=0.105, top=0.84, wspace=0.25, hspace=0.48)
-    colorbar_ax = fig.add_axes([0.915, 0.165, 0.014, 0.64])
+    fig.legend(
+        handles=(
+            Line2D(
+                [], [], linestyle="none", marker="o", markersize=13,
+                markerfacecolor="#c0c5cc", markeredgecolor="none",
+                label="All configurations",
+            ),
+            Line2D(
+                [], [], color="#25282c", linewidth=2.0, marker="o",
+                markersize=10, markerfacecolor="white", markeredgewidth=1.25,
+                label="Full-data Pareto frontier",
+            ),
+            Line2D(
+                [], [], linestyle="none", marker="o", markersize=15,
+                markerfacecolor="#ff7f0e", markeredgecolor="#6f4a22",
+                label="Recommendations (color = frequency)",
+            ),
+        ),
+        loc="lower center",
+        bbox_to_anchor=(0.48, 0.035),
+        ncol=3,
+        frameon=False,
+        fontsize=SHARED_AXIS_LABEL_FONTSIZE - 1,
+        columnspacing=2.2,
+        handletextpad=0.65,
+    )
+    fig.subplots_adjust(
+        left=0.080,
+        right=0.865,
+        bottom=0.205,
+        top=0.780,
+        wspace=0.26,
+        hspace=0.82,
+    )
+    colorbar_ax = fig.add_axes([0.900, 0.245, 0.021, 0.52])
     scalar = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     colorbar = fig.colorbar(scalar, cax=colorbar_ax)
-    colorbar.set_label("Recommendation frequency (out of 20 seeds)", fontsize=18, labelpad=12)
+    colorbar.set_label(
+        "Recommendation frequency (out of 20 seeds)",
+        fontsize=30,
+        labelpad=19,
+    )
     colorbar.set_ticks((1, 5, 10, 15, 20))
-    colorbar.ax.tick_params(labelsize=14)
+    colorbar.ax.tick_params(labelsize=26)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = output_dir / f"gittins_20seed_frequency_frontiers_{int(round(100 * target))}pct"
