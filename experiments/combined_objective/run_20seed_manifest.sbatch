@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --account=torch_pr_790_general
 #SBATCH --cpus-per-task=4
+#SBATCH --output=/scratch/yh6415/project/agentopt-research/slurm_logs/%A_%a.out
+#SBATCH --error=/scratch/yh6415/project/agentopt-research/slurm_logs/%A_%a.err
 
 set -euo pipefail
 

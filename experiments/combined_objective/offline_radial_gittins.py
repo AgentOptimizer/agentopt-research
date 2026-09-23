@@ -423,14 +423,35 @@ class _DirectionScheduler:
     Accuracy-last drains the other directions first, then the exact accuracy
     endpoint. An endpoint pull invalidates earlier stops, so the other group
     must be checked again before the policy may stop or lower lambda.
+
+    Weighted round-robin is the two-direction Gauss--Radau scheduling
+    ablation.  It gives the first (interior) direction three consecutive
+    visit opportunities followed by one visit to the second (endpoint)
+    direction.  The repeated entries affect scheduling only; stopping state
+    and shared posteriors remain indexed by the two unique directions.
     """
 
     def __init__(self, directions: Sequence[Tuple[float, float]], policy: str):
-        if policy not in {"round_robin", "accuracy_last"}:
-            raise ValueError("direction_scheduler must be 'round_robin' or 'accuracy_last'")
+        policies = {
+            "round_robin",
+            "accuracy_last",
+            "weighted_round_robin_3_to_1",
+        }
+        if policy not in policies:
+            raise ValueError(
+                "direction_scheduler must be 'round_robin', 'accuracy_last', "
+                "or 'weighted_round_robin_3_to_1'"
+            )
         self.policy = policy
         indices = tuple(range(len(directions)))
-        if policy == "accuracy_last":
+        if policy == "weighted_round_robin_3_to_1":
+            if len(directions) != 2:
+                raise ValueError(
+                    "direction_scheduler='weighted_round_robin_3_to_1' "
+                    "requires exactly two directions"
+                )
+            self.groups = ((0, 0, 0, 1),)
+        elif policy == "accuracy_last":
             primary = tuple(i for i in indices if _direction_axis(directions[i]) != 0)
             accuracy = tuple(i for i in indices if _direction_axis(directions[i]) == 0)
             self.groups = tuple(group for group in (primary, accuracy) if group)
@@ -1952,8 +1973,14 @@ def simulate_radial_gittins(
     independent_eta = eta_decay_schedule == "direction_stop"
     if independent_eta and not anytime:
         raise ValueError("eta_decay_schedule='direction_stop' requires anytime=True")
-    if independent_eta and direction_scheduler != "round_robin":
-        raise ValueError("eta_decay_schedule='direction_stop' requires direction_scheduler='round_robin'")
+    if independent_eta and direction_scheduler not in {
+        "round_robin",
+        "weighted_round_robin_3_to_1",
+    }:
+        raise ValueError(
+            "eta_decay_schedule='direction_stop' requires direction_scheduler "
+            "to use a round-robin policy"
+        )
     requested_checkpoint_interval = (
         None
         if recommendation_checkpoint_interval is None
@@ -4144,9 +4171,17 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--direction-scheduler", choices=("round_robin", "accuracy_last"),
+        "--direction-scheduler",
+        choices=(
+            "round_robin",
+            "accuracy_last",
+            "weighted_round_robin_3_to_1",
+        ),
         default="round_robin",
-        help="Run (1, 0) only after the other directions stop with accuracy_last",
+        help=(
+            "Use balanced round-robin, defer (1, 0) with accuracy_last, or "
+            "use the two-direction 3:1 weighted scheduling ablation"
+        ),
     )
     parser.add_argument(
         "--eta-decay-schedule", choices=("global_stop", "direction_stop"),

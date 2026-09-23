@@ -12,6 +12,8 @@ experiments/combined_objective/plots/
 /tmp/
 .mplconfig/
 /slurm-*.out
+/slurm_logs/*
+!/slurm_logs/.gitkeep
 
 # Python
 __pycache__/

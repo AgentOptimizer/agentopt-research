@@ -29,6 +29,9 @@ from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
     RadialGittinsBoundaryCache,
     RadialGittinsGrid,
 )
+from agentopt.model_selection.radial_gittins import (  # noqa: E402
+    DEFAULT_ANYTIME_DIRECTIONS,
+)
 from experiments.combined_objective.compare_lcb_recommendations import (  # noqa: E402
     compact_lcb_run,
 )
@@ -52,6 +55,7 @@ DATASETS = {
 }
 
 GAUSS_RADAU_TWO_POINT_INTERIOR = 1.0 / 3.0
+GAUSS_LEGENDRE_TWO_POINT_LEFT = 0.5 - 1.0 / (2.0 * math.sqrt(3.0))
 
 PAIRS = {
     "cost_near__accuracy_axis": ((0.1, 0.9), (1.0, 0.0)),
@@ -59,10 +63,53 @@ PAIRS = {
         (GAUSS_RADAU_TWO_POINT_INTERIOR, 1.0 - GAUSS_RADAU_TWO_POINT_INTERIOR),
         (1.0, 0.0),
     ),
+    "gauss_legendre_two_point": (
+        (GAUSS_LEGENDRE_TWO_POINT_LEFT, 1.0 - GAUSS_LEGENDRE_TWO_POINT_LEFT),
+        (1.0 - GAUSS_LEGENDRE_TWO_POINT_LEFT, GAUSS_LEGENDRE_TWO_POINT_LEFT),
+    ),
     "symmetric_interior": ((0.1, 0.9), (0.9, 0.1)),
     "exact_axes": ((0.0, 1.0), (1.0, 0.0)),
+    "dense_grid_10": DEFAULT_ANYTIME_DIRECTIONS,
 }
 PRIMARY_PAIR = "cost_near__accuracy_axis"
+
+ABLATION_CONFIGS = {
+    "g0_gauss_radau": {
+        "pair_name": "gauss_radau_accuracy_endpoint",
+        "eta_decay_schedule": "direction_stop",
+        "direction_scheduler": "round_robin",
+    },
+    "g1_gauss_legendre": {
+        "pair_name": "gauss_legendre_two_point",
+        "eta_decay_schedule": "direction_stop",
+        "direction_scheduler": "round_robin",
+    },
+    "g2_exact_axes": {
+        "pair_name": "exact_axes",
+        "eta_decay_schedule": "direction_stop",
+        "direction_scheduler": "round_robin",
+    },
+    "g3_cost_near_endpoint": {
+        "pair_name": "cost_near__accuracy_axis",
+        "eta_decay_schedule": "direction_stop",
+        "direction_scheduler": "round_robin",
+    },
+    "g4_dense_grid_10": {
+        "pair_name": "dense_grid_10",
+        "eta_decay_schedule": "direction_stop",
+        "direction_scheduler": "round_robin",
+    },
+    "g5_global_eta": {
+        "pair_name": "gauss_radau_accuracy_endpoint",
+        "eta_decay_schedule": "global_stop",
+        "direction_scheduler": "round_robin",
+    },
+    "g6_weighted_3_to_1": {
+        "pair_name": "gauss_radau_accuracy_endpoint",
+        "eta_decay_schedule": "direction_stop",
+        "direction_scheduler": "weighted_round_robin_3_to_1",
+    },
+}
 
 DEFAULT_OUTDIR = (
     ROOT
@@ -241,7 +288,12 @@ def _eta_summary(events: Iterable[dict[str, Any]], direction_count: int) -> list
     return rows
 
 
-def summarize_run(run: dict[str, Any], eta_events: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_run(
+    run: dict[str, Any],
+    eta_events: list[dict[str, Any]],
+    *,
+    direction_count: int = 2,
+) -> dict[str, Any]:
     points = run["points"]
     first_endpoint = _first_point(points, lambda point: point["contains_accuracy_endpoint"])
     sustained_endpoint = _sustained_first_point(points, lambda point: point["contains_accuracy_endpoint"])
@@ -293,7 +345,7 @@ def summarize_run(run: dict[str, Any], eta_events: list[dict[str, Any]]) -> dict
         "final_false_negative_count": final["pareto_false_negative_count"],
         "final_relative_hv_regret": final["relative_hv_regret"],
         "final_selected_arm_indices": final["selected_arm_indices"],
-        "direction_eta": _eta_summary(eta_events, 2),
+        "direction_eta": _eta_summary(eta_events, direction_count),
     }
     for target in (0.5, 0.8, 0.9, 1.0):
         tag = str(target).replace(".", "p")
@@ -317,6 +369,9 @@ def run_one(
     seed: int,
     outdir: Path,
     observation_budget_fraction: float,
+    eta_decay_schedule: str = "direction_stop",
+    direction_scheduler: str = "round_robin",
+    ablation_name: str | None = None,
 ) -> dict[str, Any]:
     run_started_at_utc = datetime.now(timezone.utc).isoformat()
     run_started = time.perf_counter()
@@ -341,8 +396,8 @@ def run_one(
         table,
         directions=directions,
         anytime=True,
-        direction_scheduler="round_robin",
-        eta_decay_schedule="direction_stop",
+        direction_scheduler=direction_scheduler,
+        eta_decay_schedule=eta_decay_schedule,
         recommendation_rule="finite_lcb",
         recommendation_beta=1.0,
         recommendation_min_samples=0,
@@ -379,6 +434,7 @@ def run_one(
     postprocess_wall_time = time.perf_counter() - postprocess_started
     payload = {
         "config": {
+            "ablation_name": ablation_name,
             "benchmark": benchmark,
             "seed": seed,
             "directions": [list(direction) for direction in directions],
@@ -393,8 +449,8 @@ def run_one(
             "cost_model": "raw_mean",
             "eta_initial": 1.0,
             "eta_decay": 0.5,
-            "eta_decay_schedule": "direction_stop",
-            "direction_scheduler": "round_robin",
+            "eta_decay_schedule": eta_decay_schedule,
+            "direction_scheduler": direction_scheduler,
             "observation_budget_fraction": observation_budget_fraction,
             "input_sha256": hashes,
             "engine_source_sha256": hashlib.sha256(
@@ -408,7 +464,11 @@ def run_one(
             "postprocess_wall_time_seconds": postprocess_wall_time,
             "pre_write_wall_time_seconds": time.perf_counter() - run_started,
         },
-        "summary": summarize_run(run, eta_events),
+        "summary": summarize_run(
+            run,
+            eta_events,
+            direction_count=len(directions),
+        ),
         "plotting": plotting,
         "direction_eta_events": eta_events,
         "run": run,
@@ -432,7 +492,9 @@ def export_combined(outdir: Path, benchmarks: list[str], pairs: list[str]) -> No
                 continue
             payload = json.loads(path.read_text())
             payload["summary"] = summarize_run(
-                payload["run"], payload["direction_eta_events"]
+                payload["run"],
+                payload["direction_eta_events"],
+                direction_count=len(payload["config"]["directions"]),
             )
             _json_dump(path, payload)
             rows.append(
@@ -463,6 +525,24 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
     parser.add_argument("--observation-budget-fraction", type=float, default=1.0)
+    parser.add_argument(
+        "--eta-decay-schedule",
+        choices=("direction_stop", "global_stop"),
+        default="direction_stop",
+    )
+    parser.add_argument(
+        "--direction-scheduler",
+        choices=(
+            "round_robin",
+            "weighted_round_robin_3_to_1",
+        ),
+        default="round_robin",
+    )
+    parser.add_argument(
+        "--ablation-name",
+        choices=tuple(ABLATION_CONFIGS),
+        default=None,
+    )
     parser.add_argument("--summarize-only", action="store_true")
     parser.add_argument(
         "--skip-combined-export",
@@ -482,6 +562,9 @@ def main() -> None:
                     seed=args.seed,
                     outdir=args.outdir,
                     observation_budget_fraction=args.observation_budget_fraction,
+                    eta_decay_schedule=args.eta_decay_schedule,
+                    direction_scheduler=args.direction_scheduler,
+                    ablation_name=args.ablation_name,
                 )
     if not args.skip_combined_export:
         export_combined(args.outdir, args.benchmarks, args.pairs)
