@@ -54,7 +54,6 @@ DATASET_LABELS = {
 METHODS = (
     "radial_gittins",
     "ege_sh",
-    "ege_sr",
     "ape_k",
     "qnehvi",
     "random_configurations",
@@ -67,10 +66,6 @@ METHOD_STYLES: dict[str, dict[str, str | float]] = {
     },
     "ege_sh": {
         "color": "tab:green", "label": "EGE-SH",
-        "linewidth": 2.4, "linestyle": "-",
-    },
-    "ege_sr": {
-        "color": "tab:blue", "label": "EGE-SR",
         "linewidth": 2.4, "linestyle": "-",
     },
     "ape_k": {
@@ -478,7 +473,7 @@ def _load_all_curves(results_root: Path, grid: np.ndarray):
         gittins_runs, dataset_stops = _load_gittins(results_root, dataset)
         runs[(dataset, "radial_gittins")] = gittins_runs
         stops[dataset] = dataset_stops
-        for method in ("ege_sh", "ege_sr", "ape_k", "qnehvi"):
+        for method in ("ege_sh", "ape_k", "qnehvi"):
             runs[(dataset, method)] = _load_csv_method(results_root, method, dataset, grid)
         for method in ("random_configurations", "random_questions"):
             runs[(dataset, method)] = _load_random_csv(results_root, method, dataset, grid)
