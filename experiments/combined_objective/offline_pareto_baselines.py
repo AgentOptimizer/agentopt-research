@@ -22,7 +22,7 @@ import json
 import math
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -78,6 +78,7 @@ QNEHVI = "qnehvi"
 METHODS = (EGE_SH, EGE_SR, APE_K, QNEHVI)
 DEFAULT_BATCH_SIZE = 4
 DEFAULT_RECOMMENDATION_CHECKPOINT_INTERVAL = 10
+DEFAULT_RECOMMENDATION_COST_CHECKPOINT_FRACTIONS = (0.10, 0.30)
 
 
 @dataclass(frozen=True)
@@ -448,6 +449,7 @@ def _run_qnehvi(
     candidate_batch_size: Optional[int],
     seed: int,
     record: Callable[[str, Optional[Sequence[int]]], None],
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Tuple[int, ...], str, float]:
     from agentopt.model_selection.qnehvi import select_qnehvi_index
 
@@ -493,6 +495,12 @@ def _run_qnehvi(
             min(batch_size, cell_budget - puller.total_evaluations, puller.remaining_count(arm)),
         )
         record("qnehvi_pull", None)
+        if should_stop is not None and should_stop():
+            return (
+                empirical_raw_pareto_arms(puller),
+                "recommendation_interval_complete",
+                cost_reference,
+            )
     stop = (
         "question_budget"
         if puller.total_evaluations >= cell_budget
@@ -514,6 +522,9 @@ def simulate_pareto_baseline(
     recommendation_checkpoint_interval: int = (
         DEFAULT_RECOMMENDATION_CHECKPOINT_INTERVAL
     ),
+    recommendation_cost_checkpoint_fractions: Sequence[float] = (
+        DEFAULT_RECOMMENDATION_COST_CHECKPOINT_FRACTIONS
+    ),
     epsilon1: float = 0.0,
     ape_delta: float = 0.1,
     ape_k1: float = 1.0,
@@ -521,17 +532,18 @@ def simulate_pareto_baseline(
     qnehvi_mc_samples: int = 64,
     qnehvi_refit_every: int = 8,
     qnehvi_candidate_batch_size: Optional[int] = 64,
+    stop_after_recommendation_interval_fraction: Optional[float] = None,
     reference_point: Sequence[float] = (0.0, 0.0),
     evaluation_question_ids: Optional[Sequence[int]] = None,
     complete_only: bool = False,
 ) -> ParetoBaselineResult:
     """Run one full-budget Pareto identification baseline on a lookup table.
 
-    Recommendation diagnostics are retained every
-    ``recommendation_checkpoint_interval`` ordinary policy batches. Warm
-    start, elimination, and terminal events are always retained. This changes
-    trajectory resolution only, never acquisition or the final recommendation.
-    Set the interval to 1 for the legacy every-batch trajectory.
+    Recommendation membership is checked after every policy batch.  The
+    trajectory retains every membership change, the latest completed update at
+    or below every requested USD-cost threshold, occasional diagnostics, and
+    the terminal state.  This
+    changes recording only, never acquisition or the final recommendation.
     """
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")
@@ -540,6 +552,23 @@ def simulate_pareto_baseline(
         recommendation_checkpoint_interval,
         "recommendation_checkpoint_interval",
     )
+    cost_checkpoint_fractions = tuple(
+        sorted(
+            {
+                _validate_fraction(value)
+                for value in recommendation_cost_checkpoint_fractions
+            }
+        )
+    )
+    interval_target = (
+        None
+        if stop_after_recommendation_interval_fraction is None
+        else _validate_fraction(stop_after_recommendation_interval_fraction)
+    )
+    if interval_target is not None and method != QNEHVI:
+        raise ValueError(
+            "stop_after_recommendation_interval_fraction is qNEHVI-only"
+        )
     fraction = _validate_fraction(observation_budget_fraction)
     questions = tuple(
         evaluation_question_ids
@@ -573,24 +602,24 @@ def simulate_pareto_baseline(
     trajectory: List[BaselineCheckpoint] = []
     ordinary_checkpoint_events = 0
     skipped_checkpoint_events = 0
+    recommendation_membership_checks = 0
+    recommendation_membership_changes = 0
+    next_cost_checkpoint = 0
+    last_recommendation: Optional[Tuple[int, ...]] = None
+    previous_update_snapshot: Optional[BaselineCheckpoint] = _checkpoint(
+        puller,
+        selected=(),
+        truth_normalized=truth_normalized,
+        true_front_vectors=true_front_vectors,
+        ground_truth_hv=ground_truth_hv,
+        bruteforce_cost=bruteforce_cost,
+        event="initial_empty",
+        reference=reference,
+    )
+    interval_checkpoint_selected: Optional[Tuple[int, ...]] = None
+    interval_complete = False
 
-    def record(event: str, selected: Optional[Sequence[int]]) -> None:
-        nonlocal ordinary_checkpoint_events, skipped_checkpoint_events
-        if not record_recommendation_trajectory:
-            return
-        if event in {"ege_pull", "ege_leftover", "ape_pull", "qnehvi_pull"}:
-            ordinary_checkpoint_events += 1
-            if (
-                ordinary_checkpoint_events
-                % recommendation_checkpoint_interval
-                != 0
-            ):
-                skipped_checkpoint_events += 1
-                return
-        if trajectory and trajectory[-1].cumulative_evaluations == puller.total_evaluations:
-            return
-        if selected is None:
-            selected = empirical_raw_pareto_arms(puller)
+    def append_checkpoint(event: str, selected: Sequence[int]) -> None:
         trajectory.append(
             _checkpoint(
                 puller,
@@ -603,6 +632,115 @@ def simulate_pareto_baseline(
                 reference=reference,
             )
         )
+
+    def record(event: str, selected: Optional[Sequence[int]]) -> None:
+        nonlocal ordinary_checkpoint_events, skipped_checkpoint_events
+        nonlocal recommendation_membership_checks
+        nonlocal recommendation_membership_changes, next_cost_checkpoint
+        nonlocal last_recommendation, previous_update_snapshot
+        nonlocal interval_checkpoint_selected, interval_complete
+        if not record_recommendation_trajectory:
+            return
+        current = tuple(
+            int(index)
+            for index in (
+                selected if selected is not None else empirical_raw_pareto_arms(puller)
+            )
+        )
+        current_fraction = float(puller.total_cost_usd) / float(bruteforce_cost)
+        current_snapshot = _checkpoint(
+            puller,
+            selected=current,
+            truth_normalized=truth_normalized,
+            true_front_vectors=true_front_vectors,
+            ground_truth_hv=ground_truth_hv,
+            bruteforce_cost=bruteforce_cost,
+            event=event,
+            reference=reference,
+        )
+
+        # Policy updates are atomic.  Once an update crosses a requested USD
+        # threshold, the recommendation that was actually available without
+        # overspending is the snapshot after the preceding completed update.
+        while (
+            next_cost_checkpoint < len(cost_checkpoint_fractions)
+            and current_fraction
+            > cost_checkpoint_fractions[next_cost_checkpoint] + 1e-12
+        ):
+            assert previous_update_snapshot is not None
+            threshold = cost_checkpoint_fractions[next_cost_checkpoint]
+            trajectory.append(
+                replace(
+                    previous_update_snapshot,
+                    event=f"cost_checkpoint_{int(round(100 * threshold))}pct",
+                )
+            )
+            next_cost_checkpoint += 1
+        recommendation_membership_checks += 1
+        membership_written = False
+        membership_changed = False
+        if last_recommendation is None:
+            append_checkpoint("recommendation_initial", current)
+            last_recommendation = current
+            membership_written = True
+        elif current != last_recommendation:
+            membership_changed = True
+            append_checkpoint("recommendation_changed", current)
+            last_recommendation = current
+            recommendation_membership_changes += 1
+            membership_written = True
+
+        checkpoint_was_active = interval_checkpoint_selected is not None
+        if (
+            interval_target is not None
+            and interval_checkpoint_selected is None
+            and current_fraction + 1e-12 >= interval_target
+        ):
+            interval_checkpoint_selected = (
+                previous_update_snapshot.selected_arm_indices
+                if current_fraction > interval_target + 1e-12
+                and previous_update_snapshot is not None
+                else current
+            )
+            if current != interval_checkpoint_selected:
+                interval_complete = True
+        elif (
+            interval_target is not None
+            and checkpoint_was_active
+            and membership_changed
+            and current != interval_checkpoint_selected
+        ):
+            interval_complete = True
+        while (
+            next_cost_checkpoint < len(cost_checkpoint_fractions)
+            and abs(
+                current_fraction - cost_checkpoint_fractions[next_cost_checkpoint]
+            )
+            <= 1e-12
+        ):
+            threshold = cost_checkpoint_fractions[next_cost_checkpoint]
+            append_checkpoint(
+                f"cost_checkpoint_{int(round(100 * threshold))}pct",
+                current,
+            )
+            next_cost_checkpoint += 1
+
+        previous_update_snapshot = current_snapshot
+
+        ordinary = event in {
+            "ege_pull", "ege_leftover", "ape_pull", "qnehvi_pull"
+        }
+        if ordinary:
+            ordinary_checkpoint_events += 1
+            if (
+                ordinary_checkpoint_events
+                % recommendation_checkpoint_interval
+                != 0
+            ):
+                skipped_checkpoint_events += 1
+                return
+        if not membership_written or event == "terminal":
+            append_checkpoint(event, current)
 
     wall_start = time.perf_counter()
     if method in (EGE_SH, EGE_SR):
@@ -642,6 +780,7 @@ def simulate_pareto_baseline(
             candidate_batch_size=qnehvi_candidate_batch_size,
             seed=seed,
             record=record,
+            should_stop=lambda: interval_complete,
         )
     wall_time = time.perf_counter() - wall_start
     if not selected and not complete_only:
@@ -653,7 +792,8 @@ def simulate_pareto_baseline(
     completed_pareto = completed_raw_pareto_arms(puller)
     if complete_only:
         selected = completed_pareto
-    record("terminal", selected)
+    if stop_reason != "recommendation_interval_complete":
+        record("terminal", selected)
 
     selected_hv = hypervolume_2d(truth_normalized[list(selected)], reference)
     obtained = truth_normalized[list(selected)] if selected else np.empty((0, 2))
@@ -678,6 +818,17 @@ def simulate_pareto_baseline(
         ),
         "recommendation_checkpoint_events_seen": ordinary_checkpoint_events,
         "recommendation_checkpoint_events_skipped": skipped_checkpoint_events,
+        "recommendation_cost_checkpoint_fractions": list(
+            cost_checkpoint_fractions
+        ),
+        "recommendation_checkpoint_schema_version": 3,
+        "recommendation_cost_checkpoint_semantics": (
+            "latest_completed_policy_update_at_or_below_realized_usd_fraction"
+        ),
+        "recommendation_membership_checks": recommendation_membership_checks,
+        "recommendation_membership_changes": recommendation_membership_changes,
+        "stop_after_recommendation_interval_fraction": interval_target,
+        "recommendation_interval_complete": interval_complete,
     }
     if method == APE_K:
         params.update(

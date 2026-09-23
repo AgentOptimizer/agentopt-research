@@ -12,6 +12,10 @@ experiments/combined_objective/plots/
 /tmp/
 .mplconfig/
 /slurm-*.out
+/slurm_logs/
+
+# Separate local paper checkout (has its own Git repository)
+/paper/
 
 # Python
 __pycache__/

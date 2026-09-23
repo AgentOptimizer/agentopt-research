@@ -129,6 +129,7 @@ def _run_pareto(
     questions: list[int],
     table: Any,
     qnehvi_candidate_batch_size: Optional[int],
+    stop_after_recommendation_interval_fraction: Optional[float] = None,
 ) -> tuple[dict[str, object], list[dict[str, object]], tuple[np.ndarray, ...]]:
     result = simulate_pareto_baseline(
         models,
@@ -142,6 +143,9 @@ def _run_pareto(
         qnehvi_mc_samples=64,
         qnehvi_refit_every=32,
         qnehvi_candidate_batch_size=qnehvi_candidate_batch_size,
+        stop_after_recommendation_interval_fraction=(
+            stop_after_recommendation_interval_fraction
+        ),
     )
     rows = [
         {
