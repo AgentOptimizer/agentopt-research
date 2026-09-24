@@ -33,6 +33,7 @@ class CostBudgetRandomResult:
     estimated_raw_vectors: np.ndarray
     truth_raw_vectors: np.ndarray
     truth_vectors: np.ndarray
+    physical_trace: list[dict[str, object]]
 
 
 def _checkpoint_row(
@@ -128,6 +129,34 @@ def simulate_cost_budget_random_search(
     membership_checks = 0
     membership_changes = 0
     previous_update_snapshot: dict[str, object] | None = None
+    physical_trace: list[dict[str, object]] = []
+
+    def evaluate(
+        arm: int, batch_questions: Sequence[int], atomic_update_index: int,
+    ) -> None:
+        nonlocal evaluations, cumulative_cost
+        batch_score = 0.0
+        batch_cost = 0.0
+        for question in batch_questions:
+            score, cost, _ = _sample_values(table[models[arm]][int(question)])
+            sum_score[arm] += float(score)
+            sum_cost[arm] += float(cost)
+            counts[arm] += 1
+            evaluations += 1
+            cumulative_cost += float(cost)
+            batch_score += float(score)
+            batch_cost += float(cost)
+        physical_trace.append(
+            {
+                "arm_index": int(arm),
+                "question_ids": [int(question) for question in batch_questions],
+                "batch_score_mean": batch_score / len(batch_questions),
+                "actual_batch_search_cost_usd": batch_cost,
+                "cumulative_evaluations": int(evaluations),
+                "cumulative_search_cost_usd": float(cumulative_cost),
+                "atomic_update_index": int(atomic_update_index),
+            }
+        )
 
     def estimated_vectors() -> np.ndarray:
         result = np.full((len(models), 2), np.nan, dtype=np.float64)
@@ -218,25 +247,14 @@ def simulate_cost_budget_random_search(
     )
 
     if method == RANDOM_CONFIGURATIONS:
-        for arm in rng.permutation(len(models)):
+        for step, arm in enumerate(rng.permutation(len(models))):
             arm = int(arm)
-            for question in questions:
-                score, cost, _ = _sample_values(table[models[arm]][question])
-                sum_score[arm] += float(score)
-                sum_cost[arm] += float(cost)
-                counts[arm] += 1
-                evaluations += 1
-                cumulative_cost += float(cost)
+            evaluate(arm, questions, step)
             record_step()
     else:
-        for question in rng.permutation(questions):
-            for arm, model in enumerate(models):
-                score, cost, _ = _sample_values(table[model][int(question)])
-                sum_score[arm] += float(score)
-                sum_cost[arm] += float(cost)
-                counts[arm] += 1
-                evaluations += 1
-                cumulative_cost += float(cost)
+        for step, question in enumerate(rng.permutation(questions)):
+            for arm, _model in enumerate(models):
+                evaluate(arm, (int(question),), step)
             record_step()
 
     final_selected = current_recommendation()
@@ -280,4 +298,5 @@ def simulate_cost_budget_random_search(
         estimated_raw_vectors=estimated_vectors(),
         truth_raw_vectors=truth_raw,
         truth_vectors=truth_vectors,
+        physical_trace=physical_trace,
     )

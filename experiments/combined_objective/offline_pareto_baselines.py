@@ -123,6 +123,7 @@ class ParetoBaselineResult:
     estimated_raw_vectors: Optional[np.ndarray] = None
     truth_raw_vectors: Optional[np.ndarray] = None
     truth_vectors: Optional[np.ndarray] = None
+    physical_trace: List[Dict[str, object]] = field(default_factory=list)
 
 
 class _QuestionPuller:
@@ -150,6 +151,7 @@ class _QuestionPuller:
         self.sum_cost = np.zeros(n_arms, dtype=np.float64)
         self.total_evaluations = 0
         self.total_cost_usd = 0.0
+        self.physical_trace: List[Dict[str, object]] = []
 
     @property
     def n_arms(self) -> int:
@@ -183,14 +185,30 @@ class _QuestionPuller:
             return 0
         model = self.models[arm_index]
         samples = self.table[model]
+        question_ids: List[int] = []
+        batch_score = 0.0
+        batch_cost = 0.0
         for _ in range(take):
             question_id = self.remaining[arm_index].pop()
             score, cost, _ = _sample_values(samples[question_id])
+            question_ids.append(int(question_id))
+            batch_score += score
+            batch_cost += cost
             self.sum_score[arm_index] += score
             self.sum_cost[arm_index] += cost
             self.total_cost_usd += cost
         self.n_pulls[arm_index] += take
         self.total_evaluations += take
+        self.physical_trace.append(
+            {
+                "arm_index": arm_index,
+                "question_ids": question_ids,
+                "batch_score_mean": batch_score / take,
+                "actual_batch_search_cost_usd": batch_cost,
+                "cumulative_evaluations": int(self.total_evaluations),
+                "cumulative_search_cost_usd": float(self.total_cost_usd),
+            }
+        )
         return take
 
 
@@ -533,6 +551,7 @@ def simulate_pareto_baseline(
     qnehvi_refit_every: int = 8,
     qnehvi_candidate_batch_size: Optional[int] = 64,
     stop_after_recommendation_interval_fraction: Optional[float] = None,
+    stop_after_cost_checkpoint_fraction: Optional[float] = None,
     reference_point: Sequence[float] = (0.0, 0.0),
     evaluation_question_ids: Optional[Sequence[int]] = None,
     complete_only: bool = False,
@@ -565,10 +584,17 @@ def simulate_pareto_baseline(
         if stop_after_recommendation_interval_fraction is None
         else _validate_fraction(stop_after_recommendation_interval_fraction)
     )
+    cost_stop_target = (
+        None
+        if stop_after_cost_checkpoint_fraction is None
+        else _validate_fraction(stop_after_cost_checkpoint_fraction)
+    )
     if interval_target is not None and method != QNEHVI:
         raise ValueError(
             "stop_after_recommendation_interval_fraction is qNEHVI-only"
         )
+    if cost_stop_target is not None and method != QNEHVI:
+        raise ValueError("stop_after_cost_checkpoint_fraction is qNEHVI-only")
     fraction = _validate_fraction(observation_budget_fraction)
     questions = tuple(
         evaluation_question_ids
@@ -618,6 +644,7 @@ def simulate_pareto_baseline(
     )
     interval_checkpoint_selected: Optional[Tuple[int, ...]] = None
     interval_complete = False
+    cost_checkpoint_complete = False
 
     def append_checkpoint(event: str, selected: Sequence[int]) -> None:
         trajectory.append(
@@ -639,6 +666,7 @@ def simulate_pareto_baseline(
         nonlocal recommendation_membership_changes, next_cost_checkpoint
         nonlocal last_recommendation, previous_update_snapshot
         nonlocal interval_checkpoint_selected, interval_complete
+        nonlocal cost_checkpoint_complete
         if not record_recommendation_trajectory:
             return
         current = tuple(
@@ -658,6 +686,11 @@ def simulate_pareto_baseline(
             event=event,
             reference=reference,
         )
+        if (
+            cost_stop_target is not None
+            and current_fraction + 1e-12 >= cost_stop_target
+        ):
+            cost_checkpoint_complete = True
 
         # Policy updates are atomic.  Once an update crosses a requested USD
         # threshold, the recommendation that was actually available without
@@ -780,7 +813,7 @@ def simulate_pareto_baseline(
             candidate_batch_size=qnehvi_candidate_batch_size,
             seed=seed,
             record=record,
-            should_stop=lambda: interval_complete,
+            should_stop=lambda: interval_complete or cost_checkpoint_complete,
         )
     wall_time = time.perf_counter() - wall_start
     if not selected and not complete_only:
@@ -828,6 +861,7 @@ def simulate_pareto_baseline(
         "recommendation_membership_checks": recommendation_membership_checks,
         "recommendation_membership_changes": recommendation_membership_changes,
         "stop_after_recommendation_interval_fraction": interval_target,
+        "stop_after_cost_checkpoint_fraction": cost_stop_target,
         "recommendation_interval_complete": interval_complete,
     }
     if method == APE_K:
@@ -878,6 +912,7 @@ def simulate_pareto_baseline(
         estimated_raw_vectors=puller.raw_means(),
         truth_raw_vectors=truth_raw,
         truth_vectors=truth_normalized,
+        physical_trace=puller.physical_trace,
     )
 
 
