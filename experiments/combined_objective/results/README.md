@@ -13,6 +13,7 @@
 
 ## 先看哪里
 
+- **当前 two-directional 方法说明**：[Two-Directional Gauss-Radau Gittins](../two_directional_gauss_radau.md)，包括方向来源、1:1 async 调度、separable approximation、计算优势和可声称的理论边界。
 - **最近在讨论的版本**：[finite-LCB＋共享题序五数据集报告](finite_lcb_raw_mean_seed42_beta1_shared_questions/five_benchmark_shared_lcb_report.md)。
 - **同一采样轨迹上的推荐规则对照**：上面的 finite-LCB，与 [finite mean＋n≥32＋共享题序](finite_mean_min32_raw_mean_seed42_shared_questions/five_benchmark_question_order_report.md)。
 - **独立题序的三方对照**：[completed-only / finite-LCB / finite mean≥32](finite_mean_min32_raw_mean_seed42/five_benchmark_report.md)。
