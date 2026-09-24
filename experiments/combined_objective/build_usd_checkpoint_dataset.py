@@ -25,7 +25,11 @@ TRAJECTORY_METHODS = (
 METHODS = ("radial_gittins",) + TRAJECTORY_METHODS
 SEEDS = tuple(range(42, 62))
 TARGETS = (0.10, 0.30)
-MEMBERSHIP_EVENTS = {"recommendation_initial", "recommendation_changed"}
+MEMBERSHIP_EVENTS = {
+    "initial_empty",
+    "recommendation_initial",
+    "recommendation_changed",
+}
 
 
 def _indices(text: str | Sequence[int]) -> tuple[int, ...]:
@@ -60,15 +64,24 @@ def _trajectory_interval(
         for index, row in enumerate(rows[: checkpoint_position + 1])
         if row.get("event") in MEMBERSHIP_EVENTS
     ]
-    if not starts:
+    if not starts and not selected:
+        # A coarse atomic update may make the threshold's latest feasible
+        # recommendation the zero-cost empty state.  The checkpoint is the
+        # retained copy of that initial snapshot.
+        start_position, start = checkpoint_position, checkpoint
+    elif starts:
+        start_position, start = starts[-1]
+    else:
         raise ValueError(f"{checkpoint_event} has no preceding membership event")
-    start_position, start = starts[-1]
     if _indices(start["selected_arm_indices"]) != selected:
         raise ValueError(f"membership state disagrees with {checkpoint_event}")
 
     end: dict[str, str] | None = None
     for row in rows[checkpoint_position + 1 :]:
-        if row.get("event") == "recommendation_changed":
+        if (
+            row.get("event") in MEMBERSHIP_EVENTS
+            and _indices(row["selected_arm_indices"]) != selected
+        ):
             end = row
             break
     end_censored = end is None
