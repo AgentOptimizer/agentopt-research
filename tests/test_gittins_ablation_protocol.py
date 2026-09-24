@@ -1,4 +1,4 @@
-"""Protocol coverage for the seven-group Gittins ablation."""
+"""Protocol coverage for the eight-group Gittins ablation."""
 
 import math
 import unittest
@@ -17,9 +17,9 @@ from experiments.combined_objective.run_two_direction_ablation import (
 
 
 class GittinsAblationProtocolTests(unittest.TestCase):
-    def test_protocol_has_one_existing_baseline_and_six_new_groups(self):
-        self.assertEqual(len(ABLATION_CONFIGS), 7)
-        self.assertEqual(len(RUN_CONFIGURATIONS), 6)
+    def test_protocol_has_one_existing_baseline_and_seven_new_groups(self):
+        self.assertEqual(len(ABLATION_CONFIGS), 8)
+        self.assertEqual(len(RUN_CONFIGURATIONS), 7)
         self.assertNotIn("g0_gauss_radau", RUN_CONFIGURATIONS)
         self.assertEqual(len(BENCHMARKS) * len(SEEDS), 160)
 
@@ -29,6 +29,12 @@ class GittinsAblationProtocolTests(unittest.TestCase):
             PAIRS["gauss_legendre_two_point"],
             ((left, 1.0 - left), (1.0 - left, left)),
         )
+
+    def test_cost_endpoint_pair_mirrors_the_primary_gauss_radau_pair(self):
+        endpoint, interior = PAIRS["gauss_radau_cost_endpoint"]
+        self.assertEqual(endpoint, (0.0, 1.0))
+        self.assertAlmostEqual(interior[0], 2.0 / 3.0)
+        self.assertAlmostEqual(interior[1], 1.0 / 3.0)
 
     def test_dense_grid_has_nine_interiors_and_accuracy_endpoint(self):
         directions = PAIRS["dense_grid_10"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate and aggregate all six new 8-benchmark x 20-seed ablation groups."""
+"""Validate and aggregate all seven new 8-benchmark x 20-seed ablation groups."""
 from __future__ import annotations
 
 import argparse

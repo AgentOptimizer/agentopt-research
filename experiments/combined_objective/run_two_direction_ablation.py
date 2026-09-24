@@ -63,6 +63,10 @@ PAIRS = {
         (GAUSS_RADAU_TWO_POINT_INTERIOR, 1.0 - GAUSS_RADAU_TWO_POINT_INTERIOR),
         (1.0, 0.0),
     ),
+    "gauss_radau_cost_endpoint": (
+        (0.0, 1.0),
+        (1.0 - GAUSS_RADAU_TWO_POINT_INTERIOR, GAUSS_RADAU_TWO_POINT_INTERIOR),
+    ),
     "gauss_legendre_two_point": (
         (GAUSS_LEGENDRE_TWO_POINT_LEFT, 1.0 - GAUSS_LEGENDRE_TWO_POINT_LEFT),
         (1.0 - GAUSS_LEGENDRE_TWO_POINT_LEFT, GAUSS_LEGENDRE_TWO_POINT_LEFT),
@@ -108,6 +112,11 @@ ABLATION_CONFIGS = {
         "pair_name": "gauss_radau_accuracy_endpoint",
         "eta_decay_schedule": "direction_stop",
         "direction_scheduler": "weighted_round_robin_3_to_1",
+    },
+    "g7_gauss_radau_cost_endpoint": {
+        "pair_name": "gauss_radau_cost_endpoint",
+        "eta_decay_schedule": "direction_stop",
+        "direction_scheduler": "round_robin",
     },
 }
 
