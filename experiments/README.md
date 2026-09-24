@@ -103,9 +103,10 @@ Available selectors: `brute_force` (combined objective), `random_search`, `matri
 `combined_objective/offline_radial_gittins.py` has a separate set-valued result contract. It:
 
 - uses one common seeded warm batch for every configuration;
-- learns `C_ref` as the median configuration warm-batch mean cost;
-- learns one common plug-in prior mean and fixes prior variance at `0.04` by default;
-- applies reciprocal cost desirability per question before batch averaging;
+- with the default `reciprocal` cost model, learns `C_ref` as the median
+  configuration warm-batch mean cost, learns one common plug-in prior mean,
+  and uses configurable prior variance `0.04` by default;
+- with `reciprocal`, applies cost desirability per question before batch averaging;
 - freezes an arm-specific expected pull cost from each arm's warm batch and
   bins those costs for practical boundary-table reuse;
 - visits radial directions round-robin while sharing one posterior per configuration;
@@ -120,6 +121,19 @@ Available selectors: `brute_force` (combined objective), `random_search`, `matri
   oracle raw winner archive for diagnostics. The oracle archive uses the full
   cached matrix and never affects acquisition, stopping, or the deployable
   recommendation.
+
+With `cost_model="raw_mean"`, both prior means and both prior variances are
+estimated from the warm batch. Each prior variance is the across-configuration
+sample variance (`ddof=1`) of warm-batch means: normalized accuracy has a
+`1e-12` floor, and mean USD cost has a `1e-12 * R**2` floor, where `R` defaults
+to the largest configuration warm-batch mean cost. A single configuration
+uses zero sample variance before flooring. This overrides both entries of
+`prior_variance` in raw mode. Accuracy observation noise keeps the default
+`1 / (4 * B)` for a warm batch of size `B`, or its explicit
+`obs_noise_variance` entry; cost batch noise remains the average within-arm
+sample variance, floored at `1e-12 * R**2`, then divided by `B`. These fitted
+values stay frozen during adaptive selection. Existing archived results retain
+the calibration used when they were generated.
 
 The incomplete HotpotQA and MathQA rows are truncated suffixes, so the main
 protocol defaults to the complete question intersection (190 and 135 questions,

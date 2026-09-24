@@ -46,6 +46,10 @@ y_{i,2}=1-\frac{c_i}{R},
 
 其中 \(R\) 由 warm-up 数据冻结；它不会使用完整 response matrix 的隐藏真值。accuracy coordinate 为 \(y_{i,1}=\theta_{i,1}\)。因此，`raw_mean` 指 posterior 所在的统计空间，而不表示 radial geometry 完全不做尺度变换。
 
+当前 `raw_mean` 校准对 accuracy 和 cost 都使用 warm-up 各 configuration 均值的跨配置样本方差（`ddof=1`）作为共同 prior variance；accuracy 在归一化后的坐标计算，方差下限为 \(10^{-12}\)，cost 的下限为 \(10^{-12}R^2\)。只有一个 configuration 时先用零方差再应用下限。两维 prior mean 也由 warm-up 均值估计，所有校准量在自适应采样前冻结。raw 模式会覆盖 `prior_variance` 参数的两维；legacy `reciprocal` 模式仍保留可配置的固定 prior variance。
+
+这次调整只改变 accuracy prior variance 的估计方式。accuracy 的 batch observation noise 仍默认为 \(1/(4B)\)（或显式指定值）；cost observation noise 仍由配置内 warm-up 样本方差估计。第 9 节已有归档结果保留生成时的校准设置，未因本次改动重跑。
+
 每个 arm 只有一个共享的二维 posterior。directions 只是该 posterior 的不同标量视图，不会复制实验、posterior 或已经购买的 question-level observation。
 
 ---

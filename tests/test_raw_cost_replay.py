@@ -94,7 +94,9 @@ class RawCostReplayTests(unittest.TestCase):
         self.assertAlmostEqual(result.params["obs_noise_variance"][1], question_noise / 4)
         self.assertAlmostEqual(result.params["raw_cost_variance_floor_usd2"], 1e-12 * reference ** 2)
         self.assertEqual(result.prior_mean[0], legacy.prior_mean[0])
-        self.assertEqual(result.prior_variance[0], legacy.prior_variance[0])
+        accuracy_prior_variance = 0.03125  # Sample variance of (.95, .7).
+        self.assertAlmostEqual(result.prior_variance[0], accuracy_prior_variance)
+        self.assertEqual(legacy.prior_variance[0], 0.04)
         self.assertEqual(result.params["obs_noise_variance"][0], legacy.params["obs_noise_variance"][0])
         np.testing.assert_allclose(result.params["reward_prior_mean"], (result.prior_mean[0], 1 - prior_mean / reference))
         np.testing.assert_allclose(result.params["reward_prior_variance"], (result.prior_variance[0], prior_var / reference ** 2))
@@ -103,7 +105,7 @@ class RawCostReplayTests(unittest.TestCase):
         counts, sums = np.zeros(2, dtype=int), np.zeros(2)
         events = _physical_events(result)
         self.assertTrue(any(len(event["question_ids"]) == 1 for event in events))
-        for event, old_event in zip(events, _physical_events(legacy)):
+        for event in events:
             arm = _event_arm(event)
             n = len(event["question_ids"])
             counts[arm] += n
@@ -114,8 +116,12 @@ class RawCostReplayTests(unittest.TestCase):
             np.testing.assert_allclose(event["raw_posterior_var_after"][1], expected_var, rtol=1e-12)
             np.testing.assert_allclose(event["posterior_mean_after"][1], 1 - expected_mean / reference, rtol=1e-12, atol=1e-14)
             np.testing.assert_allclose(event["posterior_var_after"][1], expected_var / reference ** 2, rtol=1e-12)
-            self.assertEqual(event["posterior_mean_after"][0], old_event["posterior_mean_after"][0])
-            self.assertEqual(event["posterior_var_after"][0], old_event["posterior_var_after"][0])
+            accuracy_var = 1 / (1 / accuracy_prior_variance + counts[arm] / 0.25)
+            accuracy_mean = accuracy_var * (
+                0.825 / accuracy_prior_variance + counts[arm] * (.95, .7)[arm] / 0.25
+            )
+            self.assertAlmostEqual(event["posterior_mean_after"][0], accuracy_mean)
+            self.assertAlmostEqual(event["posterior_var_after"][0], accuracy_var)
         self.assertEqual(counts.tolist(), [9, 9])
         for summary in result.model_results:
             self.assertAlmostEqual(summary.equivalent_posterior_cost_usd, summary.raw_posterior_mean[1])
