@@ -421,8 +421,10 @@ class _DirectionScheduler:
     """Visit direction groups while tracking stops under unchanged observations.
 
     Accuracy-last drains the other directions first, then the exact accuracy
-    endpoint. An endpoint pull invalidates earlier stops, so the other group
-    must be checked again before the policy may stop or lower lambda.
+    endpoint.  The two sequential axis policies similarly drain one exact
+    endpoint before visiting the other.  An observation invalidates earlier
+    stops, so a previously drained group must be checked again before the
+    policy may terminate.
 
     Weighted round-robin is the two-direction Gauss--Radau scheduling
     ablation.  It gives the first (interior) direction three consecutive
@@ -436,11 +438,14 @@ class _DirectionScheduler:
             "round_robin",
             "accuracy_last",
             "weighted_round_robin_3_to_1",
+            "quality_then_deployment",
+            "deployment_then_quality",
         }
         if policy not in policies:
             raise ValueError(
                 "direction_scheduler must be 'round_robin', 'accuracy_last', "
-                "or 'weighted_round_robin_3_to_1'"
+                "'weighted_round_robin_3_to_1', 'quality_then_deployment', "
+                "or 'deployment_then_quality'"
             )
         self.policy = policy
         indices = tuple(range(len(directions)))
@@ -455,6 +460,20 @@ class _DirectionScheduler:
             primary = tuple(i for i in indices if _direction_axis(directions[i]) != 0)
             accuracy = tuple(i for i in indices if _direction_axis(directions[i]) == 0)
             self.groups = tuple(group for group in (primary, accuracy) if group)
+        elif policy in {"quality_then_deployment", "deployment_then_quality"}:
+            quality = tuple(i for i in indices if _direction_axis(directions[i]) == 0)
+            deployment = tuple(i for i in indices if _direction_axis(directions[i]) == 1)
+            if len(directions) != 2 or len(quality) != 1 or len(deployment) != 1:
+                raise ValueError(
+                    f"direction_scheduler={policy!r} requires exactly the quality "
+                    "and deployment axes"
+                )
+            ordered = (
+                (quality, deployment)
+                if policy == "quality_then_deployment"
+                else (deployment, quality)
+            )
+            self.groups = ordered
         else:
             self.groups = (indices,)
         self._direction_count = len(directions)
@@ -1976,10 +1995,12 @@ def simulate_radial_gittins(
     if independent_eta and direction_scheduler not in {
         "round_robin",
         "weighted_round_robin_3_to_1",
+        "quality_then_deployment",
+        "deployment_then_quality",
     }:
         raise ValueError(
             "eta_decay_schedule='direction_stop' requires direction_scheduler "
-            "to use a round-robin policy"
+            "to use a supported asynchronous policy"
         )
     requested_checkpoint_interval = (
         None
@@ -3071,6 +3092,11 @@ def simulate_radial_gittins(
                 online_value_cache.clear_direction_radial_indices(direction_index)
             else:
                 direction_floor_stops.add(direction_index)
+                # Sequential endpoint schedules stay on one axis through its
+                # eta decays and move to the other only after reaching the
+                # numerical floor.  Round-robin policies are unaffected by
+                # recording this stop because they have a single group.
+                scheduler.record_stop()
             eta_event = {
                 "event": "direction_eta_decay" if floor_reason is None else "direction_eta_floor_stop",
                 "global_step": global_step, "direction_index": direction_index,
@@ -4176,11 +4202,14 @@ def main() -> None:
             "round_robin",
             "accuracy_last",
             "weighted_round_robin_3_to_1",
+            "quality_then_deployment",
+            "deployment_then_quality",
         ),
         default="round_robin",
         help=(
-            "Use balanced round-robin, defer (1, 0) with accuracy_last, or "
-            "use the two-direction 3:1 weighted scheduling ablation"
+            "Use balanced round-robin, defer (1, 0) with accuracy_last, use "
+            "the two-direction 3:1 weighted ablation, or drain the exact axes "
+            "sequentially in quality/deployment order"
         ),
     )
     parser.add_argument(

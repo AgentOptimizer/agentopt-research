@@ -26,7 +26,7 @@ matplotlib.use("Agg")
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.ticker import NullFormatter, PercentFormatter
+from matplotlib.ticker import NullFormatter
 import numpy as np
 
 
@@ -224,7 +224,9 @@ def _draw_panel(
     plotted_costs = np.concatenate((truth[:, 1], vectors[:, 1]))
     if np.all(plotted_costs > 0.0):
         axis.set_xscale("log")
-    axis.yaxis.set_major_formatter(PercentFormatter(1))
+    axis.yaxis.set_major_formatter(
+        mpl.ticker.FuncFormatter(lambda value, _: f"{value:g}")
+    )
     axis.xaxis.set_major_formatter(
         mpl.ticker.FuncFormatter(lambda value, _: f"{value:g}")
     )

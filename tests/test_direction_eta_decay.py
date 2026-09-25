@@ -258,6 +258,27 @@ class DirectionEtaDecayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "round_robin|direction_scheduler"):
             _run(direction_scheduler="accuracy_last")
 
+    def test_sequential_axis_schedulers_drain_the_requested_axis_first(self):
+        axes = ((1.0, 0.0), (0.0, 1.0))
+        expected = {
+            "quality_then_deployment": axes,
+            "deployment_then_quality": axes[::-1],
+        }
+        for scheduler, wanted in expected.items():
+            with self.subTest(scheduler=scheduler):
+                result = _run(
+                    directions=axes,
+                    direction_scheduler=scheduler,
+                    index_provider=lambda context, arm_index: -100.0,
+                    lambda_initial=1e-20,
+                    stop_tolerance=0.0,
+                )
+                visits = _visits(result)
+                self.assertEqual(
+                    tuple(tuple(event["direction"]) for event in visits), wanted
+                )
+                self.assertEqual(result.stop_reason, "direction_eta_numerical_floor")
+
 
 if __name__ == "__main__":
     unittest.main()

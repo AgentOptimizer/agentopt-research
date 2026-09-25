@@ -58,6 +58,16 @@ GAUSS_RADAU_TWO_POINT_INTERIOR = 1.0 / 3.0
 GAUSS_LEGENDRE_TWO_POINT_LEFT = 0.5 - 1.0 / (2.0 * math.sqrt(3.0))
 
 PAIRS = {
+    "quality_only": ((1.0, 0.0),),
+    "deployment_only": ((0.0, 1.0),),
+    "axes_midpoint": ((0.0, 1.0), (0.5, 0.5), (1.0, 0.0)),
+    "five_directions": (
+        (1.0, 0.0),
+        (0.75, 0.25),
+        (0.5, 0.5),
+        (0.25, 0.75),
+        (0.0, 1.0),
+    ),
     "cost_near__accuracy_axis": ((0.1, 0.9), (1.0, 0.0)),
     "gauss_radau_accuracy_endpoint": (
         (GAUSS_RADAU_TWO_POINT_INTERIOR, 1.0 - GAUSS_RADAU_TWO_POINT_INTERIOR),
@@ -72,6 +82,8 @@ PAIRS = {
         (1.0 - GAUSS_LEGENDRE_TWO_POINT_LEFT, GAUSS_LEGENDRE_TWO_POINT_LEFT),
     ),
     "symmetric_interior": ((0.1, 0.9), (0.9, 0.1)),
+    # Preserve the historical G2 order so the new G0 is byte-for-byte the
+    # same acquisition protocol: deployment axis first, then quality axis.
     "exact_axes": ((0.0, 1.0), (1.0, 0.0)),
     "dense_grid_10": DEFAULT_ANYTIME_DIRECTIONS,
 }
@@ -380,6 +392,8 @@ def run_one(
     observation_budget_fraction: float,
     eta_decay_schedule: str = "direction_stop",
     direction_scheduler: str = "round_robin",
+    acquisition_cost_mode: str = "real",
+    continuation_mode: str = "eta_decay",
     ablation_name: str | None = None,
 ) -> dict[str, Any]:
     run_started_at_utc = datetime.now(timezone.utc).isoformat()
@@ -399,14 +413,23 @@ def run_one(
         f"Running {benchmark} / {pair_name}: directions={directions}, seed={seed}",
         flush=True,
     )
+    if acquisition_cost_mode not in {"real", "unit"}:
+        raise ValueError("acquisition_cost_mode must be 'real' or 'unit'")
+    if continuation_mode not in {"eta_decay", "fixed_eta_no_stop"}:
+        raise ValueError(
+            "continuation_mode must be 'eta_decay' or 'fixed_eta_no_stop'"
+        )
+    anytime = continuation_mode == "eta_decay"
+    resolved_eta_decay_schedule = eta_decay_schedule if anytime else "global_stop"
+    expected_batch_cost_usd = 1.0 if acquisition_cost_mode == "unit" else None
     result = simulate_radial_gittins(
         models,
         questions,
         table,
         directions=directions,
-        anytime=True,
+        anytime=anytime,
         direction_scheduler=direction_scheduler,
-        eta_decay_schedule=eta_decay_schedule,
+        eta_decay_schedule=resolved_eta_decay_schedule,
         recommendation_rule="finite_lcb",
         recommendation_beta=1.0,
         recommendation_min_samples=0,
@@ -419,6 +442,7 @@ def run_one(
         lambda_initial=1.0,
         lambda_decay=0.5,
         search_cost_scale_eta=1.0,
+        expected_batch_cost_usd=expected_batch_cost_usd,
         observation_budget_fraction=observation_budget_fraction,
         boundary_z_padding_extra=2.0,
         effective_cost_bin_ratio=2.0,
@@ -434,6 +458,7 @@ def run_one(
         recommendation_checkpoint_interval=None,
         recommendation_changes_only=True,
         defer_recommendation_diagnostics=True,
+        halt_on_gittins_stop=continuation_mode != "fixed_eta_no_stop",
     )
     simulation_wall_time = time.perf_counter() - simulation_started
     postprocess_started = time.perf_counter()
@@ -458,8 +483,14 @@ def run_one(
             "cost_model": "raw_mean",
             "eta_initial": 1.0,
             "eta_decay": 0.5,
-            "eta_decay_schedule": eta_decay_schedule,
+            "eta_decay_schedule": resolved_eta_decay_schedule,
+            "requested_eta_decay_schedule": eta_decay_schedule,
             "direction_scheduler": direction_scheduler,
+            "acquisition_cost_mode": acquisition_cost_mode,
+            "continuation_mode": continuation_mode,
+            "expected_batch_cost_usd_override": expected_batch_cost_usd,
+            "anytime": anytime,
+            "halt_on_gittins_stop": continuation_mode != "fixed_eta_no_stop",
             "observation_budget_fraction": observation_budget_fraction,
             "input_sha256": hashes,
             "engine_source_sha256": hashlib.sha256(
@@ -544,13 +575,27 @@ def main() -> None:
         choices=(
             "round_robin",
             "weighted_round_robin_3_to_1",
+            "quality_then_deployment",
+            "deployment_then_quality",
         ),
         default="round_robin",
     )
     parser.add_argument(
+        "--acquisition-cost-mode",
+        choices=("real", "unit"),
+        default="real",
+        help="Use per-arm expected USD continuation costs or one unit for every arm.",
+    )
+    parser.add_argument(
+        "--continuation-mode",
+        choices=("eta_decay", "fixed_eta_no_stop"),
+        default="eta_decay",
+        help="Decay eta after stops or keep eta fixed and force continuation.",
+    )
+    parser.add_argument(
         "--ablation-name",
-        choices=tuple(ABLATION_CONFIGS),
         default=None,
+        help="Stable configuration identifier recorded in the result payload.",
     )
     parser.add_argument("--summarize-only", action="store_true")
     parser.add_argument(
@@ -573,6 +618,8 @@ def main() -> None:
                     observation_budget_fraction=args.observation_budget_fraction,
                     eta_decay_schedule=args.eta_decay_schedule,
                     direction_scheduler=args.direction_scheduler,
+                    acquisition_cost_mode=args.acquisition_cost_mode,
+                    continuation_mode=args.continuation_mode,
                     ablation_name=args.ablation_name,
                 )
     if not args.skip_combined_export:

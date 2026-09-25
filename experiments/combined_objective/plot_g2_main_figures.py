@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Build the G2 main-text curves and Gittins-only frontier figures.
+"""Build the G2 main-text curves and paper frontier figures.
 
-Only the ``radial_gittins`` series is rebuilt.  Every baseline curve row is
-copied verbatim from the current new-QA main-figure CSV.  The resulting pickle
-contains all plot-ready data, so ``--reuse-cache`` never reads result JSONs.
+The default mode replaces only the ``radial_gittins`` series.  Cache-only
+modes can rebuild the 0--30% curves or all six methods' frontier figures from
+saved trajectories without rerunning an optimizer or reading result JSONs.
 """
 
 from __future__ import annotations
@@ -42,6 +42,14 @@ sys.path.insert(0, str(ROOT))
 FIGURE_ROOT = ROOT / "analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_figures"
 SOURCE_FIGURES = FIGURE_ROOT / "hv_frontier_source"
 SOURCE_TIMING = FIGURE_ROOT / "time"
+SAVED_BASELINE_ROOT = (
+    ROOT / "analysis/usd_cost_checkpoints_latest_under_20seed/runs"
+)
+NEW_QA_BASELINE_ROOT = (
+    ROOT
+    / "analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_runs/baselines"
+)
+SAVED_QNEHVI_ROOT = ROOT / "analysis/final_run_baselines"
 G2_RUN_ROOT = (
     ROOT
     / "analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_runs/combined"
@@ -83,6 +91,10 @@ METRICS = {
     "inverted_generational_distance": "Inverted Generational Distance (IGD)",
 }
 SEEDS = tuple(range(42, 62))
+QNEHVI_SEEDS = {
+    "bird_mini_dev": tuple(seed for seed in SEEDS if seed != 43),
+    "bing_querylogs": tuple(range(42, 60)),
+}
 GRID = np.linspace(0.0, 1.0, 201)
 CHECKPOINTS = (0.10, 0.30)
 CACHE_VERSION = 2
@@ -482,13 +494,17 @@ def write_curve_csv(path: Path, rows: list[dict[str, str]]) -> None:
 
 
 def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
-                styles: dict[str, Any], output: Path) -> None:
+                styles: dict[str, Any], output: Path, *, x_max: float = 1.0) -> None:
     figure, axes = plt.subplots(2, 4, figsize=(18.5, 9.0), squeeze=False)
     percent = FuncFormatter(lambda value, _: f"{value:.0%}")
     for axis, dataset in zip(axes.flat, DATASETS):
         for method in METHODS:
             curve = curves[(dataset, method, metric)]
-            shown = np.isfinite(curve.mean) & np.isfinite(curve.two_se)
+            shown = (
+                np.isfinite(curve.mean)
+                & np.isfinite(curve.two_se)
+                & (curve.x <= x_max + 1e-12)
+            )
             style = styles[method]
             is_random = method in {"random_configurations", "random_questions"}
             axis.plot(
@@ -503,13 +519,20 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
                 linewidth=0, zorder=1, step="post" if is_random else None,
             )
         axis.set_title(DATASET_LABELS[dataset], fontsize=25, pad=10)
-        axis.set_xlim(-0.015, 1.015)
+        margin = 0.015 * x_max
+        if math.isclose(x_max, 0.3):
+            axis.set_xlim(-margin, x_max + 0.006)
+        else:
+            axis.set_xlim(-margin, x_max + margin)
         y_top = axis.get_ylim()[1]
         axis.set_ylim(-0.02 * y_top, y_top)
-        axis.set_xticks((0.0, 0.5, 1.0))
+        axis.set_xticks(
+            (0.0, 0.1, 0.2, 0.3) if math.isclose(x_max, 0.3) else (0.0, 0.5, 1.0)
+        )
         axis.xaxis.set_major_formatter(percent)
-        axis.get_xticklabels()[0].set_ha("left")
-        axis.get_xticklabels()[-1].set_ha("right")
+        if not math.isclose(x_max, 0.3):
+            axis.get_xticklabels()[0].set_ha("left")
+            axis.get_xticklabels()[-1].set_ha("right")
         axis.yaxis.set_major_locator(MaxNLocator(4))
         axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
         axis.tick_params(axis="both", labelsize=25, width=1.1, length=6)
@@ -527,8 +550,10 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
     figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.014),
                   ncol=4, frameon=False, fontsize=25, handlelength=3.15,
                   columnspacing=1.55, handletextpad=0.75, labelspacing=0.70)
-    figure.subplots_adjust(left=0.085, right=0.985, top=0.945, bottom=0.265,
-                           wspace=0.34, hspace=0.34)
+    figure.subplots_adjust(
+        left=0.085, right=0.985, top=0.945, bottom=0.265,
+        wspace=0.34, hspace=0.44 if math.isclose(x_max, 0.3) else 0.34,
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output.with_suffix(".png"), dpi=300)
     figure.savefig(output.with_suffix(".pdf"))
@@ -539,6 +564,35 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
 def raw_front_indices(truth: np.ndarray) -> np.ndarray:
     metric = np.column_stack((truth[:, 0], -truth[:, 1]))
     return nondominated_indices(metric)
+
+
+def carry_terminal_recommendations(
+    runs: dict[str, list[dict[str, Any]]],
+    spaces: dict[str, Any],
+) -> dict[str, list[dict[str, Any]]]:
+    """Keep each stopped run's last published recommendation valid to 100%.
+
+    The synthetic endpoint changes only the budget-threshold readout.  It does
+    not represent another evaluation, and the cache payload is never mutated.
+    """
+    extended: dict[str, list[dict[str, Any]]] = {}
+    for dataset, dataset_runs in runs.items():
+        full_search_cost = float(spaces[dataset]["bruteforce_search_cost_usd"])
+        extended[dataset] = []
+        for run in dataset_runs:
+            points = [point.copy() for point in run["points"]]
+            if not points:
+                raise ValueError(f"{dataset} seed {run['seed']}: empty trajectory")
+            if float(points[-1]["cost_fraction"]) < 1.0 - 1e-12:
+                terminal = points[-1].copy()
+                terminal.update(
+                    cost_fraction=1.0,
+                    cost_usd=full_search_cost,
+                    synthetic_terminal=True,
+                )
+                points.append(terminal)
+            extended[dataset].append({**run, "points": points})
+    return extended
 
 
 def _mix(
@@ -552,10 +606,13 @@ def _mix(
     )
 
 
-def _frequency_colormap() -> LinearSegmentedColormap:
-    base = to_rgb("tab:orange")
+def _frequency_colormap(
+    color: str = "tab:orange",
+    name: str = "recommendation_frequency",
+) -> LinearSegmentedColormap:
+    base = to_rgb(color)
     return LinearSegmentedColormap.from_list(
-        "radial_gittins_frequency",
+        name,
         (
             _mix(base, (1, 1, 1), 0.82),
             _mix(base, (1, 1, 1), 0.45),
@@ -644,6 +701,10 @@ def draw_frontier_panel(
     summary: FrontierSummary,
     title: str,
     cmap: mpl.colors.Colormap,
+    *,
+    title_fontsize: float = 27,
+    subtitle_fontsize: float = 26,
+    tick_labelsize: float = 23,
 ) -> None:
     frontier = raw_front_indices(truth)
     frontier = frontier[np.argsort(truth[frontier, 1])]
@@ -672,7 +733,7 @@ def draw_frontier_panel(
     )
     axis.text(
         0.5, 1.22, shown_title, transform=axis.transAxes, ha="center",
-        va="bottom", fontsize=27,
+        va="bottom", fontsize=title_fontsize,
     )
     if summary.available:
         start_usd = _usd(summary.mean_start_usd).replace("$", r"\$")
@@ -685,7 +746,7 @@ def draw_frontier_panel(
         subtitle = "pending"
     axis.text(
         0.5, 1.17, subtitle, transform=axis.transAxes, ha="center",
-        va="top", fontsize=26,
+        va="top", fontsize=subtitle_fontsize,
     )
     if np.all(truth[:, 1] > 0.0):
         axis.set_xscale("log")
@@ -694,7 +755,7 @@ def draw_frontier_panel(
     axis.spines[["top", "right"]].set_visible(False)
     for spine in axis.spines.values():
         spine.set_linewidth(0.9)
-    axis.tick_params(axis="both", labelsize=23)
+    axis.tick_params(axis="both", labelsize=tick_labelsize)
     axis.yaxis.set_major_locator(MaxNLocator(nbins=5))
     axis.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
     axis.xaxis.set_minor_formatter(NullFormatter())
@@ -705,6 +766,7 @@ def finish_frontier_figure(
     *,
     checkpoint: float,
     cmap: mpl.colors.Colormap,
+    method_label: str,
     stem: Path,
 ) -> None:
     figure.supxlabel(
@@ -712,10 +774,10 @@ def finish_frontier_figure(
     )
     figure.supylabel("Mean accuracy", fontsize=30, x=0.022)
     figure.suptitle(
-        f"{FULL_METHOD_NAME} recommendations at {checkpoint:.0%} "
+        f"{method_label} recommendations at {checkpoint:.0%} "
         "of brute-force search cost",
         fontsize=34,
-        y=0.955,
+        y=0.915,
     )
     figure.legend(
         handles=(
@@ -784,12 +846,171 @@ def plot_frontiers(
             figure,
             checkpoint=checkpoint,
             cmap=cmap,
+            method_label=FULL_METHOD_NAME,
             stem=(
                 output
                 / f"radial_gittins_g2_20seed_frequency_frontiers_"
                 f"{round(checkpoint * 100)}pct"
             ),
         )
+    return checkpoint_rows
+
+
+def plot_stackoverflow_method_frontier(
+    output: Path,
+    *,
+    checkpoint: float,
+    runs_by_method: dict[str, dict[str, list[dict[str, Any]]]],
+    payload: dict[str, Any],
+    styles: dict[str, Any],
+) -> None:
+    """Draw the native 2x3 Stack Overflow comparison without a suptitle."""
+    method_order = (
+        "radial_gittins",
+        "ege_sh",
+        "ape_k",
+        "qnehvi",
+        "random_configurations",
+        "random_questions",
+    )
+    cmap = _frequency_colormap(
+        "tab:orange", "stackoverflow_recommendation_frequency"
+    )
+    figure, axes = plt.subplots(2, 3, figsize=(24, 14.5))
+    for axis, method in zip(axes.flat, method_order):
+        summary, _ = frontier_summary(
+            "stackoverflow", checkpoint, runs_by_method[method], payload["spaces"]
+        )
+        method_label = (
+            FULL_METHOD_NAME
+            if method == "radial_gittins"
+            else styles[method]["label"]
+        )
+        draw_frontier_panel(
+            axis,
+            payload["raw_truth"]["stackoverflow"],
+            summary,
+            method_label,
+            cmap,
+            title_fontsize=29,
+            subtitle_fontsize=28,
+            tick_labelsize=26,
+        )
+    figure.supxlabel(
+        "Mean deployment cost (USD per query, log scale)", fontsize=32, y=0.115
+    )
+    figure.supylabel("Mean accuracy", fontsize=32, x=0.022)
+    figure.legend(
+        handles=(
+            Line2D(
+                [], [], linestyle="none", marker="o", markersize=13,
+                markerfacecolor="#c0c5cc", markeredgecolor="none",
+                label="All configurations",
+            ),
+            Line2D(
+                [], [], color="#25282c", linewidth=2, marker="o",
+                markersize=10, markerfacecolor="white", markeredgewidth=1.25,
+                label="Full-data Pareto frontier",
+            ),
+            Line2D(
+                [], [], linestyle="none", marker="o", markersize=15,
+                markerfacecolor=cmap(0.6), markeredgecolor="#6f4a22",
+                label="Recommendations (color = frequency)",
+            ),
+        ),
+        loc="lower center",
+        bbox_to_anchor=(0.48, 0.035),
+        ncol=3,
+        frameon=False,
+        fontsize=30,
+        columnspacing=2.2,
+        handletextpad=0.65,
+    )
+    figure.subplots_adjust(
+        left=0.080, right=0.865, bottom=0.205, top=0.865,
+        wspace=0.26, hspace=0.58,
+    )
+    colorbar_axis = figure.add_axes([0.900, 0.245, 0.021, 0.60])
+    colorbar = figure.colorbar(
+        mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(1, 20), cmap=cmap),
+        cax=colorbar_axis,
+    )
+    colorbar.set_label(
+        "Recommendation frequency (out of 20 seeds)", fontsize=30, labelpad=19
+    )
+    colorbar.set_ticks((1, 5, 10, 15, 20))
+    colorbar.ax.tick_params(labelsize=26)
+    colorbar.outline.set_linewidth(0.9)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(output.with_suffix(".png"), dpi=200, facecolor="white")
+    figure.savefig(output.with_suffix(".pdf"), facecolor="white")
+    plt.close(figure)
+
+
+def plot_all_method_frontiers(
+    output: Path,
+    payload: dict[str, Any],
+    styles: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Redraw every method frontier with one shared paper layout.
+
+    This is a format-only rebuild from saved trajectories.  The last published
+    recommendation remains current through the full budget, matching the
+    recommendation-output semantics used for the G2 figures.
+    """
+    checkpoint_rows: list[dict[str, Any]] = []
+    runs_by_method: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for method in METHODS:
+        if method == "radial_gittins":
+            runs = payload["runs"]
+            method_label = FULL_METHOD_NAME
+            filename_method = "radial_gittins"
+        else:
+            runs = saved_frontier_runs(method)
+            method_label = styles[method]["label"]
+            filename_method = method
+        runs = carry_terminal_recommendations(runs, payload["spaces"])
+        runs_by_method[method] = runs
+        cmap = _frequency_colormap(
+            styles[method]["color"], f"{method}_recommendation_frequency"
+        )
+        method_output = output / filename_method
+        for checkpoint in CHECKPOINTS:
+            figure, axes = plt.subplots(2, 4, figsize=(24, 14.5))
+            for axis, dataset in zip(axes.flat, DATASETS):
+                summary, rows = frontier_summary(
+                    dataset, checkpoint, runs, payload["spaces"]
+                )
+                checkpoint_rows.extend(
+                    {"method": method, **row} for row in rows
+                )
+                draw_frontier_panel(
+                    axis,
+                    payload["raw_truth"][dataset],
+                    summary,
+                    DATASET_LABELS[dataset],
+                    cmap,
+                )
+            finish_frontier_figure(
+                figure,
+                checkpoint=checkpoint,
+                cmap=cmap,
+                method_label=method_label,
+                stem=(
+                    method_output
+                    / f"{filename_method}_20seed_frequency_frontiers_"
+                    f"{round(checkpoint * 100)}pct"
+                ),
+            )
+    plot_stackoverflow_method_frontier(
+        output.parent
+        / "by_dataset"
+        / "stackoverflow_2x3_method_frontiers_10pct",
+        checkpoint=0.10,
+        runs_by_method=runs_by_method,
+        payload=payload,
+        styles=styles,
+    )
     return checkpoint_rows
 
 
@@ -860,12 +1081,378 @@ def configure_matplotlib() -> None:
     })
 
 
+def read_saved_metric_trajectory(
+    path: Path,
+) -> tuple[np.ndarray, dict[str, np.ndarray]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows:
+        raise ValueError(f"empty saved trajectory: {path}")
+    rows.sort(key=lambda row: float(row["budget_fraction"]))
+    return (
+        np.asarray([float(row["budget_fraction"]) for row in rows]),
+        {
+            metric: np.asarray([float(row[metric]) for row in rows])
+            for metric in METRICS
+        },
+    )
+
+
+def saved_baseline_path(dataset: str, method: str, seed: int) -> Path:
+    if dataset in {"hotpotqa", "mathqa"}:
+        root = NEW_QA_BASELINE_ROOT
+    elif method == "qnehvi":
+        root = SAVED_QNEHVI_ROOT
+    else:
+        root = SAVED_BASELINE_ROOT
+    return root / dataset / method / f"seed-{seed}" / "cost_trajectory.csv"
+
+
+def saved_baseline_trajectories(
+    dataset: str,
+    method: str,
+) -> list[tuple[np.ndarray, dict[str, np.ndarray]]]:
+    seeds = QNEHVI_SEEDS.get(dataset, SEEDS) if method == "qnehvi" else SEEDS
+    trajectories = []
+    for seed in seeds:
+        path = saved_baseline_path(dataset, method, seed)
+        if not path.is_file():
+            raise FileNotFoundError(f"missing saved baseline trajectory: {path}")
+        trajectories.append(read_saved_metric_trajectory(path))
+    return trajectories
+
+
+def saved_frontier_runs(
+    method: str,
+) -> dict[str, list[dict[str, Any]]]:
+    runs: dict[str, list[dict[str, Any]]] = {}
+    for dataset in DATASETS:
+        seeds = QNEHVI_SEEDS.get(dataset, SEEDS) if method == "qnehvi" else SEEDS
+        runs[dataset] = []
+        for seed in seeds:
+            path = saved_baseline_path(dataset, method, seed)
+            if not path.is_file():
+                raise FileNotFoundError(f"missing saved baseline trajectory: {path}")
+            with path.open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            if not rows:
+                raise ValueError(f"empty saved baseline trajectory: {path}")
+            points = []
+            for row in rows:
+                selected = tuple(
+                    int(value)
+                    for value in row["selected_arm_indices"].split(";")
+                    if value
+                )
+                points.append(
+                    {
+                        "cost_fraction": float(row["budget_fraction"]),
+                        "cost_usd": float(row["cumulative_search_cost_usd"]),
+                        "selected_arm_indices": selected,
+                        **{metric: float(row[metric]) for metric in METRICS},
+                    }
+                )
+            runs[dataset].append({"seed": seed, "points": points})
+    return runs
+
+
+def g2_metric_trajectories(
+    dataset_runs: list[dict[str, Any]],
+) -> list[tuple[np.ndarray, dict[str, np.ndarray]]]:
+    trajectories = []
+    for run in dataset_runs:
+        points = run["points"]
+        trajectories.append(
+            (
+                np.asarray([float(point["cost_fraction"]) for point in points]),
+                {
+                    metric: np.asarray([float(point[metric]) for point in points])
+                    for metric in METRICS
+                },
+            )
+        )
+    return trajectories
+
+
+def aggregate_from_mean_start(
+    trajectories: list[tuple[np.ndarray, dict[str, np.ndarray]]],
+    *,
+    exact_event_grid: bool,
+    cutoff: float,
+) -> tuple[dict[str, MeanCurve], dict[str, dict[str, float]]]:
+    """Align runs at the mean first-event cost with all seeds contributing.
+
+    Runs beginning before the mean are read at the mean using their latest
+    output. Runs beginning after it carry their first output backward to the
+    mean. Terminal outputs are likewise carried forward as recommendation
+    outputs, so every displayed point has the full seed count.
+    """
+    if not trajectories:
+        raise ValueError("expected at least one trajectory")
+    output: dict[str, MeanCurve] = {}
+    alignment: dict[str, dict[str, float]] = {}
+    for metric in METRICS:
+        finite_trajectories = []
+        for xs, metric_values in trajectories:
+            finite = np.isfinite(metric_values[metric])
+            if not np.any(finite):
+                raise ValueError(f"trajectory has no finite {metric} output")
+            finite_trajectories.append((xs[finite], metric_values[metric][finite]))
+        starts = np.asarray([float(xs[0]) for xs, _ in finite_trajectories])
+        mean_start = float(np.mean(starts))
+        if exact_event_grid:
+            later_events = np.concatenate(
+                [
+                    xs[(xs > mean_start) & (xs <= cutoff + 1e-12)]
+                    for xs, _ in finite_trajectories
+                ]
+            )
+            grid = np.unique(np.concatenate(([mean_start, cutoff], later_events)))
+        else:
+            grid = np.unique(
+                np.concatenate(
+                    (
+                        [mean_start],
+                        GRID[(GRID > mean_start) & (GRID <= cutoff + 1e-12)],
+                    )
+                )
+            )
+        aligned = np.empty((len(trajectories), len(grid)), dtype=np.float64)
+        for row_index, (xs, values) in enumerate(finite_trajectories):
+            positions = np.searchsorted(xs, grid, side="right") - 1
+            positions = np.clip(positions, 0, len(xs) - 1)
+            aligned[row_index] = values[positions]
+        mean = np.mean(aligned, axis=0)
+        two_se = 2.0 * np.std(aligned, axis=0, ddof=1) / math.sqrt(len(trajectories))
+        output[metric] = MeanCurve(
+            grid.copy(),
+            mean,
+            two_se,
+            np.full(len(grid), len(trajectories), dtype=int),
+        )
+        alignment[metric] = {
+            "min_start_cost_fraction": float(np.min(starts)),
+            "mean_start_cost_fraction": mean_start,
+            "max_start_cost_fraction": float(np.max(starts)),
+        }
+    return output, alignment
+
+
+def curve_rows_from_curves(
+    curves: dict[tuple[str, str, str], MeanCurve],
+) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for dataset in DATASETS:
+        for method in METHODS:
+            for metric in METRICS:
+                curve = curves[(dataset, method, metric)]
+                for x, mean, two_se, count in zip(
+                    curve.x, curve.mean, curve.two_se, curve.count
+                ):
+                    if not np.isfinite(mean) or not np.isfinite(two_se):
+                        continue
+                    rows.append(
+                        {
+                            "dataset": dataset,
+                            "method": method,
+                            "metric": metric,
+                            "cost_fraction": str(float(x)),
+                            "mean": str(float(mean)),
+                            "two_se": str(float(two_se)),
+                            "n_runs": str(int(count)),
+                        }
+                    )
+    return rows
+
+
+def write_carried_recommendation_outputs(
+    output: Path,
+    payload: dict[str, Any],
+    styles: dict[str, Any],
+    cache_path: Path,
+) -> None:
+    cutoff = 0.30
+    extended_runs = carry_terminal_recommendations(
+        payload["runs"], payload["spaces"]
+    )
+    aligned_curves: dict[tuple[str, str, str], MeanCurve] = {}
+    start_alignment: dict[str, dict[str, dict[str, dict[str, float]]]] = {
+        dataset: {} for dataset in DATASETS
+    }
+    for dataset in DATASETS:
+        for method in METHODS:
+            if method == "radial_gittins":
+                trajectories = g2_metric_trajectories(extended_runs[dataset])
+            else:
+                trajectories = saved_baseline_trajectories(dataset, method)
+            method_curves, alignment = aggregate_from_mean_start(
+                trajectories,
+                exact_event_grid=method in {
+                    "random_configurations", "random_questions"
+                },
+                cutoff=cutoff,
+            )
+            start_alignment[dataset][method] = alignment
+            for metric, curve in method_curves.items():
+                expected_count = len(
+                    QNEHVI_SEEDS.get(dataset, SEEDS)
+                    if method == "qnehvi"
+                    else SEEDS
+                )
+                if not np.all(curve.count == expected_count):
+                    raise AssertionError(
+                        f"{dataset} {method} {metric}: incomplete seed count"
+                    )
+                aligned_curves[(dataset, method, metric)] = curve
+
+    cutoff_rows = curve_rows_from_curves(aligned_curves)
+
+    curve_output = output / "curves_0_30pct"
+    curve_output.mkdir(parents=True, exist_ok=True)
+    write_curve_csv(curve_output / "curve_summary_0_30pct.csv", cutoff_rows)
+    (curve_output / "method_styles.json").write_text(
+        json.dumps(styles, indent=2) + "\n", encoding="utf-8"
+    )
+    for metric in METRICS:
+        plot_metric(
+            metric,
+            aligned_curves,
+            styles,
+            curve_output / f"eight_datasets_{metric}",
+            x_max=cutoff,
+        )
+
+    for checkpoint in CHECKPOINTS:
+        for dataset in DATASETS:
+            original, original_rows = frontier_summary(
+                dataset, checkpoint, payload["runs"], payload["spaces"]
+            )
+            extended, extended_rows = frontier_summary(
+                dataset, checkpoint, extended_runs, payload["spaces"]
+            )
+            if original.counts != extended.counts:
+                raise AssertionError(
+                    f"{dataset} {checkpoint:.0%}: recommendation frequencies changed"
+                )
+            original_membership = {
+                (row["seed"], row["selected_arm_indices"])
+                for row in original_rows
+            }
+            extended_membership = {
+                (row["seed"], row["selected_arm_indices"])
+                for row in extended_rows
+            }
+            if original_membership != extended_membership:
+                raise AssertionError(
+                    f"{dataset} {checkpoint:.0%}: checkpoint recommendations changed"
+                )
+
+    checkpoint_rows = plot_frontiers(
+        output / "frontier",
+        extended_runs,
+        payload["raw_truth"],
+        payload["spaces"],
+    )
+    write_checkpoint_csv(output / "frontier_checkpoint_data.csv", checkpoint_rows)
+
+    extended_seed_counts = {
+        dataset: sum(
+            len(extended["points"]) > len(original["points"])
+            for original, extended in zip(payload["runs"][dataset], extended_runs[dataset])
+        )
+        for dataset in DATASETS
+    }
+    manifest = {
+        "configuration": "g2_exact_axes",
+        "public_method_label": FULL_METHOD_NAME,
+        "legend_method_label": SHORT_METHOD_NAME,
+        "recommendation_output_semantics": (
+            "last published recommendation carried forward to 100% budget"
+        ),
+        "synthetic_terminal_points_are_evaluations": False,
+        "displayed_cost_fraction_range": [0.0, cutoff],
+        "aggregation": (
+            "align each method-dataset at the mean per-seed first-event cost; "
+            "truncate earlier prefixes, backfill later starts with their first "
+            "output, then use stepwise last observation carried forward; "
+            "mean +/- 2 SE over the retained seed set"
+        ),
+        "seeds": list(SEEDS),
+        "qnehvi_seeds_by_dataset": {
+            dataset: list(QNEHVI_SEEDS.get(dataset, SEEDS))
+            for dataset in DATASETS
+        },
+        "qnehvi_seed_counts_by_dataset": {
+            dataset: len(QNEHVI_SEEDS.get(dataset, SEEDS))
+            for dataset in DATASETS
+        },
+        "datasets": list(DATASETS),
+        "start_alignment": start_alignment,
+        "terminal_extensions_by_dataset": extended_seed_counts,
+        "all_curve_points_have_full_retained_seed_set": True,
+        "baseline_source": (
+            "saved per-seed cost_trajectory.csv files; no optimizer reruns"
+        ),
+        "qa_baseline_source": (
+            "analysis/usd_cost_checkpoints_latest_under_20seed/"
+            "new_qa_runs/baselines"
+        ),
+        "qnehvi_non_qa_source": "analysis/final_run_baselines",
+        "other_non_qa_baseline_source": (
+            "analysis/usd_cost_checkpoints_latest_under_20seed/runs"
+        ),
+        "frontier_checkpoint_recommendations_unchanged": True,
+        "frontier_recommendation_frequencies_unchanged": True,
+        "source_plot_cache": "../plot_cache.pkl",
+        "source_plot_cache_sha256": sha256(cache_path),
+        "plot_ready_curve_data": "curve_summary_0_30pct.csv",
+        "frontier_checkpoint_data": "../frontier_checkpoint_data.csv",
+    }
+    (curve_output / "plot_manifest.json").write_text(
+        json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
+    )
+    (curve_output / "README.md").write_text(
+        "# G2 curves at 0--30% budget\n\n"
+        "These curves use the existing G2 plot cache. A stopped seed's last "
+        "published recommendation is carried forward as an output through 100% "
+        "budget, without adding evaluations. Only 0--30% is displayed. For every "
+        "method and dataset, the common start is the mean first-event cost across "
+        "the retained seeds: earlier prefixes are truncated and later starts carry their "
+        "first output backward. Every displayed aggregate point therefore contains "
+        "the full retained set (20 normally; qNEHVI uses 19 for BIRD Mini Dev "
+        "and 18 for Bing Query Logs). Baselines are rebuilt only from saved per-seed trajectory "
+        "CSVs; no optimizer is rerun.\n",
+        encoding="utf-8",
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--reuse-cache", action="store_true",
                         help="Draw using plot_cache.pkl without reading result JSONs.")
+    parser.add_argument(
+        "--carry-terminal-to-full-budget",
+        action="store_true",
+        help=(
+            "Carry stopped runs' last recommendations to 100%, draw separate "
+            "0-30% curves, and update frontier stability windows. Requires "
+            "--reuse-cache."
+        ),
+    )
+    parser.add_argument(
+        "--refresh-all-frontiers",
+        action="store_true",
+        help=(
+            "Redraw all six methods' 10% and 30% frontier figures from saved "
+            "trajectories using the shared paper layout. Requires --reuse-cache."
+        ),
+    )
     args = parser.parse_args()
+    if args.carry_terminal_to_full_budget and not args.reuse_cache:
+        parser.error("--carry-terminal-to-full-budget requires --reuse-cache")
+    if args.refresh_all_frontiers and not args.reuse_cache:
+        parser.error("--refresh-all-frontiers requires --reuse-cache")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     cache_path = output / "plot_cache.pkl"
@@ -909,6 +1496,23 @@ def main() -> None:
         for method, style in payload["styles"].items()
     }
     styles["radial_gittins"]["label"] = SHORT_METHOD_NAME
+    if args.refresh_all_frontiers:
+        frontier_output = FIGURE_ROOT / "frontier" / "by_method"
+        checkpoint_rows = plot_all_method_frontiers(
+            frontier_output, payload, styles
+        )
+        write_checkpoint_csv(
+            frontier_output / "all_method_frontier_checkpoint_data.csv",
+            checkpoint_rows,
+        )
+        print(frontier_output)
+        return
+    if args.carry_terminal_to_full_budget:
+        write_carried_recommendation_outputs(
+            output, payload, styles, cache_path
+        )
+        print(output)
+        return
     curves = curves_from_rows(rows)
     write_curve_csv(output / "curve_summary.csv", rows)
     (output / "method_styles.json").write_text(
