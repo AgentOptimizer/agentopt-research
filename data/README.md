@@ -1,9 +1,10 @@
 # Extracted response matrices
 
-Each HotpotQA and MathQA directory contains five separate matrices:
+Each HotpotQA and MathQA directory contains six separate matrices:
 
 - `accuracy_matrix.csv`: benchmark score for each cell;
 - `cost_matrix_usd.csv`: one USD cost value per configuration-question cell;
+- `latency_matrix_seconds.csv`: end-to-end wall-clock seconds for the cell;
 - `input_token_matrix.csv`: summed input tokens for the cell;
 - `output_token_matrix.csv`: summed output tokens for the cell;
 - `total_token_matrix.csv`: input plus output tokens.
