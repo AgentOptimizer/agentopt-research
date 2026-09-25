@@ -492,13 +492,16 @@ def fit_empirical_bayes_warm_start(
     by default. Raw_mean instead uses the maximum warm arm cost, and fits its
     authoritative Gaussian to normalized accuracy and raw mean USD cost.
 
-    In raw_mean mode, cost entries of generic ``prior_variance`` and
-    ``obs_noise_variance`` are overridden: cost prior variance is the across-arm
-    sample variance of raw warm means, and per-question noise is the average
-    within-arm sample variance. Both use ddof=1 and a floor of ``1e-12 * R**2``;
-    batch noise divides the latter by the warm batch size. One-arm or one-cell
-    variance estimates use zero before flooring. Accuracy entries are retained.
-    Every fitted value stays frozen after the warm start.
+    In raw_mean mode, both entries of ``prior_variance`` are overridden by
+    across-arm sample variances of warm-batch means (ddof=1): normalized
+    accuracy uses a ``1e-12`` floor, and raw USD cost uses ``1e-12 * R**2``.
+    These plug-in estimates do not subtract observation noise. The cost entry
+    of ``obs_noise_variance`` is also overridden by the average within-arm
+    sample variance, with the cost floor applied before dividing by the warm
+    batch size. One-arm or one-cell variance estimates use zero before
+    flooring. The accuracy observation-noise setting is retained. Every fitted
+    value stays frozen after the warm start. Reciprocal mode retains the
+    supplied prior variances.
     """
     if cost_model not in COST_MODELS:
         raise ValueError(f"cost_model must be one of {COST_MODELS}")
@@ -572,9 +575,11 @@ def fit_empirical_bayes_warm_start(
 
     raw_prior_variance = raw_observation_variance = raw_variance_floor = None
     if cost_model == "raw_mean":
+        accuracy_prior_variance = float(np.var(batch_observations[:, 0], ddof=1)) if n_arms > 1 else 0.0
         raw_variance_floor = 1e-12 * reference ** 2
         raw_prior_variance = float(np.var(raw_cost_means, ddof=1)) if n_arms > 1 else 0.0
         raw_observation_variance = float(np.var(cost_matrix, axis=1, ddof=1).mean()) if batch_size > 1 else 0.0
+        prior_var[0] = max(accuracy_prior_variance, 1e-12)
         prior_var[1] = max(raw_prior_variance, raw_variance_floor)
         obs_noise_var[1] = max(raw_observation_variance, raw_variance_floor) / batch_size
 

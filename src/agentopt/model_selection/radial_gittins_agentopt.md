@@ -277,9 +277,7 @@ Implement this as a small reusable vector-posterior object.
 Use the same uniform warm batch to learn one common plug-in prior mean:
 
 \[
-\mu_0 = \frac{1}{K}\sum_{c=1}^{K}\bar y_c^{\mathrm{warm}},
-\qquad
-v_0=(0.04,0.04).
+\mu_0 = \frac{1}{K}\sum_{c=1}^{K}\bar y_c^{\mathrm{warm}}.
 \]
 
 Collect every arm's raw warm observations before fitting either `C_ref` or
@@ -287,16 +285,37 @@ Collect every arm's raw warm observations before fitting either `C_ref` or
 batch exactly once as a likelihood update. Freeze the fitted hyperparameters
 before adaptive selection.
 
-The warm data therefore estimates the shared plug-in hypermean and also enters
-each arm's likelihood. This is the chosen empirical-Bayes approximation; it
-ignores hyperparameter uncertainty. “Once” means the arm batch is not applied
-twice as a posterior likelihood.
+The warm data therefore estimates shared plug-in hyperparameters and also
+enters each arm's likelihood. This is the chosen empirical-Bayes approximation;
+it ignores hyperparameter uncertainty. “Once” means the arm batch is not
+applied twice as a posterior likelihood.
 
-The fixed prior variance remains configurable, with default:
+For the legacy `reciprocal` cost model, the fixed prior variance remains
+configurable, with default:
 
 ```python
 prior_var = np.array([0.04, 0.04])
 ```
+
+For `raw_mean`, the posterior coordinates are normalized accuracy and mean USD
+cost. Estimate both prior variances from the configuration warm-batch means:
+
+\[
+s_j^2 = \frac{1}{K-1}\sum_{c=1}^{K}
+\left(\bar y_{c,j}^{\mathrm{warm}}-\mu_{0,j}\right)^2,
+\qquad
+v_0=\left(\max(s_1^2,10^{-12}),
+          \max(s_2^2,10^{-12}R^2)\right),
+\]
+
+where `R` is the frozen cost reference (the maximum warm arm mean cost by
+default). For one configuration, use zero before flooring. This raw-mode
+calibration overrides both entries of the generic `prior_variance` argument.
+Accuracy observation noise still uses `1 / (4 * B)` by default, or its explicit
+`obs_noise_variance` entry. Cost batch noise remains the average within-arm
+sample variance (`ddof=1`), floored at `1e-12 * R**2` and divided by `B`; a
+one-question warm batch uses zero before flooring. The fitted variances are
+frozen before each arm's warm batch is applied once to initialize its posterior.
 
 ### Future extension, not required for MVP
 

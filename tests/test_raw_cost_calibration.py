@@ -20,21 +20,41 @@ def calibration(costs=COSTS, **options):
 
 
 class RawCostCalibrationTests(unittest.TestCase):
-    def test_calibration_uses_raw_sample_variances_and_preserves_accuracy_options(self):
+    def test_calibration_estimates_both_prior_variances_and_preserves_accuracy_noise(self):
         fitted = calibration(prior_variance=(0.08, 99), obs_noise_variance=(0.125, 77))
         self.assertEqual(fitted.cost_model, "raw_mean")
         self.assertEqual(fitted.cost_reference_usd, 5)
         np.testing.assert_allclose(fitted.batch_observations, ((0.5, 2.5), (0.5, 5), (0.25, 3.5)))
         np.testing.assert_allclose(fitted.prior_mean, (5 / 12, 11 / 3))
-        np.testing.assert_allclose(fitted.prior_var, (0.08, 19 / 12))
+        np.testing.assert_allclose(fitted.prior_var, (1 / 48, 19 / 12))
         np.testing.assert_allclose(fitted.warm_obs_noise_var, (0.125, 5 / 6))
         self.assertAlmostEqual(fitted.raw_cost_prior_variance_estimate_usd2, 19 / 12)
         self.assertAlmostEqual(fitted.raw_cost_observation_variance_estimate_usd2, 10 / 3)
         self.assertAlmostEqual(fitted.raw_cost_variance_floor_usd2, 25e-12)
         posterior = fitted.initialize_posteriors()[0]
+        self.assertAlmostEqual(posterior.mean[0], 3 / 7)
+        self.assertAlmostEqual(posterior.var[0], 1 / 56)
         self.assertAlmostEqual(posterior.mean[1], 505 / 174)
         self.assertAlmostEqual(posterior.var[1], 95 / 174)
         self.assertEqual((posterior.n_batches, posterior.n_questions), (1, 4))
+
+    def test_accuracy_prior_uses_normalized_warm_means(self):
+        normalized = calibration()
+        scaled = fit_empirical_bayes_warm_start(
+            10 + 10 * SCORES, COSTS, score_bounds=(10, 20), cost_model="raw_mean",
+        )
+        np.testing.assert_allclose(scaled.prior_mean, normalized.prior_mean)
+        np.testing.assert_allclose(scaled.prior_var, normalized.prior_var)
+        for arm, posterior in normalized.initialize_posteriors().items():
+            np.testing.assert_allclose(scaled.initialize_posteriors()[arm].mean, posterior.mean)
+            np.testing.assert_allclose(scaled.initialize_posteriors()[arm].var, posterior.var)
+
+    def test_one_question_warm_batches_use_across_arm_accuracy_variance(self):
+        fitted = fit_empirical_bayes_warm_start(
+            [[0], [1]], [[2], [4]], cost_model="raw_mean",
+        )
+        self.assertEqual(fitted.prior_var[0], 0.5)
+        self.assertEqual(fitted.warm_obs_noise_var[0], 0.25)
 
     def test_reward_posterior_matches_a_conjugate_update_in_affine_coordinates(self):
         fitted = calibration()
@@ -126,6 +146,7 @@ class RawCostCalibrationTests(unittest.TestCase):
             with self.subTest(shape=costs.shape):
                 fitted = fit_empirical_bayes_warm_start(np.full_like(costs, 0.5), costs, cost_model="raw_mean")
                 floor = 1e-12 * fitted.cost_reference_usd ** 2
+                self.assertEqual(fitted.prior_var[0], 1e-12)
                 if len(costs) == 1 or np.all(costs == costs.flat[0]):
                     self.assertEqual(fitted.prior_var[1], floor)
                 if costs.shape[1] == 1 or np.all(costs == costs.flat[0]):
@@ -138,6 +159,7 @@ class RawCostCalibrationTests(unittest.TestCase):
 
     def test_legacy_helpers_keep_reciprocal_semantics_and_independent_copies(self):
         fitted = fit_empirical_bayes_warm_start(SCORES, COSTS)
+        np.testing.assert_array_equal(fitted.prior_var, (0.04, 0.04))
         self.assertEqual(fitted.cost_model, "reciprocal")
         self.assertEqual(fitted.cost_reference_usd, 3.5)
         np.testing.assert_array_equal(fitted.posterior_observations(SCORES[0], COSTS[0]),

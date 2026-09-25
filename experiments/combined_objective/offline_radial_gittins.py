@@ -1827,10 +1827,15 @@ def simulate_radial_gittins(
     R defaults to the largest warm arm mean (or ``cost_reference_usd``).
     Gaussian states are updated in raw USD; directional helpers receive the
     equivalent affine view ``(accuracy, 1 - cost/R)`` and scaled variances.
-    Accuracy calibration is unchanged. Legacy ``posterior_*`` summary/trace
-    fields describe reward coordinates; added ``raw_posterior_*`` fields
-    expose the authoritative state. Generic prior/noise arguments affect only
-    accuracy in raw mode; the cost entries are estimated from warm data.
+    Accuracy prior variance is likewise the across-arm sample variance of
+    normalized warm-batch mean accuracies (ddof=1), floored at ``1e-12``.
+    Both prior estimates use warm means directly, without subtracting
+    observation noise; a single arm uses the corresponding variance floor.
+    Accuracy observation noise retains its supplied/default setting. Legacy
+    ``posterior_*`` summary/trace fields describe reward coordinates; added
+    ``raw_posterior_*`` fields expose the authoritative state. In raw mode,
+    both generic ``prior_variance`` entries are overridden, and only the
+    accuracy entry of ``obs_noise_variance`` is retained.
 
     Raw-mode DP bounds grow from observed posterior evidence without changing
     R or clipping costs. Values beyond R are allowed; a fixed reference and
