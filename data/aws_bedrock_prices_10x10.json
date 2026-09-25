@@ -1,0 +1,55 @@
+{
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "region": "us-east-1",
+  "pricing_basis": "AWS Bedrock US on-demand standard token rates used by the source experiment",
+  "pricing_snapshot_date": "2026-09-24",
+  "cost_formula": "input_tokens * input_price / 1000000 + output_tokens * output_price / 1000000",
+  "sources": [
+    "https://aws.amazon.com/bedrock/pricing/",
+    "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html"
+  ],
+  "models": {
+    "Claude Haiku 4.5": {
+      "input_price": 1.0,
+      "output_price": 5.0
+    },
+    "Claude Opus 4.6": {
+      "input_price": 5.0,
+      "output_price": 25.0
+    },
+    "Kimi K2.5": {
+      "input_price": 0.6,
+      "output_price": 3.0
+    },
+    "Ministral 3 8B": {
+      "input_price": 0.15,
+      "output_price": 0.15
+    },
+    "Qwen3 32B": {
+      "input_price": 0.15,
+      "output_price": 0.6
+    },
+    "Qwen3 Next 80B A3B": {
+      "input_price": 0.15,
+      "output_price": 1.2
+    },
+    "gpt-oss-120b": {
+      "input_price": 0.15,
+      "output_price": 0.6
+    },
+    "gpt-oss-20b": {
+      "input_price": 0.07,
+      "output_price": 0.3
+    },
+    "DeepSeek R1": {
+      "input_price": 1.35,
+      "output_price": 5.4
+    },
+    "GPT-5.6 Luna": {
+      "input_price": 0.22,
+      "output_price": 1.32,
+      "pricing_tier": "US commercial short-context (up to 272K input tokens per request)"
+    }
+  }
+}

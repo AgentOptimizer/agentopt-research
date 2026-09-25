@@ -1,6 +1,6 @@
 # AgentOpt Research
 
-Model-selection **algorithms** plus frozen benchmark results (**accuracy**, **cost**, **latency**) across 9 LLMs × 4 benchmarks.
+Model-selection **algorithms** plus frozen benchmark results (**accuracy**, **cost**, **latency**, and token usage). The committed HotpotQA and MathQA matrices contain a complete 10-model workflow grid.
 
 ## What's here
 
@@ -43,17 +43,15 @@ Use the brute-force CSVs (no dependencies):
 |-----------|------|--------|
 | GPQA | `experiments/data/brute_force/gpqa.csv` | 9 |
 | BFCL | `experiments/data/brute_force/bfcl.csv` | 9 |
-| HotpotQA | `experiments/data/brute_force/hotpotqa.csv` | 81 (planner+solver) |
-| MathQA | `experiments/data/brute_force/mathqa.csv` | 81 (answer+critic) |
+| HotpotQA | `data/hotpotqa/` | 100 (10 planners x 10 solvers) |
+| MathQA | `data/mathqa/` | 100 (10 answer models x 10 critics) |
 
 Columns: `Rank`, `Model`, `Accuracy`, `Server Latency (s)`, `Wall Latency (s)`, `Cost ($)`.
 
 ## Per-sample matrices (for selector algorithms)
 
-```text
-experiments/data/lookup/{gpqa,bfcl,hotpotqa,mathqa}_lookup.pkl
-```
-
-Each pickle: `{model_names, datapoints, table[combo][idx] → SampleResult(score, latency_seconds, cost, …)}`.
+The committed HotpotQA and MathQA per-sample matrices live in `data/hotpotqa/`
+and `data/mathqa/`. Each directory contains accuracy, USD cost, input-token,
+output-token, and total-token CSVs for 100 configurations x 200 questions.
 
 See `experiments/README.md` for offline simulation usage.
