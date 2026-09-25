@@ -2,11 +2,11 @@
   "benchmark": "hotpotqa",
   "source": "experiments/data/lookup/hotpotqa_lookup.pkl",
   "shape": [
-    81,
+    100,
     200
   ],
-  "observed_cells": 16168,
-  "missing_cells": 32,
+  "observed_cells": 20000,
+  "missing_cells": 0,
   "orientation": "rows=model configurations; columns=question IDs",
   "blank_cells": "missing lookup-table observations, not zero",
   "input_token_definition": "sum of input tokens across workflow calls",
@@ -21,14 +21,6 @@
       "input_tokens": 18282,
       "output_tokens": 2777,
       "total_tokens": 21059
-    },
-    {
-      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
-      "question_id": 13,
-      "cost_usd": 0.087505,
-      "input_tokens": 9213,
-      "output_tokens": 2068,
-      "total_tokens": 11281
     },
     {
       "model_name": "planner=Qwen3 Next 80B A3B + solver=Claude Opus 4.6",
@@ -71,20 +63,44 @@
       "total_tokens": 9429
     },
     {
-      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
-      "question_id": 199,
-      "cost_usd": 0.046038749999999996,
-      "input_tokens": 9420,
-      "output_tokens": 329,
-      "total_tokens": 9749
+      "model_name": "planner=Claude Haiku 4.5 + solver=DeepSeek R1",
+      "question_id": 36,
+      "cost_usd": 0.04826315,
+      "input_tokens": 3272,
+      "output_tokens": 8235,
+      "total_tokens": 11507
     },
     {
-      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
-      "question_id": 185,
-      "cost_usd": 0.04362875,
-      "input_tokens": 9190,
-      "output_tokens": 233,
-      "total_tokens": 9423
+      "model_name": "planner=Claude Haiku 4.5 + solver=DeepSeek R1",
+      "question_id": 88,
+      "cost_usd": 0.047385,
+      "input_tokens": 2544,
+      "output_tokens": 8228,
+      "total_tokens": 10772
+    },
+    {
+      "model_name": "planner=Ministral 3 8B + solver=DeepSeek R1",
+      "question_id": 36,
+      "cost_usd": 0.046642499999999996,
+      "input_tokens": 3219,
+      "output_tokens": 8283,
+      "total_tokens": 11502
+    },
+    {
+      "model_name": "planner=Ministral 3 8B + solver=DeepSeek R1",
+      "question_id": 126,
+      "cost_usd": 0.046360500000000006,
+      "input_tokens": 2821,
+      "output_tokens": 8305,
+      "total_tokens": 11126
+    },
+    {
+      "model_name": "planner=Qwen3 32B + solver=DeepSeek R1",
+      "question_id": 126,
+      "cost_usd": 0.046248,
+      "input_tokens": 2756,
+      "output_tokens": 8217,
+      "total_tokens": 10973
     },
     {
       "model_name": "planner=Claude Haiku 4.5 + solver=Claude Opus 4.6",
@@ -103,14 +119,6 @@
       "total_tokens": 9961
     },
     {
-      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
-      "question_id": 126,
-      "cost_usd": 0.042016000000000005,
-      "input_tokens": 8865,
-      "output_tokens": 220,
-      "total_tokens": 9085
-    },
-    {
       "model_name": "planner=Ministral 3 8B + solver=Claude Opus 4.6",
       "question_id": 163,
       "cost_usd": 0.04124825,
@@ -125,14 +133,6 @@
       "input_tokens": 8800,
       "output_tokens": 182,
       "total_tokens": 8982
-    },
-    {
-      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
-      "question_id": 163,
-      "cost_usd": 0.039213500000000005,
-      "input_tokens": 8143,
-      "output_tokens": 448,
-      "total_tokens": 8591
     },
     {
       "model_name": "planner=Claude Haiku 4.5 + solver=Claude Opus 4.6",
@@ -159,20 +159,20 @@
       "total_tokens": 7379
     },
     {
-      "model_name": "planner=Claude 3 Haiku + solver=Claude Opus 4.6",
-      "question_id": 134,
-      "cost_usd": 0.03626575,
-      "input_tokens": 7291,
-      "output_tokens": 392,
-      "total_tokens": 7683
-    },
-    {
       "model_name": "planner=Kimi K2.5 + solver=Claude Opus 4.6",
       "question_id": 163,
       "cost_usd": 0.03598760000000001,
       "input_tokens": 7960,
       "output_tokens": 322,
       "total_tokens": 8282
+    },
+    {
+      "model_name": "planner=Qwen3 32B + solver=Claude Opus 4.6",
+      "question_id": 163,
+      "cost_usd": 0.0355659,
+      "input_tokens": 7768,
+      "output_tokens": 264,
+      "total_tokens": 8032
     }
   ]
 }
