@@ -8,10 +8,15 @@ Each HotpotQA and MathQA directory contains five separate matrices:
 - `output_token_matrix.csv`: summed output tokens for the cell;
 - `total_token_matrix.csv`: input plus output tokens.
 
-Rows are the 81 model/workflow configurations and columns are the 200 question
-IDs. Blank cells mean the current lookup pickle has no observation; they do not
-mean zero. Each benchmark also has `metadata.json` with missingness and the 20
-highest-cost cells.
+Rows are the 100 model/workflow configurations from the complete 10x10 model
+grid and columns are the 200 question IDs. Both committed matrices are complete:
+100 configurations x 200 questions, with no blank cells. Each benchmark also
+has `metadata.json` with completeness and the 20 highest-cost cells.
+
+`aws_bedrock_prices_10x10.json` records the USD-per-million-token AWS Bedrock
+input and output prices used by these two datasets. The per-cell cost is the sum
+of each recorded model call's input and output token costs; it is a token-derived
+cost, not a direct AWS invoice export.
 
 The source is intentionally the current research lookup pickle under
 `experiments/data/lookup/`. It is not silently mixed with the separate

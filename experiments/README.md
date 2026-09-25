@@ -55,14 +55,18 @@ with other selector outputs under `combined_objective/results/` (gitignored):
 
 ### Per-sample lookup tables
 
+The default two-direction replay reads the committed complete matrices from
+`../data/hotpotqa/` and `../data/mathqa/`; no local pickle is required for these
+two benchmarks. Run it without `--benchmarks` to select both datasets.
+
 `data/lookup/*_lookup.pkl`
 
 | File | Combos × samples |
 |------|------------------|
 | `gpqa_lookup.pkl` | 9 × 198 |
 | `bfcl_lookup.pkl` | 9 × 200 |
-| `hotpotqa_lookup.pkl` | 81 × up to 200 (ragged) |
-| `mathqa_lookup.pkl` | 81 × up to 200 (ragged) |
+| `hotpotqa_lookup.pkl` | legacy local source for the committed 100 × 200 matrices |
+| `mathqa_lookup.pkl` | legacy local source for the committed 100 × 200 matrices |
 
 Schema: `model_names`, `datapoints`, `table[combo][dp_idx] → SampleResult(score, latency_seconds, cost, tokens…)`.
 

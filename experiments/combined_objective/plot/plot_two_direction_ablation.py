@@ -36,13 +36,7 @@ DEFAULT_RESULTS = (
     / "two_direction_finite_lcb_raw_mean_seed42_independent"
 )
 DEFAULT_PAIR = "cost_near__accuracy_axis"
-DEFAULT_BENCHMARKS = (
-    "hotpotqa",
-    "mathqa",
-    "stackoverflow",
-    "bird_dev",
-    "restaurant_valid",
-)
+DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
 
 
 def render_one(result_path: Path, *, panels_per_page: int = 9) -> dict:

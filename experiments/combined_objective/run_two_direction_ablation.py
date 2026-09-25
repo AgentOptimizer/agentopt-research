@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Run fixed two-direction Radial-Gittins ablations on the five main benchmarks.
+"""Run fixed two-direction Radial-Gittins ablations.
 
 This runner deliberately keeps acquisition directions fixed.  Adaptive direction
 insertion is a separate algorithmic question and is not mixed into these runs.
+The committed HotpotQA and MathQA 10x10 matrices are the default benchmarks;
+the remaining SCOPE benchmarks are still available through ``--benchmarks``.
 """
 from __future__ import annotations
 
@@ -40,12 +42,13 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
 
 
 DATASETS = {
-    "hotpotqa": ("pickle", "experiments/data/lookup/hotpotqa_lookup.pkl"),
-    "mathqa": ("pickle", "experiments/data/lookup/mathqa_lookup.pkl"),
+    "hotpotqa": ("scope", "data/hotpotqa"),
+    "mathqa": ("scope", "data/mathqa"),
     "stackoverflow": ("scope", "data/scope/stackoverflow"),
     "bird_dev": ("scope", "data/scope/bird_dev"),
     "restaurant_valid": ("scope", "data/scope/restaurant_valid"),
 }
+DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
 
 GAUSS_RADAU_TWO_POINT_INTERIOR = 1.0 / 3.0
 
@@ -349,7 +352,12 @@ def export_combined(outdir: Path, benchmarks: list[str], pairs: list[str]) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--benchmarks", nargs="+", choices=tuple(DATASETS), default=list(DATASETS))
+    parser.add_argument(
+        "--benchmarks",
+        nargs="+",
+        choices=tuple(DATASETS),
+        default=list(DEFAULT_BENCHMARKS),
+    )
     parser.add_argument(
         "--pairs",
         nargs="+",
