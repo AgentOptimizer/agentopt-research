@@ -138,21 +138,21 @@ def plot_runtime(summary_path: Path, output_dir: Path) -> tuple[Path, Path]:
                     ha="center",
                     va="bottom",
                     rotation=90,
-                    fontsize=9,
+                    fontsize=12,
                     color="#555555",
                 )
 
-        ax.set_title(DATASET_LABELS[dataset], fontsize=17, pad=7)
+        ax.set_title(DATASET_LABELS[dataset], fontsize=20, pad=7)
         ax.set_yscale("log")
         ax.set_ylim(3.5, 3.0e5)
         ax.set_xlim(-0.65, len(METHODS) - 0.35)
         ax.set_xticks([])
         ax.grid(axis="y", which="major", color="#d7d7d7", linewidth=0.65, alpha=0.72)
         ax.grid(axis="y", which="minor", color="#eeeeee", linewidth=0.45, alpha=0.55)
-        ax.tick_params(axis="y", which="both", labelsize=12)
+        ax.tick_params(axis="y", which="both", labelsize=18)
         ax.set_axisbelow(True)
 
-    fig.supylabel("Mean total wall-clock runtime (s)", fontsize=19, x=0.018)
+    fig.supylabel("Mean total wall-clock runtime (s)", fontsize=22, x=0.010, y=0.56)
     legend_handles = [
         Patch(
             facecolor=METHOD_STYLES[method][0],
@@ -162,18 +162,30 @@ def plot_runtime(summary_path: Path, output_dir: Path) -> tuple[Path, Path]:
         )
         for method in METHODS
     ]
+    legend_handles.append(
+        axes[0].errorbar(
+            [np.nan],
+            [np.nan],
+            yerr=[1.0],
+            fmt="none",
+            ecolor="black",
+            elinewidth=1.2,
+            capsize=3.5,
+            capthick=1.2,
+            label="Error bars: $\\pm 2$ SE",
+        )
+    )
     fig.legend(
         handles=legend_handles,
         loc="lower center",
-        ncol=6,
+        ncol=7,
         frameon=False,
-        fontsize=14,
-        bbox_to_anchor=(0.5, 0.005),
-        handlelength=2.25,
-        columnspacing=1.3,
+        fontsize=18,
+        bbox_to_anchor=(0.5, 0.025),
+        handlelength=2.0,
+        columnspacing=1.0,
     )
-    fig.text(0.975, 0.025, "Error bars: $\\pm 2$ SE", ha="right", fontsize=12)
-    fig.subplots_adjust(left=0.065, right=0.992, top=0.94, bottom=0.16, wspace=0.10, hspace=0.28)
+    fig.subplots_adjust(left=0.065, right=0.992, top=0.94, bottom=0.18, wspace=0.10, hspace=0.28)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     png_path = output_dir / "total_wall_clock_runtime_mean.png"
