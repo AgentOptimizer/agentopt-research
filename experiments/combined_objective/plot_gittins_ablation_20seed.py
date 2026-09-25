@@ -28,7 +28,6 @@ matplotlib.use("Agg")
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.transforms import ScaledTranslation
 import numpy as np
 
 
@@ -320,6 +319,7 @@ def plot_metric_curves(
     paper_output: Path | None = None,
 ) -> None:
     colors = {name: CONFIG_COLORS[name] for name in configurations}
+    curve_rows: list[dict[str, Any]] = []
     for field, label in METRICS.items():
         # Match the main-text HV figure canvas and typography exactly.
         figure, axes = plt.subplots(2, 4, figsize=(18.5, 9.0), sharex=True)
@@ -354,11 +354,25 @@ def plot_metric_curves(
                     out=np.zeros_like(stds),
                     where=finite_counts > 0,
                 )
+                for checkpoint, mean, error, count in zip(
+                    CURVE_GRID, means, ci, finite_counts
+                ):
+                    curve_rows.append(
+                        {
+                            "metric": field,
+                            "dataset": benchmark,
+                            "configuration": configuration,
+                            "cost_fraction": float(checkpoint),
+                            "mean": float(mean),
+                            "error_2se": float(error),
+                            "n": int(count),
+                        }
+                    )
                 axis.plot(
                     CURVE_GRID,
                     means,
                     color=colors[configuration],
-                    linewidth=2.3 if configuration == "g0_gauss_radau" else 2.0,
+                    linewidth=2.4 if configuration == "g0_gauss_radau" else 2.0,
                     label=CONFIG_LABELS[configuration],
                     zorder=10 if configuration == "g0_gauss_radau" else 3,
                 )
@@ -374,28 +388,22 @@ def plot_metric_curves(
             axis.grid(True, alpha=0.3)
             # The main-text 2 x 4 figures show percentage ticks on both rows.
             axis.tick_params(axis="both", labelsize=22, labelbottom=True)
-            axis.set_xlim(0.0, 1.02)
+            axis.set_xlim(-0.015, 1.02)
             axis.set_xticks((0.0, 0.5, 1.0))
             axis.xaxis.set_major_formatter(
                 mpl.ticker.FuncFormatter(lambda value, _: f"{value:.0%}")
             )
-            # Nudge only the leftmost percentage label away from the y-axis
-            # zero without changing the tick or the plotted cost range.
-            zero_percent_label = axis.get_xticklabels()[0]
-            zero_percent_label.set_transform(
-                zero_percent_label.get_transform()
-                + ScaledTranslation(3.0 / 72.0, 0.0, figure.dpi_scale_trans)
-            )
             axis.yaxis.set_major_formatter(
                 mpl.ticker.FuncFormatter(lambda value, _: f"{value:g}")
             )
-            axis.set_ylim(bottom=0.0)
+            y_top = axis.get_ylim()[1]
+            axis.set_ylim(-0.02 * y_top, y_top)
         handles = [
             Line2D(
                 [],
                 [],
                 color=colors[name],
-                linewidth=2.3 if name == "g0_gauss_radau" else 2.0,
+                linewidth=2.4 if name == "g0_gauss_radau" else 2.0,
                 label=CONFIG_LABELS[name],
             )
             for name in configurations
@@ -456,6 +464,12 @@ def plot_metric_curves(
             output / "metrics" / f"ablation_20seed_{field}_0_100pct",
             dpi=300,
         )
+
+    curve_path = output / "ablation_curve_summary.csv"
+    with curve_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(curve_rows[0]))
+        writer.writeheader()
+        writer.writerows(curve_rows)
 
 
 def _draw_landscape(axis: plt.Axes, truth: np.ndarray) -> None:
@@ -597,6 +611,14 @@ def write_readme(output: Path, configurations: list[str], inventory: dict[str, A
         [
             "",
             "Preprocessed trajectories are stored in `ablation_plot_cache.pkl`.",
+            "The exact plot-ready 0--100% means and +/- 2 SE values are stored in",
+            "`ablation_curve_summary.csv`; checkpoint-level values are stored in",
+            "`ablation_checkpoint_metrics.csv`.",
+            "",
+            "The 2 x 4 panels group datasets by role count (2, 3, 4, then 5)",
+            "from left to right. G0 is drawn at exactly 1.2 times the linewidth",
+            "of the other configurations, and both axes retain a small margin",
+            "below zero so curves at the origin are not clipped.",
             "For style-only changes, reuse that cache instead of reading all run JSON files:",
             "",
             "```bash",
@@ -683,6 +705,13 @@ def main() -> None:
                 "curve_range": [float(CURVE_GRID[0]), float(CURVE_GRID[-1])],
                 "metric_role_columns": [2, 3, 4, 5],
                 "metric_panel_order": METRIC_PANEL_ORDER,
+                "line_widths": {
+                    "other_configurations": 2.0,
+                    "g0_gauss_radau": 2.4,
+                    "g0_multiplier": 1.2,
+                },
+                "axis_origin_padding": {"x_min": -0.015, "y_fraction": -0.02},
+                "plot_ready_curve_data": "ablation_curve_summary.csv",
                 "included_configurations": configurations,
                 "inventory": inventory,
             },

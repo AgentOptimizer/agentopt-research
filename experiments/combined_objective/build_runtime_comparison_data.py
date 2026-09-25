@@ -25,13 +25,13 @@ DEFAULT_OUTPUT = (
 
 DATASETS = (
     "hotpotqa",
+    "restaurant_valid",
+    "bird_mini_dev",
+    "bing_querylogs",
     "mathqa",
     "restaurant_test",
-    "stackoverflow",
     "bird_dev",
-    "restaurant_valid",
-    "bing_querylogs",
-    "bird_mini_dev",
+    "stackoverflow",
 )
 METHODS = (
     "radial_gittins",

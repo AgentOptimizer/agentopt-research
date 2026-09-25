@@ -23,13 +23,13 @@ DEFAULT_OUTPUT_DIR = (
 
 DATASETS = (
     "hotpotqa",
+    "restaurant_valid",
+    "bird_mini_dev",
+    "bing_querylogs",
     "mathqa",
     "restaurant_test",
-    "stackoverflow",
     "bird_dev",
-    "restaurant_valid",
-    "bing_querylogs",
-    "bird_mini_dev",
+    "stackoverflow",
 )
 DATASET_LABELS = {
     "hotpotqa": "HotpotQA",
