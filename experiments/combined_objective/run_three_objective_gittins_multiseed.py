@@ -64,6 +64,15 @@ def dump_json(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
+def file_sha256(path: Path) -> str:
+    """Hash large saved runs without requiring Python 3.11's file_digest."""
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Keep the existing config/run schema and all checkpoint metric values.
 
@@ -171,7 +180,7 @@ def run_one(benchmark: str, seed: int, outdir: str | Path | None = None,
         payload = compact_payload(saved)
         payload["provenance"] = {
             "source_result": str(original),
-            "source_result_sha256": hashlib.file_digest(original.open("rb"), "sha256").hexdigest(),
+            "source_result_sha256": file_sha256(original),
             "compacted_at_utc": datetime.now(timezone.utc).isoformat(),
             "launcher_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         }
