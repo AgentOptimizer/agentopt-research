@@ -370,6 +370,17 @@ def plot_family_metric(
         axis.tick_params(axis="both", labelsize=23, width=1.0, length=5)
         axis.grid(color="#d9dde3", linewidth=0.6, alpha=0.55)
         axis.spines[["top", "right"]].set_visible(False)
+    legend_configurations = (
+        (
+            G0_CONFIGURATION,
+            "g1_q_only_real_cost",
+            "g4_d_only_real_cost",
+            "g5_axes_midpoint_real_cost",
+            "g6_five_directions_real_cost",
+        )
+        if family == "directions"
+        else configurations
+    )
     handles = [
         Line2D(
             [],
@@ -378,7 +389,7 @@ def plot_family_metric(
             linewidth=2.8 if name == G0_CONFIGURATION else 2.0,
             label=str(CONFIGURATIONS[name]["label"]),
         )
-        for name in configurations
+        for name in legend_configurations
     ]
     handles.append(
         mpl.patches.Patch(
@@ -388,10 +399,10 @@ def plot_family_metric(
     figure.legend(
         handles=handles,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.085),
-        ncol=len(handles),
+        bbox_to_anchor=(0.5, 0.010 if family == "directions" else 0.070),
+        ncol=3 if family == "directions" else len(handles),
         frameon=False,
-        fontsize=23,
+        fontsize=25,
         columnspacing=0.6,
         handlelength=1.6,
         handletextpad=0.5,

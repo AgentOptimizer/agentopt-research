@@ -518,7 +518,7 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
                 curve.mean[shown] + curve.two_se[shown], color=style["color"], alpha=0.10,
                 linewidth=0, zorder=1, step="post" if is_random else None,
             )
-        axis.set_title(DATASET_LABELS[dataset], fontsize=25, pad=10)
+        axis.set_title(DATASET_LABELS[dataset], fontsize=29, pad=10)
         margin = 0.015 * x_max
         if math.isclose(x_max, 0.3):
             axis.set_xlim(-margin, x_max + 0.006)
@@ -535,10 +535,10 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
             axis.get_xticklabels()[-1].set_ha("right")
         axis.yaxis.set_major_locator(MaxNLocator(4))
         axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
-        axis.tick_params(axis="both", labelsize=26, width=1.1, length=6)
+        axis.tick_params(axis="both", labelsize=27, width=1.1, length=6)
         axis.grid(color="#D5D9DE", linewidth=0.65, alpha=0.65)
         axis.set_axisbelow(True)
-    figure.text(0.5, 0.168, "Percentage of Exhaustive Evaluation Cost",
+    figure.text(0.5, 0.158, "Percentage of Exhaustive Evaluation Cost",
                 ha="center", va="center", fontsize=30)
     figure.text(0.023, (0.265 + 0.945) / 2.0, METRICS[metric], ha="center",
                 va="center", rotation=90, fontsize=30)
@@ -547,17 +547,19 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
                       linestyle=styles[method]["linestyle"], label=styles[method]["label"])
                for method in METHODS]
     handles.append(Patch(facecolor="#777777", alpha=0.14, edgecolor="none", label=r"$\pm2$ SE"))
-    figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.030),
-                  ncol=4, frameon=False, fontsize=27, handlelength=3.15,
+    figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.042),
+                  ncol=4, frameon=False, fontsize=28, handlelength=3.15,
                   columnspacing=1.55, handletextpad=0.75, labelspacing=0.70)
     figure.subplots_adjust(
         left=0.085, right=0.985, top=0.945, bottom=0.265,
         wspace=0.34, hspace=0.44 if math.isclose(x_max, 0.3) else 0.34,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output.with_suffix(".png"), dpi=300)
-    figure.savefig(output.with_suffix(".pdf"))
-    figure.savefig(output.with_suffix(".svg"))
+    figure.savefig(
+        output.with_suffix(".png"), dpi=300, bbox_inches="tight", pad_inches=0.08
+    )
+    figure.savefig(output.with_suffix(".pdf"), bbox_inches="tight", pad_inches=0.08)
+    figure.savefig(output.with_suffix(".svg"), bbox_inches="tight", pad_inches=0.08)
     plt.close(figure)
 
 
@@ -702,9 +704,10 @@ def draw_frontier_panel(
     title: str,
     cmap: mpl.colors.Colormap,
     *,
-    title_fontsize: float = 27,
-    subtitle_fontsize: float = 26,
-    tick_labelsize: float = 23,
+    title_fontsize: float = 37,
+    subtitle_fontsize: float = 33,
+    tick_labelsize: float = 34,
+    show_seed_count: bool = True,
 ) -> None:
     frontier = raw_front_indices(truth)
     frontier = frontier[np.argsort(truth[frontier, 1])]
@@ -729,10 +732,12 @@ def draw_frontier_panel(
             edgecolors="#6f4a22", linewidths=1.1, zorder=4,
         )
     shown_title = (
-        title if summary.available == 20 else f"{title}  [n={summary.available}/20]"
+        title
+        if summary.available == 20 or not show_seed_count
+        else f"{title}  [n={summary.available}/20]"
     )
     axis.text(
-        0.5, 1.22, shown_title, transform=axis.transAxes, ha="center",
+        0.5, 1.24, shown_title, transform=axis.transAxes, ha="center",
         va="bottom", fontsize=title_fontsize,
     )
     if summary.available:
@@ -745,7 +750,7 @@ def draw_frontier_panel(
     else:
         subtitle = "pending"
     axis.text(
-        0.5, 1.17, subtitle, transform=axis.transAxes, ha="center",
+        0.5, 1.19, subtitle, transform=axis.transAxes, ha="center",
         va="top", fontsize=subtitle_fontsize,
     )
     if np.all(truth[:, 1] > 0.0):
@@ -770,14 +775,14 @@ def finish_frontier_figure(
     stem: Path,
 ) -> None:
     figure.supxlabel(
-        "Mean deployment cost (USD per query, log scale)", fontsize=30, y=0.115
+        "Mean deployment cost (USD per query, log scale)", fontsize=40, y=0.080
     )
-    figure.supylabel("Mean accuracy", fontsize=30, x=0.022)
+    figure.supylabel("Mean accuracy", fontsize=40, x=0.015)
     figure.suptitle(
         f"{method_label} recommendations at {checkpoint:.0%} "
         "of brute-force search cost",
-        fontsize=34,
-        y=0.915,
+        fontsize=46,
+        y=0.918,
     )
     figure.legend(
         handles=(
@@ -798,27 +803,27 @@ def finish_frontier_figure(
             ),
         ),
         loc="lower center",
-        bbox_to_anchor=(0.48, 0.035),
+        bbox_to_anchor=(0.48, 0.008),
         ncol=3,
         frameon=False,
-        fontsize=27,
+        fontsize=38,
         columnspacing=2.2,
         handletextpad=0.65,
     )
     figure.subplots_adjust(
-        left=0.080, right=0.865, bottom=0.205, top=0.775,
-        wspace=0.26, hspace=0.58,
+        left=0.080, right=0.865, bottom=0.160, top=0.780,
+        wspace=0.26, hspace=0.56,
     )
-    colorbar_axis = figure.add_axes([0.900, 0.245, 0.021, 0.52])
+    colorbar_axis = figure.add_axes([0.900, 0.200, 0.021, 0.60])
     colorbar = figure.colorbar(
         mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(1, 20), cmap=cmap),
         cax=colorbar_axis,
     )
     colorbar.set_label(
-        "Recommendation frequency (out of 20 seeds)", fontsize=28, labelpad=19
+        "Recommendation frequency (out of 20 seeds)", fontsize=38, labelpad=19
     )
     colorbar.set_ticks((1, 5, 10, 15, 20))
-    colorbar.ax.tick_params(labelsize=24)
+    colorbar.ax.tick_params(labelsize=34)
     colorbar.outline.set_linewidth(0.9)
     stem.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(stem.with_suffix(".png"), dpi=200, facecolor="white")
@@ -835,13 +840,14 @@ def plot_frontiers(
     cmap = _frequency_colormap()
     checkpoint_rows: list[dict[str, Any]] = []
     for checkpoint in CHECKPOINTS:
-        figure, axes = plt.subplots(2, 4, figsize=(24, 14.5))
+        figure, axes = plt.subplots(2, 4, figsize=(28, 19))
         for axis, dataset in zip(axes.flat, DATASETS):
             summary, rows = frontier_summary(dataset, checkpoint, runs, spaces)
             checkpoint_rows.extend(rows)
             draw_frontier_panel(
                 axis, raw_truth[dataset], summary, DATASET_LABELS[dataset], cmap
             )
+            axis.set_box_aspect(1)
         finish_frontier_figure(
             figure,
             checkpoint=checkpoint,
@@ -976,7 +982,7 @@ def plot_all_method_frontiers(
         )
         method_output = output / filename_method
         for checkpoint in CHECKPOINTS:
-            figure, axes = plt.subplots(2, 4, figsize=(24, 14.5))
+            figure, axes = plt.subplots(2, 4, figsize=(28, 19))
             for axis, dataset in zip(axes.flat, DATASETS):
                 summary, rows = frontier_summary(
                     dataset, checkpoint, runs, payload["spaces"]
@@ -990,7 +996,9 @@ def plot_all_method_frontiers(
                     summary,
                     DATASET_LABELS[dataset],
                     cmap,
+                    show_seed_count=method != "qnehvi",
                 )
+                axis.set_box_aspect(1)
             finish_frontier_figure(
                 figure,
                 checkpoint=checkpoint,

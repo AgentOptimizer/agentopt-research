@@ -46,7 +46,7 @@ DEFAULT_OUTPUT = (
     / "analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_figures"
     / "gittins_g2_main_figures/estimated_actual"
 )
-DATASETS = (("mathqa", "MathQA"), ("stackoverflow", "Stack Overflow"))
+DATASETS = (("hotpotqa", "HotpotQA"), ("stackoverflow", "Stack Overflow"))
 FULL_METHOD_NAME = "Cost-Coupled Gittins"
 METHODS = (
     ("radial_gittins", FULL_METHOD_NAME),
@@ -147,9 +147,10 @@ def build_cache() -> dict[str, Any]:
     for dataset, _ in DATASETS:
         radial_source = _source_payload(dataset, "radial_gittins")
         truth = np.asarray(radial_source["truth_raw_vectors"], dtype=np.float64)
-        if dataset == "mathqa" and truth.shape != (100, 2):
+        if dataset in {"hotpotqa", "mathqa"} and truth.shape != (100, 2):
             raise ValueError(
-                f"MathQA must use the 10x10 grid (100 configurations), got {truth.shape}"
+                f"{dataset} must use the 10x10 grid (100 configurations), "
+                f"got {truth.shape}"
             )
         frontier = np.asarray(
             radial_source["full_data_pareto_arm_indices"], dtype=int
@@ -180,7 +181,9 @@ def build_cache() -> dict[str, Any]:
         "seed": SEED,
         "targets": TARGETS,
         "datasets": datasets,
-        "mathqa_configuration_grid": "10x10 (100 configurations)",
+        "configuration_grids": {
+            "hotpotqa": "10x10 (100 configurations)",
+        },
     }
 
 
@@ -234,7 +237,7 @@ def _draw_panel(
     axis.grid(color="#d9dde3", linewidth=0.55, alpha=0.5)
     axis.spines[["top", "right"]].set_visible(False)
     axis.set_axisbelow(True)
-    axis.tick_params(axis="both", labelsize=19)
+    axis.tick_params(axis="both", labelsize=23)
 
 
 def render_target(cache: dict[str, Any], target: float, output: Path) -> list[dict[str, Any]]:
@@ -262,7 +265,7 @@ def render_target(cache: dict[str, Any], target: float, output: Path) -> list[di
                 vectors=estimated,
             )
             if dataset_index == 0:
-                axes[row, 0].set_ylabel(method_label, fontsize=18, labelpad=14)
+                axes[row, 0].set_ylabel(method_label, fontsize=22, labelpad=14)
             rows.append({
                 "target_cost_fraction": target,
                 "dataset": dataset,
@@ -297,16 +300,24 @@ def render_target(cache: dict[str, Any], target: float, output: Path) -> list[di
                 if row < len(METHODS) - 1:
                     axis.tick_params(labelbottom=False)
 
-    axes[0, 0].set_title("MathQA — Actual", fontsize=22, pad=12)
-    axes[0, 1].set_title("MathQA — Estimated", fontsize=22, pad=12)
-    axes[0, 2].set_title("Stack Overflow — Actual", fontsize=22, pad=12)
-    axes[0, 3].set_title("Stack Overflow — Estimated", fontsize=22, pad=12)
+    for dataset_index, (_, dataset_label) in enumerate(DATASETS):
+        for column, estimate_label in (
+            (2 * dataset_index, "Actual"),
+            (2 * dataset_index + 1, "Estimated"),
+        ):
+            axis = axes[0, column]
+            axis.set_title(dataset_label, fontsize=26, pad=41)
+            axis.text(
+                0.5, 1.005, estimate_label,
+                transform=axis.transAxes,
+                ha="center", va="bottom", fontsize=25,
+            )
     figure.subplots_adjust(
         left=0.125, right=0.965, bottom=0.095, top=0.90,
         wspace=0.09, hspace=0.16,
     )
-    figure.supxlabel("Mean deployment cost (USD, log scale)", fontsize=23, y=0.045)
-    figure.supylabel("Mean accuracy", fontsize=23, x=0.018)
+    figure.supxlabel("Mean deployment cost (USD, log scale)", fontsize=27, y=0.045)
+    figure.supylabel("Mean accuracy", fontsize=27, x=0.018)
     handles = (
         Line2D([], [], linestyle="none", marker="o", markersize=11,
                markerfacecolor=BACKGROUND_COLOR, markeredgecolor="none",
@@ -321,13 +332,13 @@ def render_target(cache: dict[str, Any], target: float, output: Path) -> list[di
     )
     figure.legend(
         handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.004),
-        ncol=3, frameon=False, fontsize=20,
+        ncol=3, frameon=False, fontsize=24,
         columnspacing=1.5, handletextpad=0.7,
     )
     figure.suptitle(
         f"Seed {SEED}: estimations and actual values of Pareto recommendations "
         f"at the {target:.0%} search-cost checkpoint",
-        fontsize=26, y=0.975,
+        fontsize=30, y=0.985,
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=300, facecolor="white")
@@ -367,7 +378,9 @@ def main() -> None:
             "seed": SEED,
             "targets": list(TARGETS),
             "datasets": [dataset for dataset, _ in DATASETS],
-            "mathqa_configuration_grid": "10x10 (100 configurations)",
+            "configuration_grids": {
+                "hotpotqa": "10x10 (100 configurations)",
+            },
             "baseline_checkpoint_payloads_unchanged": True,
             "output_format": "PNG only",
             "cost_axis": "log scale",
