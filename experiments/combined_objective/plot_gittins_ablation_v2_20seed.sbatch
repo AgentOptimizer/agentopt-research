@@ -16,5 +16,11 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export MPLCONFIGDIR="/tmp/mpl-gittins-ablation-v2-plot-${SLURM_JOB_ID}"
 
+plot_args=()
+if (( $# > 0 )); then
+  plot_args=(--families "$@")
+fi
+
 .venv-plot/bin/python -u \
-  experiments/combined_objective/plot_gittins_ablation_v2_20seed.py
+  experiments/combined_objective/plot_gittins_ablation_v2_20seed.py \
+  "${plot_args[@]}"

@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "currency": "USD",
+  "unit": "per_million_tokens",
+  "pricing_tier": "standard_on_demand",
+  "pricing_region_scope": "US East (N. Virginia), US East (Ohio), and US West (Oregon), or the documented US commercial in-region/Geo CRIS price for GPT-5.6 Luna",
+  "verified_on": "2026-09-24",
+  "official_sources": [
+    "https://aws.amazon.com/bedrock/pricing/",
+    "https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-luna.html"
+  ],
+  "cost_definition": "Calculated invocation cost from the actually recorded per-call input and output token counts and the model-specific AWS Bedrock prices below; this is not an amount read from an AWS bill.",
+  "models": {
+    "Claude Haiku 4.5": {
+      "input": 1.0,
+      "output": 5.0
+    },
+    "Claude Opus 4.6": {
+      "input": 5.0,
+      "output": 25.0
+    },
+    "Kimi K2.5": {
+      "input": 0.6,
+      "output": 3.0
+    },
+    "Ministral 3 8B": {
+      "input": 0.15,
+      "output": 0.15
+    },
+    "Qwen3 32B": {
+      "input": 0.15,
+      "output": 0.6
+    },
+    "Qwen3 Next 80B A3B": {
+      "input": 0.15,
+      "output": 1.2
+    },
+    "gpt-oss-120b": {
+      "input": 0.15,
+      "output": 0.6
+    },
+    "gpt-oss-20b": {
+      "input": 0.07,
+      "output": 0.3
+    },
+    "DeepSeek R1": {
+      "input": 1.35,
+      "output": 5.4
+    },
+    "GPT-5.6 Luna": {
+      "input": 0.22,
+      "output": 1.32
+    }
+  }
+}

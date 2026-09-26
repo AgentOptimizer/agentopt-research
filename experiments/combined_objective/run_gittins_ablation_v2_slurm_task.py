@@ -24,8 +24,10 @@ from experiments.combined_objective.gittins_ablation_v2 import (  # noqa: E402
     BENCHMARKS,
     CONFIGURATIONS,
     DEFAULT_OUTPUT_ROOT,
+    G0_CONFIGURATION,
     RUN_CONFIGURATIONS,
     SEEDS,
+    result_path as protocol_result_path,
 )
 
 
@@ -53,6 +55,33 @@ def atomic_json_dump(path: Path, value: Any) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
     temporary.replace(path)
+
+
+def truth_mismatch(
+    result_payload: dict[str, Any], baseline_payload: dict[str, Any]
+) -> dict[str, Any] | None:
+    run = result_payload.get("run", {})
+    baseline_run = baseline_payload.get("run", {})
+    expected_truth = baseline_run.get("raw_truth_vectors", [])
+    actual_truth = run.get("raw_truth_vectors", [])
+    expected_names = baseline_run.get("model_names", [])
+    actual_names = run.get("model_names", [])
+    expected_cost = baseline_run.get("bruteforce_search_cost_usd")
+    actual_cost = run.get("bruteforce_search_cost_usd")
+    if (
+        actual_truth != expected_truth
+        or actual_names != expected_names
+        or actual_cost != expected_cost
+    ):
+        return {
+            "expected_arm_count": len(expected_truth),
+            "actual_arm_count": len(actual_truth),
+            "expected_model_count": len(expected_names),
+            "actual_model_count": len(actual_names),
+            "expected_bruteforce_search_cost_usd": expected_cost,
+            "actual_bruteforce_search_cost_usd": actual_cost,
+        }
+    return None
 
 
 def task_mapping(task_id: int) -> tuple[str, int]:
@@ -162,6 +191,27 @@ def main() -> None:
             result_payload = json.loads(result_path.read_text())
         except (OSError, json.JSONDecodeError):
             result_payload = None
+    validation_error = None
+    effective_exit_code = completed.returncode
+    if completed.returncode == 0 and result_payload is not None:
+        baseline_path = protocol_result_path(G0_CONFIGURATION, benchmark, SEEDS[0])
+        try:
+            baseline_payload = json.loads(baseline_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            validation_error = {
+                "baseline_path": str(baseline_path),
+                "error": f"failed to load G0 truth reference: {error}",
+            }
+        else:
+            mismatch = truth_mismatch(result_payload, baseline_payload)
+            if mismatch is not None:
+                validation_error = {
+                    "baseline_path": str(baseline_path),
+                    "error": "result dataset or arm ordering differs from G0",
+                    **mismatch,
+                }
+        if validation_error is not None:
+            effective_exit_code = 2
     metadata = {
         "schema_version": 1,
         **mapping,
@@ -176,7 +226,9 @@ def main() -> None:
         "child_user_cpu_seconds": after_usage.ru_utime - before_usage.ru_utime,
         "child_system_cpu_seconds": after_usage.ru_stime - before_usage.ru_stime,
         "child_max_rss_kib": after_usage.ru_maxrss,
-        "exit_code": completed.returncode,
+        "exit_code": effective_exit_code,
+        "simulation_exit_code": completed.returncode,
+        "g0_truth_validation_error": validation_error,
         "hostname": socket.gethostname(),
         "platform": platform.platform(),
         "python": sys.version,
@@ -201,7 +253,7 @@ def main() -> None:
     }
     atomic_json_dump(metadata_path, metadata)
     print(json.dumps(metadata, indent=2), flush=True)
-    raise SystemExit(completed.returncode)
+    raise SystemExit(effective_exit_code)
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from experiments.combined_objective.gittins_ablation_v2 import (
 from experiments.combined_objective.run_gittins_ablation_v2_slurm_task import (
     task_mapping,
 )
-from experiments.combined_objective.run_two_direction_ablation import PAIRS
+from experiments.combined_objective.run_two_direction_ablation import DATASETS, PAIRS
 
 
 class GittinsAblationV2ProtocolTests(unittest.TestCase):
@@ -65,6 +65,10 @@ class GittinsAblationV2ProtocolTests(unittest.TestCase):
         mappings = [task_mapping(task_id) for task_id in range(160)]
         self.assertEqual(len(set(mappings)), 160)
         self.assertEqual(set(mappings), {(b, s) for b in BENCHMARKS for s in SEEDS})
+
+    def test_matrix_benchmarks_use_the_g0_ten_by_ten_sources(self):
+        self.assertEqual(DATASETS["hotpotqa"], ("scope", "data/hotpotqa"))
+        self.assertEqual(DATASETS["mathqa"], ("scope", "data/mathqa"))
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ import subprocess
 import sys
 from typing import Any
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
@@ -79,6 +81,25 @@ def main() -> None:
     rows: list[dict[str, Any]] = []
     missing: list[dict[str, Any]] = []
     invalid: list[dict[str, Any]] = []
+    truth_references: dict[str, dict[str, Any]] = {}
+
+    for benchmark in BENCHMARKS:
+        baseline_path = result_path(
+            G0_CONFIGURATION, benchmark, SEEDS[0], output_root=root
+        )
+        baseline = read_json(baseline_path)
+        if baseline is None:
+            raise FileNotFoundError(f"missing G0 truth reference: {baseline_path}")
+        baseline_run = baseline["run"]
+        truth_references[benchmark] = {
+            "raw_truth": np.asarray(
+                baseline_run["raw_truth_vectors"], dtype=np.float64
+            ),
+            "model_names": list(baseline_run["model_names"]),
+            "bruteforce_search_cost_usd": float(
+                baseline_run["bruteforce_search_cost_usd"]
+            ),
+        }
 
     for configuration, settings in CONFIGURATIONS.items():
         pair_name = str(settings["pair_name"])
@@ -126,6 +147,37 @@ def main() -> None:
                 cost_mismatch = validate_cost_mode(settings, result)
                 if cost_mismatch is not None:
                     mismatches["acquisition_cost_mode"] = cost_mismatch
+                run = result.get("run", {})
+                truth_reference = truth_references[benchmark]
+                raw_truth = np.asarray(
+                    run.get("raw_truth_vectors", []), dtype=np.float64
+                )
+                reference_truth = truth_reference["raw_truth"]
+                if raw_truth.shape != reference_truth.shape or not np.allclose(
+                    raw_truth, reference_truth, rtol=0.0, atol=1e-15
+                ):
+                    mismatches["raw_truth_vectors"] = {
+                        "expected_shape": list(reference_truth.shape),
+                        "actual_shape": list(raw_truth.shape),
+                        "expected": "identical to the G0 dataset and arm ordering",
+                    }
+                if list(run.get("model_names", [])) != truth_reference["model_names"]:
+                    mismatches["model_names"] = {
+                        "expected_count": len(truth_reference["model_names"]),
+                        "actual_count": len(run.get("model_names", [])),
+                        "expected": "identical to the G0 arm ordering",
+                    }
+                actual_bruteforce_cost = run.get("bruteforce_search_cost_usd")
+                if actual_bruteforce_cost is None or not math.isclose(
+                    float(actual_bruteforce_cost),
+                    truth_reference["bruteforce_search_cost_usd"],
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                ):
+                    mismatches["bruteforce_search_cost_usd"] = {
+                        "expected": truth_reference["bruteforce_search_cost_usd"],
+                        "actual": actual_bruteforce_cost,
+                    }
                 if configuration != G0_CONFIGURATION:
                     for key in ("acquisition_cost_mode", "continuation_mode"):
                         if config.get(key) != settings[key]:

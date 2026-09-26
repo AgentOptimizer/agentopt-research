@@ -81,7 +81,7 @@ CONFIG_COLORS = {
     G0_CONFIGURATION: "#e67e22",
     "g1_q_only_real_cost": "#1f77b4",
     "g2_q_only_unit_cost": "#2ca02c",
-    "g3_two_axis_unit_cost": "#d62728",
+    "g3_two_axis_unit_cost": "#e377c2",
     "g4_d_only_real_cost": "#9467bd",
     "g5_axes_midpoint_real_cost": "#8c564b",
     "g6_five_directions_real_cost": "#17becf",
@@ -102,12 +102,14 @@ class MeanCurve:
     count: np.ndarray
 
 
-def load_runs(results_root: Path) -> tuple[
+def load_runs(
+    results_root: Path, configurations: tuple[str, ...]
+) -> tuple[
     dict[tuple[str, str], list[dict[str, Any]]], dict[str, Any]
 ]:
     runs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     spaces: dict[str, Any] = {}
-    for configuration in CONFIGURATIONS:
+    for configuration in configurations:
         for benchmark in BENCHMARKS:
             dataset_runs = []
             metric_cache: dict[tuple[int, ...], dict[str, float]] = {}
@@ -186,10 +188,11 @@ def load_runs(results_root: Path) -> tuple[
 
 
 def aggregate(
-    runs: dict[tuple[str, str], list[dict[str, Any]]]
+    runs: dict[tuple[str, str], list[dict[str, Any]]],
+    configurations: tuple[str, ...],
 ) -> dict[tuple[str, str, str], MeanCurve]:
     curves = {}
-    for configuration in CONFIGURATIONS:
+    for configuration in configurations:
         for benchmark in BENCHMARKS:
             dataset_runs = runs[(configuration, benchmark)]
             starts = np.asarray(
@@ -225,10 +228,12 @@ def aggregate(
 
 
 def write_curve_csv(
-    path: Path, curves: dict[tuple[str, str, str], MeanCurve]
+    path: Path,
+    curves: dict[tuple[str, str, str], MeanCurve],
+    configurations: tuple[str, ...],
 ) -> None:
     rows = []
-    for configuration in CONFIGURATIONS:
+    for configuration in configurations:
         for benchmark in PANEL_ORDER:
             for metric in METRICS:
                 curve = curves[(configuration, benchmark, metric)]
@@ -253,10 +258,12 @@ def write_curve_csv(
 
 
 def write_run_summary(
-    path: Path, runs: dict[tuple[str, str], list[dict[str, Any]]]
+    path: Path,
+    runs: dict[tuple[str, str], list[dict[str, Any]]],
+    configurations: tuple[str, ...],
 ) -> None:
     rows = []
-    for configuration in CONFIGURATIONS:
+    for configuration in configurations:
         for benchmark in PANEL_ORDER:
             dataset_runs = runs[(configuration, benchmark)]
             terminals = [
@@ -284,10 +291,12 @@ def write_run_summary(
 
 
 def write_checkpoint_csv(
-    path: Path, runs: dict[tuple[str, str], list[dict[str, Any]]]
+    path: Path,
+    runs: dict[tuple[str, str], list[dict[str, Any]]],
+    configurations: tuple[str, ...],
 ) -> None:
     rows = []
-    for configuration in CONFIGURATIONS:
+    for configuration in configurations:
         for benchmark in PANEL_ORDER:
             for run in runs[(configuration, benchmark)]:
                 for checkpoint in (0.10, 0.30):
@@ -379,25 +388,37 @@ def plot_family_metric(
     figure.legend(
         handles=handles,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.005),
-        ncol=min(3, len(handles)),
+        bbox_to_anchor=(0.5, 0.085),
+        ncol=len(handles),
         frameon=False,
-        fontsize=19,
-        columnspacing=1.1,
-        handletextpad=0.6,
+        fontsize=20,
+        columnspacing=0.6,
+        handlelength=1.6,
+        handletextpad=0.5,
     )
     figure.supxlabel(
-        "Percentage of Exhaustive Evaluation Cost", fontsize=25, x=0.54, y=0.145
+        "Percentage of Exhaustive Evaluation Cost", fontsize=25, x=0.54, y=0.175
     )
-    figure.supylabel(METRICS[metric], fontsize=25, x=0.025, y=0.56)
-    figure.suptitle(FAMILY_LABELS[family], fontsize=27, y=0.985)
+    figure.supylabel(METRICS[metric], fontsize=25, x=0.010, y=0.585)
+    figure.suptitle(FAMILY_LABELS[family], fontsize=27, y=1.055)
     figure.subplots_adjust(
-        left=0.08, right=0.985, top=0.91, bottom=0.27, wspace=0.34, hspace=0.42
+        left=0.08, right=0.985, top=0.93, bottom=0.30, wspace=0.34, hspace=0.42
     )
     stem = output / "curves" / family / f"{family}_{metric}_0_30pct"
     stem.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(stem.with_suffix(".png"), dpi=300, facecolor="white")
-    figure.savefig(stem.with_suffix(".pdf"), facecolor="white")
+    figure.savefig(
+        stem.with_suffix(".png"),
+        dpi=300,
+        facecolor="white",
+        bbox_inches="tight",
+        pad_inches=0.08,
+    )
+    figure.savefig(
+        stem.with_suffix(".pdf"),
+        facecolor="white",
+        bbox_inches="tight",
+        pad_inches=0.08,
+    )
     plt.close(figure)
 
 
@@ -426,41 +447,78 @@ def main() -> None:
     parser.add_argument("--results-root", type=Path, default=DEFAULT_OUTPUT_ROOT)
     parser.add_argument("--output", type=Path, default=DEFAULT_FIGURE_ROOT)
     parser.add_argument("--reuse-cache", action="store_true")
+    parser.add_argument(
+        "--families",
+        nargs="+",
+        choices=tuple(FAMILIES),
+        default=None,
+        help="Plot only these ablation families as soon as their runs finish.",
+    )
     args = parser.parse_args()
     results_root = args.results_root.resolve()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
-    cache_path = output / "ablation_plot_cache.pkl"
+    families = tuple(FAMILIES) if args.families is None else tuple(args.families)
+    requested = {
+        configuration
+        for family in families
+        for configuration in FAMILIES[family]
+    }
+    configurations = tuple(
+        configuration
+        for configuration in CONFIGURATIONS
+        if configuration in requested
+    )
+    is_full_plot = families == tuple(FAMILIES)
+    suffix = "" if is_full_plot else "_" + "_".join(families)
+    cache_path = output / f"ablation_plot_cache{suffix}.pkl"
     if args.reuse_cache:
         with cache_path.open("rb") as handle:
             payload = pickle.load(handle)
-        if payload.get("version") != CACHE_VERSION:
+        if (
+            payload.get("version") != CACHE_VERSION
+            or tuple(payload.get("configurations", ())) != configurations
+        ):
             raise ValueError(f"unsupported cache version in {cache_path}")
         runs = payload["runs"]
         spaces = payload["spaces"]
         curves = payload["curves"]
     else:
-        runs, spaces = load_runs(results_root)
-        curves = aggregate(runs)
+        runs, spaces = load_runs(results_root, configurations)
+        curves = aggregate(runs, configurations)
         write_cache(
             cache_path,
-            {"version": CACHE_VERSION, "runs": runs, "spaces": spaces, "curves": curves},
+            {
+                "version": CACHE_VERSION,
+                "configurations": configurations,
+                "runs": runs,
+                "spaces": spaces,
+                "curves": curves,
+            },
         )
 
     configure_matplotlib()
-    write_curve_csv(output / "ablation_curve_summary.csv", curves)
-    write_run_summary(output / "ablation_terminal_summary.csv", runs)
-    write_checkpoint_csv(output / "ablation_checkpoint_metrics.csv", runs)
-    for family, configurations in FAMILIES.items():
+    curve_name = f"ablation_curve_summary{suffix}.csv"
+    terminal_name = f"ablation_terminal_summary{suffix}.csv"
+    checkpoint_name = f"ablation_checkpoint_metrics{suffix}.csv"
+    write_curve_csv(output / curve_name, curves, configurations)
+    write_run_summary(output / terminal_name, runs, configurations)
+    write_checkpoint_csv(output / checkpoint_name, runs, configurations)
+    for family in families:
+        family_configurations = FAMILIES[family]
         for metric in METRICS:
-            plot_family_metric(output, family, configurations, metric, curves)
+            plot_family_metric(
+                output, family, family_configurations, metric, curves
+            )
 
     manifest = {
         "baseline": G0_CONFIGURATION,
         "baseline_source_configuration": "g2_exact_axes",
         "baseline_reused_without_rerun": True,
-        "configurations": CONFIGURATIONS,
-        "families": FAMILIES,
+        "configurations": {
+            name: CONFIGURATIONS[name] for name in configurations
+        },
+        "families": {name: FAMILIES[name] for name in families},
         "datasets": PANEL_ORDER,
         "seeds": SEEDS,
         "displayed_cost_fraction_range": [0.0, CUTOFF],
@@ -470,24 +528,25 @@ def main() -> None:
         "metric_space": "same shared reciprocal-cost desirability space as G2 main figures",
         "uncertainty": "mean +/- 2 standard errors over 20 matched seeds",
         "all_displayed_curve_points_have_n_runs": len(SEEDS),
-        "plot_ready_curve_data": "ablation_curve_summary.csv",
-        "checkpoint_data": "ablation_checkpoint_metrics.csv",
-        "terminal_data": "ablation_terminal_summary.csv",
+        "plot_ready_curve_data": curve_name,
+        "checkpoint_data": checkpoint_name,
+        "terminal_data": terminal_name,
     }
-    (output / "plot_manifest.json").write_text(
+    (output / f"plot_manifest{suffix}.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
-    (output / "README.md").write_text(
-        "# Gittins ablations around G0\n\n"
-        "G0 is the current paper method previously stored as `g2_exact_axes`: "
-        "two exact axes, real per-arm continuation cost, asynchronous eta decay, "
-        "and 1:1 interleaving. The plots are grouped into cost mechanism, "
-        "directions, continuation, and scheduler comparisons. Overlapping controls "
-        "are run once and reused across panels. Curves show 0--30% of exhaustive "
-        "USD evaluation cost and carry a stopped run's last recommendation forward "
-        "as an output only; no synthetic point is treated as an evaluation.\n",
-        encoding="utf-8",
-    )
+    if is_full_plot:
+        (output / "README.md").write_text(
+            "# Gittins ablations around G0\n\n"
+            "G0 is the current paper method previously stored as `g2_exact_axes`: "
+            "two exact axes, real per-arm continuation cost, asynchronous eta decay, "
+            "and 1:1 interleaving. The plots are grouped into cost mechanism, "
+            "directions, continuation, and scheduler comparisons. Overlapping controls "
+            "are run once and reused across panels. Curves show 0--30% of exhaustive "
+            "USD evaluation cost and carry a stopped run's last recommendation forward "
+            "as an output only; no synthetic point is treated as an evaluation.\n",
+            encoding="utf-8",
+        )
     print(output)
 
 

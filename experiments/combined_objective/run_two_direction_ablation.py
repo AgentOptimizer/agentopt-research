@@ -44,8 +44,8 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
 
 
 DATASETS = {
-    "hotpotqa": ("pickle", "experiments/data/lookup/hotpotqa_lookup.pkl"),
-    "mathqa": ("pickle", "experiments/data/lookup/mathqa_lookup.pkl"),
+    "hotpotqa": ("scope", "data/hotpotqa"),
+    "mathqa": ("scope", "data/mathqa"),
     "restaurant_test": ("scope", "data/scope/restaurant_test"),
     "stackoverflow": ("scope", "data/scope/stackoverflow"),
     "bird_dev": ("scope", "data/scope/bird_dev"),
@@ -229,7 +229,23 @@ def build_plotting_payload(
 def _input_files(kind: str, path: Path) -> list[Path]:
     if kind == "pickle":
         return [path]
-    return [path / name for name in ("accuracy_matrix.csv", "cost_matrix_usd.csv", "metadata.json")]
+    files = [
+        path / name
+        for name in ("accuracy_matrix.csv", "cost_matrix_usd.csv", "metadata.json")
+    ]
+    files.extend(
+        candidate
+        for candidate in (
+            path / "input_token_matrix.csv",
+            path / "output_token_matrix.csv",
+            path / "total_token_matrix.csv",
+        )
+        if candidate.is_file()
+    )
+    price_file = ROOT / "data/aws_bedrock_prices_10x10.json"
+    if path.name in {"hotpotqa", "mathqa"} and price_file.is_file():
+        files.append(price_file)
+    return files
 
 
 def load_benchmark(benchmark: str):
