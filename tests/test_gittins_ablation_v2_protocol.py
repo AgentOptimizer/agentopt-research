@@ -110,6 +110,7 @@ class GittinsAblationV2ProtocolTests(unittest.TestCase):
                     self.assertEqual(mapping["seed"], SEEDS[-1])
                     command = mapping["command"]
                     self.assertNotIn("--eta-decay-schedule", command)
+                    command[command.index("--outdir") + 1] = directory
                     with mock.patch("sys.argv", command[2:]), mock.patch.object(runner, "run_one") as run:
                         runner.main()
                     options = run.call_args.kwargs
@@ -130,8 +131,6 @@ class GittinsAblationV2ProtocolTests(unittest.TestCase):
             argv = ["task", "--configuration", G0_CONFIGURATION,
                     "--task-id", "5", "--output-root", directory]
             with mock.patch("sys.argv", argv), mock.patch.object(task.subprocess, "run", side_effect=run_command), \
-                    mock.patch.object(task, "git_output", return_value="test"), \
-                    mock.patch.object(task.platform, "platform", return_value="test-platform"), \
                     mock.patch.object(task, "protocol_result_path", side_effect=AssertionError("G0 must bootstrap itself")), \
                     contextlib.redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as stopped:
                 task.main()

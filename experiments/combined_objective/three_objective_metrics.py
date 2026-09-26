@@ -16,6 +16,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 from experiments.single_objective.offline_selector_sim import LookupTable, SampleResult
+from experiments.combined_objective.anonymous_metadata import artifact_reference
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,8 +43,7 @@ def benchmark_input_hashes(benchmark_or_path: str | Path) -> dict[str, str]:
     for path in files:
         if not path.is_file():
             raise ValueError(f"missing three-objective matrix: {path}")
-        resolved = path.resolve()
-        key = str(resolved.relative_to(ROOT)) if resolved.is_relative_to(ROOT) else str(resolved)
+        key = artifact_reference(path, root=ROOT)
         hashes[key] = hashlib.sha256(path.read_bytes()).hexdigest()
     return hashes
 

@@ -9,12 +9,15 @@ import json
 import os
 from pathlib import Path
 import platform
-import resource
-import socket
 import subprocess
 import sys
 import time
 from typing import Any
+
+try:
+    import resource
+except ImportError:  # The standard-library resource module is Unix-only.
+    resource = None
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +32,7 @@ from experiments.combined_objective.gittins_ablation_v2 import (  # noqa: E402
     SEEDS,
     result_path as protocol_result_path,
 )
+from experiments.combined_objective.anonymous_metadata import artifact_reference  # noqa: E402
 
 
 def sha256_file(path: Path) -> str | None:
@@ -39,15 +43,6 @@ def sha256_file(path: Path) -> str | None:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def git_output(*args: str) -> str | None:
-    try:
-        return subprocess.check_output(
-            ["git", *args], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
-        ).strip()
-    except (OSError, subprocess.CalledProcessError):
-        return None
 
 
 def atomic_json_dump(path: Path, value: Any) -> None:
@@ -93,21 +88,24 @@ def task_mapping(task_id: int) -> tuple[str, int]:
 
 
 def selected_slurm_environment() -> dict[str, str]:
+    """Record resource allocations, excluding cluster and job identifiers."""
     names = (
-        "SLURM_JOB_ID",
-        "SLURM_ARRAY_JOB_ID",
-        "SLURM_ARRAY_TASK_ID",
-        "SLURM_JOB_NAME",
-        "SLURM_JOB_ACCOUNT",
-        "SLURM_JOB_PARTITION",
         "SLURM_CPUS_PER_TASK",
         "SLURM_MEM_PER_NODE",
         "SLURM_MEM_PER_CPU",
         "SLURM_TIMELIMIT",
-        "SLURM_SUBMIT_DIR",
-        "SLURM_JOB_NODELIST",
     )
     return {name: os.environ[name] for name in names if name in os.environ}
+
+
+def child_resource_usage() -> Any | None:
+    """Return Unix child-process counters when this platform supports them."""
+    if resource is None:
+        return None
+    try:
+        return resource.getrusage(resource.RUSAGE_CHILDREN)
+    except OSError:
+        return None
 
 
 def main() -> None:
@@ -158,6 +156,14 @@ def main() -> None:
         str(seed_root),
         "--skip-combined-export",
     ]
+    # The actual subprocess uses local absolute paths; the recorded command is
+    # relocatable and never includes the submitter's home or output directory.
+    public_command = command.copy()
+    public_command[0] = "python"
+    public_command[2] = runner_path.relative_to(ROOT).as_posix()
+    public_command[public_command.index("--outdir") + 1] = (
+        Path("results") / seed_root.relative_to(output_root)
+    ).as_posix()
     mapping = {
         "task_id": task_id,
         "task_count": len(BENCHMARKS) * len(SEEDS),
@@ -166,9 +172,10 @@ def main() -> None:
         "benchmark": benchmark,
         "seed": seed,
         "pair_name": pair_name,
-        "result_path": str(result_path),
-        "metadata_path": str(metadata_path),
-        "command": command,
+        "path_base": "results",
+        "result_path": (Path("results") / result_path.relative_to(output_root)).as_posix(),
+        "metadata_path": (Path("results") / metadata_path.relative_to(output_root)).as_posix(),
+        "command": public_command,
     }
     if args.dry_run:
         print(json.dumps(mapping, indent=2))
@@ -177,9 +184,9 @@ def main() -> None:
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     started_at = datetime.now(timezone.utc)
     started = time.perf_counter()
-    before_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    before_usage = child_resource_usage()
     completed = subprocess.run(command, cwd=ROOT, check=False)
-    after_usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    after_usage = child_resource_usage()
     wall_time = time.perf_counter() - started
     ended_at = datetime.now(timezone.utc)
 
@@ -201,21 +208,21 @@ def main() -> None:
             baseline_payload = json.loads(baseline_path.read_text())
         except (OSError, json.JSONDecodeError) as error:
             validation_error = {
-                "baseline_path": str(baseline_path),
-                "error": f"failed to load G0 truth reference: {error}",
+                "baseline_path": artifact_reference(baseline_path, root=output_root),
+                "error": f"failed to load G0 truth reference ({type(error).__name__})",
             }
         else:
             mismatch = truth_mismatch(result_payload, baseline_payload)
             if mismatch is not None:
                 validation_error = {
-                    "baseline_path": str(baseline_path),
+                    "baseline_path": artifact_reference(baseline_path, root=output_root),
                     "error": "result dataset or arm ordering differs from G0",
                     **mismatch,
                 }
     if validation_error is not None:
         effective_exit_code = 2
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         **mapping,
         "started_at_utc": started_at.isoformat(),
         "ended_at_utc": ended_at.isoformat(),
@@ -225,18 +232,24 @@ def main() -> None:
             if result_payload is None
             else result_payload.get("config", {}).get("wall_time_seconds")
         ),
-        "child_user_cpu_seconds": after_usage.ru_utime - before_usage.ru_utime,
-        "child_system_cpu_seconds": after_usage.ru_stime - before_usage.ru_stime,
-        "child_max_rss_kib": after_usage.ru_maxrss,
+        "child_user_cpu_seconds": (
+            after_usage.ru_utime - before_usage.ru_utime
+            if after_usage is not None and before_usage is not None else None
+        ),
+        "child_system_cpu_seconds": (
+            after_usage.ru_stime - before_usage.ru_stime
+            if after_usage is not None and before_usage is not None else None
+        ),
+        "child_max_rss_kib": (
+            after_usage.ru_maxrss / (1024 if sys.platform == "darwin" else 1)
+            if after_usage is not None else None
+        ),
         "exit_code": effective_exit_code,
         "simulation_exit_code": completed.returncode,
         "g0_truth_validation_error": validation_error,
-        "hostname": socket.gethostname(),
-        "platform": platform.platform(),
-        "python": sys.version,
+        "platform": {"system": platform.system(), "machine": platform.machine()},
+        "python": platform.python_version(),
         "slurm": selected_slurm_environment(),
-        "git_commit": git_output("rev-parse", "HEAD"),
-        "git_status_porcelain": git_output("status", "--porcelain"),
         "source_sha256": {
             "task_wrapper": sha256_file(Path(__file__)),
             "runner": sha256_file(runner_path),

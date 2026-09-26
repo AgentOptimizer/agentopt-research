@@ -46,7 +46,8 @@ def load_supplemental_prices(
     path: Path,
 ) -> tuple[dict[str, dict[str, float]], dict[str, Any]]:
     payload = json.loads(path.read_text(encoding="utf-8"))
-    payload["pricing_file"] = str(path)
+    # Preserve the source filename without recording the caller's filesystem.
+    payload["pricing_file"] = path.name
     per_token = {
         name: {
             "input_price": float(price["input_price"]) / 1_000_000,
@@ -234,7 +235,8 @@ def convert_dataset(
     )
     metadata = {
         "benchmark": source["name"],
-        "source": str(config_path),
+        # Config manifests live under matrices/ in the supplied SCOPE checkout.
+        "source": f"matrices/{config_path.name}",
         "source_database": source["source_db"],
         "shape": [len(accepted), n_questions],
         "orientation": "rows=workflow configurations; columns=question IDs",
@@ -261,7 +263,7 @@ def convert_dataset(
         "excluded_config_ids": [],
         "supplemental_pricing_as_of": pricing_metadata["as_of"],
         "supplemental_price_models_used": supplemental_used,
-        "supplemental_pricing_file": pricing_metadata["pricing_file"],
+        "supplemental_pricing_file": Path(pricing_metadata["pricing_file"]).name,
     }
     (outdir / "metadata.json").write_text(
         json.dumps(metadata, indent=2) + "\n", encoding="utf-8"

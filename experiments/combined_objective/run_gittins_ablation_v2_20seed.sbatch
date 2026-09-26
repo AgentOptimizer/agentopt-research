@@ -1,5 +1,4 @@
 #!/bin/bash
-#SBATCH --account=torch_pr_790_general
 #SBATCH --array=0-159
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=8G

@@ -1,6 +1,6 @@
 {
   "benchmark": "bird_dev",
-  "source": "/scratch/yh6415/project/SCOPE-LLM-optimizer/matrices/bird_dev_75x1534_configs.json",
+  "source": "matrices/bird_dev_75x1534_configs.json",
   "source_database": "workspace/dinsql_results/dinsqlbenchmark_cache.db",
   "shape": [
     275,
@@ -39,5 +39,5 @@
     "qwen-plus",
     "qwen-turbo"
   ],
-  "supplemental_pricing_file": "/scratch/yh6415/project/agentopt-research/data/scope_supplemental_prices.json"
+  "supplemental_pricing_file": "scope_supplemental_prices.json"
 }

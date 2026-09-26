@@ -3,8 +3,8 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentopt-research"
-description = "Research slice of agentopt: offline model-selection algorithms and benchmark replays"
+name = "cc-gittins-supplement"
+description = "CC-Gittins: offline model-selection algorithms and benchmark replays"
 readme = "README.md"
 requires-python = ">=3.10"
 dynamic = ["version"]
@@ -31,12 +31,12 @@ plots = ["matplotlib>=3.6"]
 dotenv = ["python-dotenv>=1.0"]
 
 dev = [
-    "agentopt-research[radial-jax,plots]",
+    "cc-gittins-supplement[radial-jax,plots]",
     "pytest>=7.4",
 ]
 # Everything, including the multi-GB torch/jax stacks.
 all = [
-    "agentopt-research[radial-jax,gittins,bayesian,plots,dotenv]",
+    "cc-gittins-supplement[radial-jax,gittins,bayesian,plots,dotenv]",
 ]
 
 [tool.setuptools]

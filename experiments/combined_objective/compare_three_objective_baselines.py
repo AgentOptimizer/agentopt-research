@@ -24,6 +24,7 @@ from experiments.combined_objective.offline_three_objective_random_search import
 )
 from experiments.combined_objective.offline_pareto_baselines import METHODS as PARETO_METHODS
 from experiments.combined_objective.three_objective_metrics import load_three_objective_benchmark
+from experiments.combined_objective.anonymous_metadata import artifact_reference, shareable_provenance
 
 RESULTS = ROOT / "experiments/combined_objective/results/three_objective_20seed"
 METRICS = ("hypervolume", "relative_hv_regret", "generational_distance", "inverted_generational_distance")
@@ -68,8 +69,8 @@ def compact_gittins(path: Path, input_hashes: dict, *, method: str = "cc_gittins
     result.update(seed=saved["config"]["seed"], selector=method,
                   protocol=saved["config"],
                   question_ids=run.get("question_ids"),
-                  provenance=saved.get("provenance", {}),
-                  source_result=str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else str(path),
+                  provenance=shareable_provenance(saved.get("provenance", {}), root=ROOT),
+                  source_result=artifact_reference(path, root=ROOT),
                   source_sha256=saved["config"]["source_sha256"],
                   warm_start={key: run["points"][0].get(key) for key in (
                       "counts", "total_evaluations", "cumulative_search_cost_usd", "selected_arm_indices")},
@@ -185,7 +186,7 @@ def pareto_runs(benchmark: str, seeds: list[int], root: Path,
                 "bruteforce_search_cost_usd", "cost_fraction", "ground_truth_hypervolume",
                 "total_evaluations", "stop_reason", "points",
             )}
-            compact.update(protocol=config, source_result=str(path),
+            compact.update(protocol=config, source_result=artifact_reference(path, root=ROOT),
                            source_sha256=config["source_sha256"])
             runs.append(compact)
         groups[method] = runs

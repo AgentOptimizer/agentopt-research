@@ -1,4 +1,4 @@
-# AgentOpt Research
+# CC-Gittins: anonymous supplementary code
 
 Offline model-selection algorithms and frozen benchmark matrices for accuracy,
 deployment cost, latency, and token usage. The current paper method is
@@ -12,6 +12,8 @@ eta decay, and finite-LCB recommendations. Gauss-Radau is retired.
 
 The canonical G0–G9 configurations and four ablation families are defined in
 [`gittins_ablation_v2.py`](experiments/combined_objective/gittins_ablation_v2.py).
+Start with the [reviewer instructions](REPRODUCIBILITY.md) for the tested
+environment, a small offline replay, and the contents of the anonymous ZIP.
 See the [experiment guide](experiments/README.md) for full runs, Slurm submission,
 validation, and plots. Use its experiment runner for the paper protocol; the
 lower-level replay APIs also support historical settings.
@@ -22,7 +24,7 @@ Requires Python 3.10+. Run from the repository root:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -e '.[dev]'
+.venv/bin/pip install -c constraints-tested.txt -e '.[radial,plots]' pytest
 .venv/bin/python -m pytest
 
 # Current two-axis method, seed 42, on the committed complete QA matrices
@@ -48,10 +50,12 @@ HotpotQA, using directions Q, (Q+L)/2, L, D:
 See the [latency pilot protocol](experiments/README.md#three-objective-latency-pilot)
 for objective scaling, three-dimensional recommendations, and output plots.
 
+The Python import name `agentopt` is retained for compatibility.
 `import agentopt` needs only `numpy` and `pydantic`. The `dev` extra installs
 SciPy, JAX, Matplotlib, and pytest for the current replay and tests. Other extras
-cover scalar Gittins (`gittins`), Bayesian baselines (`bayesian`), and the full
-optional dependency set (`all`); see [pyproject.toml](pyproject.toml).
+cover Bayesian baselines (`bayesian`) and optional dependencies; see
+[pyproject.toml](pyproject.toml). Legacy scalar-Gittins source modules are
+excluded from the anonymous ZIP and are not needed by CC-Gittins.
 
 ## Data
 
@@ -66,10 +70,9 @@ USD cost, latency in seconds, input tokens, output tokens, and total tokens,
 plus metadata. These matrices have one row per configuration and one column
 per question. See [data/README.md](data/README.md) for formats and regeneration.
 
-Legacy aggregated GPQA/BFCL summaries and lookup pickles live locally under
-`experiments/data/`, which is gitignored. The aggregated CSV columns are
-`Rank`, `Model`, `Accuracy`, `Server Latency (s)`, `Wall Latency (s)`, and
-`Cost ($)`; that schema does not apply to the per-question matrices above.
+The anonymous ZIP includes the complete QA and six SCOPE datasets. Sparse
+duplicates, legacy lookup pickles, and historical results are omitted.
+See [code and data notes](DATA_AND_CODE_NOTES.md) for provenance and scope.
 
 ## Repository layout
 
@@ -87,5 +90,5 @@ experiments/
 
 This repository focuses on offline research; live proxy and evaluation harnesses
 are stubbed or omitted. Generated results and plots are local outputs. The
-[historical results index](experiments/combined_objective/results/README.md)
-records earlier protocols separately from the current experiment guide.
+[results guide](experiments/combined_objective/results/README.md)
+describes output locations and interpretation.

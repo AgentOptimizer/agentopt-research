@@ -1,6 +1,6 @@
 {
   "benchmark": "restaurant_valid",
-  "source": "/scratch/yh6415/project/SCOPE-LLM-optimizer/matrices/restaurant_valid_972x156_configs.json",
+  "source": "matrices/restaurant_valid_972x156_configs.json",
   "source_database": "workspace/unidm_di_results/unidmdataimputationbenchmark_cache.db",
   "shape": [
     972,
@@ -19,5 +19,5 @@
   "supplemental_price_models_used": [
     "claude-4.5-haiku"
   ],
-  "supplemental_pricing_file": "/scratch/yh6415/project/agentopt-research/data/scope_supplemental_prices.json"
+  "supplemental_pricing_file": "scope_supplemental_prices.json"
 }

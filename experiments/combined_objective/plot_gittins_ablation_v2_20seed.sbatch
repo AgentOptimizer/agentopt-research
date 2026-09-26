@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=gittins-ablation-v2-plot
-#SBATCH --account=torch_pr_790_general
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=12G
 #SBATCH --time=02:00:00

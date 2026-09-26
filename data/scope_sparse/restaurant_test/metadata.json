@@ -1,6 +1,6 @@
 {
   "benchmark": "restaurant_test",
-  "source": "/scratch/yh6415/project/SCOPE-LLM-optimizer/matrices/restaurant_test_36x86_configs.json",
+  "source": "matrices/restaurant_test_36x86_configs.json",
   "source_database": "workspace/unidm_di_results/unidmdataimputationbenchmark_cache.db",
   "shape": [
     36,
@@ -25,5 +25,5 @@
   "excluded_config_ids": [],
   "supplemental_pricing_as_of": "2026-09-01",
   "supplemental_price_models_used": [],
-  "supplemental_pricing_file": "/scratch/yh6415/project/agentopt-research/data/scope_supplemental_prices.json"
+  "supplemental_pricing_file": "scope_supplemental_prices.json"
 }

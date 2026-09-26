@@ -1,6 +1,6 @@
 {
   "benchmark": "bird_mini_dev",
-  "source": "/scratch/yh6415/project/SCOPE-LLM-optimizer/matrices/bird_mini_dev_1115x500_configs.json",
+  "source": "matrices/bird_mini_dev_1115x500_configs.json",
   "source_database": "workspace/dinsql_results/dinsqlbenchmark_cache.db",
   "shape": [
     3824,
@@ -29,5 +29,5 @@
     "gemini-3-flash1",
     "gemini-3-flash3"
   ],
-  "supplemental_pricing_file": "/scratch/yh6415/project/agentopt-research/data/scope_supplemental_prices.json"
+  "supplemental_pricing_file": "scope_supplemental_prices.json"
 }

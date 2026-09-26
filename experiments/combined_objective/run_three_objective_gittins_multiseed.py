@@ -37,6 +37,7 @@ from experiments.combined_objective.run_three_objective_gittins import (
     summarize,
 )
 from experiments.combined_objective.three_objective_metrics import enrich_run, load_three_objective_benchmark
+from experiments.combined_objective.anonymous_metadata import artifact_reference, shareable_provenance
 
 DEFAULT_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_20seed"
 DEFAULT_AXES_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_axes_20seed"
@@ -77,9 +78,11 @@ def compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Keep the existing config/run schema and all checkpoint metric values.
 
     This function does not mutate the dense source or recompute its metrics.
-    All lightweight top-level metadata, including calibration, survives.
+    Lightweight metadata survives, with portable, shareable provenance.
     """
     result = {key: value for key, value in payload.items() if key not in ("run", "checkpoints")}
+    if "provenance" in result:
+        result["provenance"] = shareable_provenance(result["provenance"], root=ROOT)
     source = payload["run"]
     run = {key: value for key, value in source.items() if key not in HEAVY_RUN_FIELDS and key != "points"}
     run["points"] = [
@@ -143,7 +146,7 @@ def _receipt(payload: dict[str, Any], path: Path, status: str) -> dict[str, Any]
     config, run = payload["config"], payload["run"]
     return {
         "benchmark": config["benchmark"], "seed": config["seed"], "status": status,
-        "path": str(path), "bytes": path.stat().st_size,
+        "path": artifact_reference(path, root=ROOT), "bytes": path.stat().st_size,
         "total_evaluations": run["total_evaluations"], "cost_fraction": run["cost_fraction"],
         "stop_reason": run["stop_reason"], "point_count": len(run["points"]),
         "simulation_seconds": payload.get("timing", {}).get("simulation_seconds"),
@@ -179,7 +182,7 @@ def run_one(benchmark: str, seed: int, outdir: str | Path | None = None,
             raise ValueError(f"Original arm/question order differs: {original}")
         payload = compact_payload(saved)
         payload["provenance"] = {
-            "source_result": str(original),
+            "source_result": artifact_reference(original, root=ROOT),
             "source_result_sha256": file_sha256(original),
             "compacted_at_utc": datetime.now(timezone.utc).isoformat(),
             "launcher_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

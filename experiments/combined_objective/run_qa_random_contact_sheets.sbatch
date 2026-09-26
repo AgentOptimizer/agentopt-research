@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=qa-random-sheets
-#SBATCH --account=torch_pr_790_general
 #SBATCH --array=0-39
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=4G
@@ -9,7 +8,7 @@
 #SBATCH --error=analysis/vs/random_search_20seeds/slurm/%A_%a.err
 
 set -euo pipefail
-cd /scratch/yh6415/project/agentopt-research
+cd "${SLURM_SUBMIT_DIR:-$PWD}"
 
 benchmarks=(hotpotqa mathqa)
 benchmark_index=$((SLURM_ARRAY_TASK_ID / 20))
@@ -19,7 +18,7 @@ version="${RANDOM_VERSION:-random_configurations}"
 start_seconds=$SECONDS
 
 MPLCONFIGDIR=/tmp/mpl-qa-random-${SLURM_JOB_ID} \
-  .venv-plot/bin/python -u \
+  "${AGENTOPT_PYTHON:-.venv-plot/bin/python}" -u \
   experiments/combined_objective/plot/plot_multiobjective_random_search.py \
   --outdir experiments/combined_objective/results/qa_random_20seeds \
   --benchmarks "$benchmark" --seed "$seed" \

@@ -1,5 +1,11 @@
 # Extracted response matrices
 
+The anonymous archive includes `hotpotqa/`, `mathqa/`, and all six complete
+datasets under `scope/`. It omits the optional `scope_sparse/` duplicates.
+The frozen matrices are sufficient for the documented CC-Gittins replays;
+the extraction commands below are provenance tools that require external
+inputs, not setup steps. See [code and data notes](../DATA_AND_CODE_NOTES.md).
+
 Each HotpotQA and MathQA directory contains six separate matrices:
 
 - `accuracy_matrix.csv`: benchmark score for each cell;

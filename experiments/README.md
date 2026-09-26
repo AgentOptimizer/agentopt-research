@@ -272,6 +272,8 @@ Pareto baselines remain in `offline_pareto_baselines.py` and
 library support needed by these comparisons and their regression tests. The
 old scheduler, eta, and recommendation experiment commands have been removed.
 
-Historical results are indexed in [results/README.md](combined_objective/results/README.md).
-They do not define current defaults; reproduce retired protocols from their
-corresponding Git versions.
+Output locations and interpretation are described in
+[results/README.md](combined_objective/results/README.md). The anonymous archive
+includes current source and complete replay matrices, not historical results
+or local lookup pickles. See the [reviewer instructions](../REPRODUCIBILITY.md)
+for a bounded smoke test and the scope of the tested environment.
