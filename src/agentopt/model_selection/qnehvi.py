@@ -2,8 +2,8 @@
 
 The live Bayesian selector in :mod:`agentopt.model_selection.bayesian_optimization`
 fits a MixedSingleTaskGP and scores single-objective Expected Improvement.
-This module is the two-objective counterpart used by the offline Pareto
-baselines: a ModelListGP of two MixedSingleTaskGPs and BoTorch's noisy
+This module is the multi-objective counterpart used by the offline Pareto
+baselines: a ModelListGP of one MixedSingleTaskGP per objective and BoTorch's noisy
 expected hypervolume improvement, evaluated on a finite candidate set.
 
 qNEHVI has no identification stopping time. Callers run it until the
@@ -96,7 +96,8 @@ def select_qnehvi_index(
 ) -> int:
     """Return the candidate index with largest qNEHVI.
 
-    ``train_objectives`` and the acquisition are maximization-valued.
+    ``train_objectives`` has one column per maximization-valued objective
+    (at least two); ``reference_point`` must have the same length.
     ``candidate_features`` may repeat previously observed configurations;
     qNEHVI treats those as additional noisy evaluations of the same point.
     """
@@ -120,15 +121,16 @@ def select_qnehvi_index(
     cand_x = _finite_2d(candidate_features, "candidate_features")
     if train_x.shape[0] != train_y.shape[0]:
         raise ValueError("train_features and train_objectives must have the same rows")
-    if train_y.shape[1] != 2:
-        raise ValueError("train_objectives must have two columns")
+    n_objectives = train_y.shape[1]
+    if n_objectives < 2:
+        raise ValueError("train_objectives must have at least two columns")
     if cand_x.shape[1] != train_x.shape[1]:
         raise ValueError("candidate_features must match train_features columns")
     if cand_x.shape[0] < 1:
         raise ValueError("candidate_features must be nonempty")
     ref = np.asarray(reference_point, dtype=np.float64)
-    if ref.shape != (2,) or not np.all(np.isfinite(ref)):
-        raise ValueError("reference_point must be a finite length-2 vector")
+    if ref.shape != (n_objectives,) or not np.all(np.isfinite(ref)):
+        raise ValueError(f"reference_point must be a finite length-{n_objectives} vector")
     cat_dims = [int(dim) for dim in categorical_dims]
     if not cat_dims:
         raise ValueError("categorical_dims must be nonempty")
@@ -142,7 +144,7 @@ def select_qnehvi_index(
     ref_t = torch.as_tensor(ref, dtype=dtype)
 
     outcomes: List[Any] = []
-    for obj in range(2):
+    for obj in range(n_objectives):
         outcomes.append(
             MixedSingleTaskGP(
                 train_X=x_train,

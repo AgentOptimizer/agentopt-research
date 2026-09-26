@@ -37,6 +37,17 @@ The full observation budget is an upper limit; the policy may stop earlier.
 For the canonical eight-benchmark × 20-seed ablation grid, use the task wrapper
 in the [experiment guide](experiments/README.md#retained-ablations).
 
+An exploratory three-objective run adds measured latency on MathQA and
+HotpotQA, using directions Q, (Q+L)/2, L, D:
+
+```bash
+.venv/bin/python -m experiments.combined_objective.run_three_objective_gittins \
+  --benchmarks mathqa hotpotqa --seed 42
+```
+
+See the [latency pilot protocol](experiments/README.md#three-objective-latency-pilot)
+for objective scaling, three-dimensional recommendations, and output plots.
+
 `import agentopt` needs only `numpy` and `pydantic`. The `dev` extra installs
 SciPy, JAX, Matplotlib, and pytest for the current replay and tests. Other extras
 cover scalar Gittins (`gittins`), Bayesian baselines (`bayesian`), and the full

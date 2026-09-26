@@ -67,6 +67,121 @@ to both plotters. The estimated/actual plot requires a non-null
 `search_cost_checkpoint_10pct`; restrict its `--benchmarks` to runs that reached
 10% actual spend. An earlier stop remains valid for the other diagnostics.
 
+## Three-objective latency pilot
+
+The separate latency pilot uses the complete MathQA and HotpotQA matrices and
+the fixed direction order **Q, (Q+L)/2, L, D**, with coordinates `(Q, L, D)`:
+`(1,0,0)`, `(0.5,0.5,0)`, `(0,1,0)`, `(0,0,1)`. Q maximizes accuracy; L
+minimizes mean latency in seconds; D minimizes mean deployment cost in USD.
+The midpoint denotes a radial direction in normalized Q–L reward space, using
+the existing radial Gittins utility; it is not an arithmetic average of
+accuracy and seconds. Each endpoint uses the existing scalar DP.
+
+```bash
+.venv/bin/python -m experiments.combined_objective.run_three_objective_gittins \
+  --benchmarks mathqa hotpotqa --seed 42
+```
+
+This exploratory run keeps the two-objective paper protocol above unchanged.
+It uses independent per-arm question orders, four-question warm and adaptive
+batches, shared observations across all objectives, round-robin scheduling,
+independent eta decay from 1 by 0.5, and a 129-point DP grid. Latency and USD
+posteriors are fitted in raw mean units. Their affine reward scales and noise
+estimates are frozen from the warm observations. All four directions use
+expected **USD** continuation costs; latency is an objective, not search spend.
+
+Recommendations use the three-dimensional finite-test conservative frontier:
+`(Q_mean - std, L_mean + std, D_mean + std)`. Full-matrix values are used only
+for offline scoring. Precision and recall compare with the true 3D frontier;
+hypervolume uses `(Q, R_L/(R_L+mean_L), R_D/(R_D+mean_D))`, with positive
+full-data median scales for evaluation only and a zero reference point.
+The four acquisition directions need not recover every 3D Pareto configuration.
+
+Results, per-batch recommendations, direction traces, input/source hashes,
+and plots are written under
+`combined_objective/results/three_objective_ql_midpoint_d/seed_42/`.
+The 100% observation budget is an upper limit; the policy can stop earlier.
+Saved 5%/10%/20%/30%/50% checkpoints use the latest completed batch at or below
+the target fraction of exhaustive USD spend, and are unavailable if the run
+never reaches the target. To regenerate figures from saved results:
+
+```bash
+.venv/bin/python -m experiments.combined_objective.run_three_objective_gittins --plot-only
+```
+
+Use a fresh `--outdir` for changed inputs, code, seeds, or protocol parameters.
+
+For a matched 20-seed comparison (42–61) on both QA datasets:
+
+```bash
+.venv/bin/python -m experiments.combined_objective.run_three_objective_gittins_multiseed
+.venv/bin/python -m experiments.combined_objective.run_three_objective_gittins_multiseed \
+  --variant axes_only
+.venv/bin/python -m experiments.combined_objective.compare_three_objective_baselines \
+  --axes-root experiments/combined_objective/results/three_objective_axes_20seed
+```
+
+The batch runner stores compact per-batch recommendation/metric trajectories
+under `combined_objective/results/three_objective_20seed/` and can reuse the
+validated existing seed-42 pilot. The `axes_only` variant uses exactly **Q, L, D**
+in that order and saves separately under `three_objective_axes_20seed/`; it never
+reuses the four-direction seed-42 pilot. All three directions use scalar DP.
+Paired runs share warm observations and calibration, question orders, batch
+sizes, USD penalties, eta schedules, and recommendation rules. Removing the
+midpoint changes the round-robin visits from four directions to three.
+The comparison verifies the paired protocol and calibration, and adds 20 seeds
+each of:
+
+- `random_questions`: a nested shared random question prefix evaluated on every
+  configuration, recommending its empirical three-objective Pareto set.
+- `random_configurations`: a nested random configuration prefix, evaluating
+  every question for each chosen configuration and recommending its empirical
+  three-objective Pareto set.
+
+The included methods use the same actual-USD budget checkpoints and full-data
+evaluation coordinates. A checkpoint takes the latest completed unit at or
+below its budget; it never interpolates or includes a future unit. An early
+policy stop retains its final recommendation at larger budgets without adding
+spend. The comparison covers the methods' original recommendation rules:
+CC-Gittins finite LCB versus empirical means for the random baselines.
+
+Primary plots show normalized HV, GD, and IGD, with means and 10–90% seed
+percentile bands for every method. A separate plot expands small HV regrets.
+GD/IGD retain the repository convention of filtering the returned set to its
+nondominated subset in true evaluation coordinates before taking mean nearest
+Euclidean distances. GD can therefore be zero despite missing true-front
+regions; read it together with IGD and HV. Figures, checkpoints, and a report
+are saved under `three_objective_20seed/comparison/`. The four-direction Gittins
+is orange; the Q/L/D-only variant is blue with a dashed line. Omit `--axes-root`
+to reproduce the original comparison without the axes-only variant.
+
+To add the Pareto identification baselines in the same three-objective space,
+run EGE-SH, EGE-SR, APE-k, and qNEHVI with matching seeds, then pass their
+saved directory to the comparison:
+
+```bash
+.venv/bin/python -m experiments.combined_objective.run_three_objective_pareto_baselines \
+  --benchmarks mathqa hotpotqa --seeds $(seq 42 61)
+.venv/bin/python -m experiments.combined_objective.compare_three_objective_baselines \
+  --axes-root experiments/combined_objective/results/three_objective_axes_20seed \
+  --pareto-root experiments/combined_objective/results/three_objective_pareto_baselines
+```
+
+The Pareto runner reuses the existing EGE/APE/qNEHVI sampling rules with
+`(Q,L,D)` observations. It recomputes recommendation checkpoints after the
+run, using the same three-dimensional HV, GD, IGD, precision, and recall as
+Gittins and random search; oracle diagnostics never feed acquisition. Search
+spend is the sum of observed USD costs;
+comparison checkpoints take the latest completed pull at or below each actual
+USD target. Full-data metric scales are evaluation-only and never enter
+acquisition. The observation fraction remains a cap on evaluated matrix cells,
+so use its default `1.0` for the full nested cost trajectory. APE-k retains the
+existing fixed-budget sampler: its paper's `k` stopping condition is not
+implemented. Runs are saved under `three_objective_pareto_baselines/seed_<n>/`
+with input and source hashes; changed protocols require a new output directory.
+For a smaller run, pass the same method names to `--methods` on the runner and
+`--pareto-methods` on the comparison command.
+
 ## Retained ablations
 
 The single source of truth is `gittins_ablation_v2.CONFIGURATIONS` and `FAMILIES`.
