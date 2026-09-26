@@ -11,6 +11,7 @@
   "pricing_file": "../aws_bedrock_prices_10x10.json",
   "orientation": "rows=model configurations; columns=question IDs",
   "blank_cells": "missing lookup-table observations, not zero",
+  "latency_definition": "end-to-end wall-clock seconds for the workflow cell",
   "input_token_definition": "sum of input tokens across workflow calls",
   "output_token_definition": "sum of output tokens across workflow calls",
   "total_token_definition": "input plus output tokens",

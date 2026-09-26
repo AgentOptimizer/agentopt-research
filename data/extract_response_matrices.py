@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Regenerate the committed response matrices from the research lookup pickles.
 
-Writes, per benchmark, five configuration-by-question matrices plus a
+Writes, per benchmark, six configuration-by-question matrices plus a
 ``metadata.json`` describing shape, missingness and the highest-cost cells.
 
 The source is the current research lookup pickle under
@@ -35,6 +35,7 @@ TOP_COST_CELLS = 20
 MATRIX_NAMES = (
     "accuracy_matrix",
     "cost_matrix_usd",
+    "latency_matrix_seconds",
     "input_token_matrix",
     "output_token_matrix",
     "total_token_matrix",
@@ -62,6 +63,7 @@ def _cell_values(sample: SampleResult) -> Cell:
     return {
         "accuracy_matrix": sample.score,
         "cost_matrix_usd": sample.cost,
+        "latency_matrix_seconds": sample.latency_seconds,
         "input_token_matrix": input_tokens,
         "output_token_matrix": output_tokens,
         "total_token_matrix": input_tokens + output_tokens,
@@ -124,8 +126,11 @@ def extract_benchmark(benchmark: str, pickle_path: Path, outdir: Path) -> Cell:
         "shape": [len(models), len(datapoints)],
         "observed_cells": observed,
         "missing_cells": len(models) * len(datapoints) - observed,
+        "cost_definition": "sum(model input tokens * input price + model output tokens * output price)",
+        "pricing_file": "../aws_bedrock_prices_10x10.json",
         "orientation": "rows=model configurations; columns=question IDs",
         "blank_cells": "missing lookup-table observations, not zero",
+        "latency_definition": "end-to-end wall-clock seconds for the workflow cell",
         **TOKEN_DEFINITIONS,
         "source_note": SOURCE_NOTE,
         "top_20_cost_cells": cost_cells[:TOP_COST_CELLS],
