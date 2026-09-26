@@ -39,20 +39,23 @@ From the repository root, after installing the project dependencies:
 
 ```bash
 python -m experiments.combined_objective.run_two_direction_ablation \
-  --pairs gauss_radau_accuracy_endpoint \
+  --pairs exact_axes \
   --benchmarks stackoverflow bird_dev restaurant_valid
 
 python -m experiments.combined_objective.plot.plot_estimated_actual_10pct \
-  --pair gauss_radau_accuracy_endpoint \
+  --pair exact_axes \
   --benchmarks stackoverflow bird_dev restaurant_valid \
-  --results experiments/combined_objective/results/two_direction_finite_lcb_raw_mean_estimated_actual_seed42_independent
+  --results experiments/combined_objective/results/two_axis_finite_lcb_raw_mean_seed42_independent
 ```
 
 The run writes `search_cost_checkpoint_10pct` into each benchmark's
 `result.json` and adds estimated/actual checkpoint percentages to `summary.json`.
 The plot command writes a paired PNG and PDF next to each `result.json`.
-The example uses the three checked-in `data/scope/` benchmarks. Add
-`hotpotqa mathqa` to both `--benchmarks` lists after placing their local lookup
-pickles in `experiments/data/lookup/`.
+The example uses three `data/scope/` benchmarks. Add `hotpotqa mathqa` to
+both `--benchmarks` lists to use the committed complete 10×10 matrices.
 Use a fresh `--outdir` for new experiments. Older compact `result.json` files
 do not contain the full pull sequence needed to reconstruct this checkpoint.
+
+Unit-cost ablations still estimate dollar spend from the observed warm batch;
+the unit acquisition penalty is not a dollar estimate. Runs that stop before
+10% retain their results with an unavailable checkpoint.

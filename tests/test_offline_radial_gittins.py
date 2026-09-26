@@ -76,6 +76,21 @@ class ParetoMetricTests(unittest.TestCase):
         )
         self.assertEqual(nondominated_indices(points), [0, 1, 2])
 
+    def test_nondominance_sweep_matches_brute_force_with_ties(self):
+        rng = np.random.default_rng(123)
+        for n_points in (0, 1, 2, 10, 100):
+            points = rng.integers(0, 8, size=(n_points, 2)).astype(float)
+            expected = []
+            for i in range(n_points):
+                if not any(
+                    j != i
+                    and np.all(points[j] >= points[i])
+                    and np.any(points[j] > points[i])
+                    for j in range(n_points)
+                ):
+                    expected.append(i)
+            self.assertEqual(nondominated_indices(points), expected)
+
     def test_hypervolume_is_exact_for_two_rectangles(self):
         points = np.array([[0.5, 1.0], [1.0, 0.5]])
         self.assertAlmostEqual(hypervolume_2d(points), 0.75)

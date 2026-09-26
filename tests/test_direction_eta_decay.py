@@ -258,6 +258,65 @@ class DirectionEtaDecayTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "round_robin|direction_scheduler"):
             _run(direction_scheduler="accuracy_last")
 
+    def test_sequential_axis_schedulers_drain_the_requested_axis_first(self):
+        axes = ((1.0, 0.0), (0.0, 1.0))
+        expected = {
+            "quality_then_deployment": axes,
+            "deployment_then_quality": axes[::-1],
+        }
+        for scheduler, wanted in expected.items():
+            with self.subTest(scheduler=scheduler):
+                result = _run(
+                    directions=axes,
+                    direction_scheduler=scheduler,
+                    index_provider=lambda context, arm_index: -100.0,
+                    stop_tolerance=0.0,
+                )
+                visits = _visits(result)
+                first_axis_visits = sum(
+                    tuple(event["direction"]) == wanted[0] for event in visits
+                )
+                self.assertGreater(first_axis_visits, 1)
+                self.assertGreater(len(visits) - first_axis_visits, 1)
+                self.assertEqual(
+                    tuple(tuple(event["direction"]) for event in visits),
+                    (wanted[0],) * first_axis_visits
+                    + (wanted[1],) * (len(visits) - first_axis_visits),
+                )
+                self.assertEqual(result.stop_reason, "direction_eta_numerical_floor")
+
+    def test_sequential_axis_rechecks_stopped_axis_after_shared_observation(self):
+        def index(context, arm_index):
+            if context.direction_index == 0:
+                target = 2 if context.adaptive_pulls[1] else None
+            else:
+                target = 1 if context.adaptive_pulls[1] == 0 else None
+            return 100.0 if arm_index == target else -100.0
+
+        result = _run(
+            directions=((1.0, 0.0), (0.0, 1.0)),
+            direction_scheduler="quality_then_deployment",
+            index_provider=index,
+            lambda_initial=1e-20,
+            stop_tolerance=0.0,
+        )
+        visits = _visits(result)
+        self.assertEqual(visits[0]["direction_index"], 0)
+        self.assertTrue(visits[0]["direction_should_stop"])
+        pulls = [event for event in visits if event["selected_arm"] is not None]
+        self.assertEqual(
+            [(event["direction_index"], event["selected_arm"]) for event in pulls],
+            [(1, 1), (0, 2), (0, 2)],
+        )
+        self.assertEqual(result.stop_reason, "direction_eta_numerical_floor")
+        self.assertEqual(len(set(result.observed_cells)), result.total_evaluations)
+
+    def test_sequential_axis_schedulers_require_both_exact_axes(self):
+        for scheduler in ("quality_then_deployment", "deployment_then_quality"):
+            with self.subTest(scheduler=scheduler):
+                with self.assertRaisesRegex(ValueError, "quality and deployment axes"):
+                    _run(direction_scheduler=scheduler)
+
 
 if __name__ == "__main__":
     unittest.main()

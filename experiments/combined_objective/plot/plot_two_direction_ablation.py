@@ -30,12 +30,12 @@ from experiments.combined_objective.plot.plot_lcb_recommendations import (  # no
 )
 
 
-DEFAULT_RESULTS = (
-    ROOT
-    / "experiments/combined_objective/results"
-    / "two_direction_finite_lcb_raw_mean_seed42_independent"
+from experiments.combined_objective.run_two_direction_ablation import (  # noqa: E402
+    DEFAULT_OUTDIR as DEFAULT_RESULTS,
+    PRIMARY_PAIR as DEFAULT_PAIR,
 )
-DEFAULT_PAIR = "cost_near__accuracy_axis"
+
+
 DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
 
 

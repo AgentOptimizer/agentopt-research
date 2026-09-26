@@ -1,3 +1,8 @@
+> Historical implementation design. The current paper protocol is two-axis
+> CC-Gittins, defined in [gittins_ablation_v2.py](../../../experiments/combined_objective/gittins_ablation_v2.py).
+> Current run commands are in [experiments/README.md](../../../experiments/README.md).
+> The defaults and proposed extensions below describe the original radial prototype.
+
 # Cursor Implementation Spec: Cost-Aware Multi-Objective Radial-Gittins for AgentOpt
 
 ## Goal

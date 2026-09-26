@@ -1,27 +1,18 @@
-#!/usr/bin/env python3
-"""Replay asynchronous eta with an explicit recommendation rule on local datasets.
+"""Library helpers for validating and reading historical recommendation replays.
 
-Uses frozen local lookups, seed 42 and the BIRD experiment's acquisition settings.
-Sampling captures lightweight membership events; diagnostics are built afterwards.
-No figures or live model calls are made. All budget comparisons use actual USD.
+The standalone benchmark command is retired. Maintained experiment commands live
+in the ablation runners; these helpers remain available for saved-result checks.
 """
 from __future__ import annotations
 
-import argparse
 import gzip
 import hashlib
 import json
-import math
-import os
 from pathlib import Path
-import sys
-import tempfile
 import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
-os.environ.setdefault("MPLCONFIGDIR", str(Path(tempfile.gettempdir()) / "agentopt-mpl"))
 
 from agentopt.model_selection.radial_gittins_dp import RadialGittinsBoundaryCache, RadialGittinsGrid
 from experiments.combined_objective.compare_lcb_recommendations import (
@@ -45,7 +36,6 @@ DISPLAY_NAMES = {"hotpotqa": "HotpotQA", "mathqa": "MathQA",
                  "restaurant_test": "Restaurant test", "stackoverflow": "Stack Overflow",
                  "restaurant_valid": "Restaurant validation", "bird_dev": "BIRD Dev"}
 BUDGETS = (0.01, 0.02, 0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50, 0.75, 1.0)
-DEFAULT_OUTDIR = ROOT / "experiments/combined_objective/results/finite_lcb_benchmarks_seed42_beta1_raw_mean_shared_questions"
 
 
 def validate_question_order(question_order):
@@ -233,66 +223,3 @@ def export_summary(outdir, benchmarks):
                   f"sustained={'never' if sustained is None else format(sustained, '.2%'):>8s} "
                   f"retractions={row['highest_accuracy_retraction_count']}", flush=True)
     return summaries, matched
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--benchmarks", nargs="+", choices=tuple(DATASETS), default=list(DEFAULT_BENCHMARKS))
-    parser.add_argument("--beta", type=float, default=1.0)
-    parser.add_argument(
-        "--recommendation-rule", choices=("finite_lcb", "finite_mean", "completed_only"), default="finite_lcb",
-        help="completed_only returns the empirical completed frontier; finite_lcb/finite_mean use full-test means with/without a std penalty and require raw_mean; beta applies to finite_lcb",
-    )
-    parser.add_argument("--recommendation-min-samples", type=int, default=0,
-                        help="Minimum observed questions per recommended arm (finite_lcb/finite_mean only; default: 0)")
-    parser.add_argument("--outdir", type=Path)
-    parser.add_argument("--cost-model", choices=("reciprocal", "raw_mean"), default="raw_mean")
-    parser.add_argument("--cost-reference-usd", type=float, default=None)
-    parser.add_argument("--question-order", choices=("shared", "independent"), default="shared",
-                        help="Use a shared random question order with independent arm progress (default), or reproduce legacy independent orders")
-    parser.add_argument("--summarize-only", action="store_true", help="Rebuild CSV summaries from saved results")
-    args = parser.parse_args()
-    if not math.isfinite(args.beta) or args.beta < 0:
-        parser.error("--beta must be finite and nonnegative")
-    try:
-        validate_recommendation_options(args.recommendation_rule, args.cost_model,
-                                        args.recommendation_min_samples)
-    except ValueError as error:
-        parser.error(str(error))
-    if args.cost_reference_usd is not None and (not math.isfinite(args.cost_reference_usd) or args.cost_reference_usd <= 0):
-        parser.error("--cost-reference-usd must be finite and positive")
-    suffix = ""
-    if args.cost_model != "reciprocal":
-        suffix += f"_{args.cost_model}"
-    if args.cost_reference_usd is not None:
-        suffix += f"_ref{args.cost_reference_usd:g}"
-    if args.question_order == "shared":
-        suffix += "_shared_questions"
-    method_name = f"{args.recommendation_rule}_benchmarks_seed42"
-    if args.recommendation_rule == "finite_mean":
-        args.beta = 0.0
-    if args.recommendation_rule not in ("completed_only", "finite_mean"):
-        method_name += f"_beta{args.beta:g}"
-    if args.recommendation_min_samples:
-        method_name += f"_min{args.recommendation_min_samples}"
-    outdir = args.outdir or DEFAULT_OUTDIR.with_name(f"{method_name}{suffix}")
-    outdir.mkdir(parents=True, exist_ok=True)
-    if not args.summarize_only:
-        for benchmark in args.benchmarks:
-            run_benchmark(
-                benchmark, outdir, args.beta,
-                recommendation_rule=args.recommendation_rule,
-                cost_model=args.cost_model, cost_reference_usd=args.cost_reference_usd,
-                recommendation_min_samples=args.recommendation_min_samples,
-                question_order=args.question_order,
-            )
-            export_summary(outdir, args.benchmarks)
-    else:
-        missing = [name for name in args.benchmarks if not (outdir / name / "comparison.json").exists()]
-        if missing:
-            parser.error(f"Missing saved comparisons: {', '.join(missing)}")
-        export_summary(outdir, args.benchmarks)
-
-
-if __name__ == "__main__":
-    main()
