@@ -9,7 +9,11 @@ experiments/cached_results/
 experiments/combined_objective/plots/
 /plot/
 /analysis/
+/tmp/
 .mplconfig/
+/slurm-*.out
+/slurm_logs/*
+!/slurm_logs/.gitkeep
 
 # Python
 __pycache__/

@@ -226,18 +226,18 @@ def ape_opt_mask(
     counts = _pull_counts(pulls, values.shape[0])
     if not math.isfinite(epsilon1) or epsilon1 < 0.0:
         raise ValueError("epsilon1 must be finite and nonnegative")
-    n_arms = values.shape[0]
-    certified = np.ones(n_arms, dtype=bool)
-    M_ij = pairwise_M(values)
-    for i in range(n_arms):
-        for j in range(n_arms):
-            if i == j:
-                continue
-            bonus = ape_pairwise_bonus(int(counts[i]), int(counts[j]), delta=delta, k1=k1)
-            if M_ij[i, j] - bonus + epsilon1 <= 0.0:
-                certified[i] = False
-                break
-    return certified
+    if values.shape[1] == 2:
+        lower, _competitors, _upper = _ape_pairwise_extrema_2d(
+            values, counts, delta=delta, k1=k1,
+        )
+    else:
+        M_ij, bonuses = _ape_pairwise_scores(
+            values, counts, delta=delta, k1=k1,
+        )
+        lower_matrix = M_ij - bonuses
+        np.fill_diagonal(lower_matrix, np.inf)
+        lower = np.min(lower_matrix, axis=1)
+    return lower + epsilon1 > 0.0
 
 
 def ape_select_arm(
@@ -256,32 +256,236 @@ def ape_select_arm(
     """
     values = _finite_means(means)
     counts = _pull_counts(pulls, values.shape[0])
-    n_arms = values.shape[0]
-    opt = ape_opt_mask(values, counts, epsilon1=epsilon1, delta=delta, k1=k1)
-    unfinished = [i for i in range(n_arms) if not opt[i]]
-    if not unfinished:
+    if not math.isfinite(epsilon1) or epsilon1 < 0.0:
+        raise ValueError("epsilon1 must be finite and nonnegative")
+    if values.shape[1] == 2:
+        lower, competitors, optimistic = _ape_pairwise_extrema_2d(
+            values, counts, delta=delta, k1=k1,
+        )
+    else:
+        M_ij, bonuses = _ape_pairwise_scores(
+            values, counts, delta=delta, k1=k1,
+        )
+        lower_matrix = M_ij - bonuses
+        np.fill_diagonal(lower_matrix, np.inf)
+        lower = np.min(lower_matrix, axis=1)
+        competitors = np.argmin(lower_matrix, axis=1)
+        optimistic_matrix = M_ij + bonuses
+        np.fill_diagonal(optimistic_matrix, np.inf)
+        optimistic = np.min(optimistic_matrix, axis=1)
+    opt = lower + epsilon1 > 0.0
+    unfinished = np.flatnonzero(~opt)
+    if unfinished.size == 0:
         return int(np.argmin(counts))
 
-    M_ij = pairwise_M(values)
-    optimistic = np.empty(n_arms, dtype=np.float64)
-    for i in unfinished:
-        best = math.inf
-        for j in range(n_arms):
-            if i == j:
-                continue
-            bonus = ape_pairwise_bonus(int(counts[i]), int(counts[j]), delta=delta, k1=k1)
-            best = min(best, float(M_ij[i, j] + bonus))
-        optimistic[i] = best
-    b_t = int(max(unfinished, key=lambda i: (optimistic[i], -i)))
-
-    pessimistic = []
-    for j in range(n_arms):
-        if j == b_t:
-            continue
-        bonus = ape_pairwise_bonus(int(counts[b_t]), int(counts[j]), delta=delta, k1=k1)
-        pessimistic.append((float(M_ij[b_t, j] - bonus), j))
-    c_t = min(pessimistic, key=lambda item: (item[0], item[1]))[1]
+    # np.argmax returns the first maximum, matching the old ``-i`` tie-break
+    # because ``unfinished`` is in increasing arm order.
+    b_t = int(unfinished[int(np.argmax(optimistic[unfinished]))])
+    c_t = int(competitors[b_t])
     return int(b_t if counts[b_t] <= counts[c_t] else c_t)
+
+
+def _ape_pairwise_extrema_2d(
+    values: np.ndarray,
+    counts: np.ndarray,
+    *,
+    delta: float,
+    k1: float,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Exact APE row extrema without materializing a ``K x K`` matrix.
+
+    For two objectives, let ``a_i = x_i - y_i``. Then
+
+    ``M(i,j) = x_i-x_j`` when ``a_j <= a_i``, and ``y_i-y_j`` otherwise.
+
+    The APE bonus is constant for all competitors with the same pull count.
+    For each count group we therefore answer every arm's minimum ``M(i,j)``
+    using prefix maxima of x and suffix maxima of y. The result is identical
+    to the all-pairs definition, including exclusion of self and lowest-index
+    tie breaks, while typical work is ``O(K U log K)`` for ``U`` distinct
+    pull counts and memory is linear in ``K``.
+    """
+    if not math.isfinite(delta) or not 0.0 < delta < 1.0:
+        raise ValueError("delta must lie in (0, 1)")
+    if not math.isfinite(k1) or k1 <= 0.0:
+        raise ValueError("k1 must be finite and positive")
+
+    n_arms = int(values.shape[0])
+    arm_ids = np.arange(n_arms, dtype=np.int64)
+    coordinates = values[:, 0] - values[:, 1]
+    lower = np.full(n_arms, np.inf, dtype=np.float64)
+    lower_competitors = np.full(n_arms, -1, dtype=np.int64)
+    upper = np.full(n_arms, np.inf, dtype=np.float64)
+    float_counts = counts.astype(np.float64)
+
+    for group_count in np.unique(counts):
+        group_ids = np.flatnonzero(counts == group_count)
+        group_coordinates = coordinates[group_ids]
+        order = np.lexsort((group_ids, group_coordinates))
+        group_ids = group_ids[order]
+        group_coordinates = group_coordinates[order]
+
+        prefix = _running_top_two(
+            values[group_ids, 0], group_ids, reverse=False,
+        )
+        suffix = _running_top_two(
+            values[group_ids, 1], group_ids, reverse=True,
+        )
+        left_values, left_ids = _query_running_maximum(
+            prefix,
+            np.searchsorted(group_coordinates, coordinates, side="right") - 1,
+            arm_ids,
+        )
+        right_values, right_ids = _query_running_maximum(
+            suffix,
+            np.searchsorted(group_coordinates, coordinates, side="right"),
+            arm_ids,
+        )
+        left_scores = values[:, 0] - left_values
+        right_scores = values[:, 1] - right_values
+        use_right = (right_scores < left_scores) | (
+            (right_scores == left_scores)
+            & (right_ids >= 0)
+            & ((left_ids < 0) | (right_ids < left_ids))
+        )
+        group_minimum = np.where(use_right, right_scores, left_scores)
+        group_competitors = np.where(use_right, right_ids, left_ids)
+        bonuses = _ape_bonus_against_count(
+            float_counts,
+            int(group_count),
+            delta=delta,
+            k1=k1,
+        )
+        group_lower = group_minimum - bonuses
+        replace = (group_lower < lower) | (
+            (group_lower == lower)
+            & (group_competitors >= 0)
+            & (
+                (lower_competitors < 0)
+                | (group_competitors < lower_competitors)
+            )
+        )
+        lower = np.where(replace, group_lower, lower)
+        lower_competitors = np.where(
+            replace, group_competitors, lower_competitors,
+        )
+        upper = np.minimum(upper, group_minimum + bonuses)
+    return lower, lower_competitors, upper
+
+
+def _running_top_two(
+    values: np.ndarray,
+    arm_ids: np.ndarray,
+    *,
+    reverse: bool,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return best and second-best value/id at every prefix or suffix."""
+    n_values = int(values.size)
+    best_values = np.full(n_values, -np.inf, dtype=np.float64)
+    best_ids = np.full(n_values, -1, dtype=np.int64)
+    second_values = np.full(n_values, -np.inf, dtype=np.float64)
+    second_ids = np.full(n_values, -1, dtype=np.int64)
+    best_value = second_value = -math.inf
+    best_id = second_id = -1
+    positions = (
+        range(n_values - 1, -1, -1) if reverse else range(n_values)
+    )
+    for position in positions:
+        value = float(values[position])
+        arm_id = int(arm_ids[position])
+        if value > best_value or (value == best_value and arm_id < best_id):
+            second_value, second_id = best_value, best_id
+            best_value, best_id = value, arm_id
+        elif value > second_value or (
+            value == second_value and arm_id < second_id
+        ):
+            second_value, second_id = value, arm_id
+        best_values[position], best_ids[position] = best_value, best_id
+        second_values[position], second_ids[position] = second_value, second_id
+    return best_values, best_ids, second_values, second_ids
+
+
+def _query_running_maximum(
+    running: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+    positions: np.ndarray,
+    query_ids: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Query running maxima, substituting the runner-up to exclude self."""
+    best_values, best_ids, second_values, second_ids = running
+    values = np.full(query_ids.size, -np.inf, dtype=np.float64)
+    ids = np.full(query_ids.size, -1, dtype=np.int64)
+    valid = (positions >= 0) & (positions < best_values.size)
+    selected_positions = positions[valid]
+    selected_ids = best_ids[selected_positions]
+    selects_self = selected_ids == query_ids[valid]
+    values[valid] = np.where(
+        selects_self,
+        second_values[selected_positions],
+        best_values[selected_positions],
+    )
+    ids[valid] = np.where(
+        selects_self,
+        second_ids[selected_positions],
+        selected_ids,
+    )
+    return values, ids
+
+
+def _ape_bonus_against_count(
+    counts: np.ndarray,
+    other_count: int,
+    *,
+    delta: float,
+    k1: float,
+) -> np.ndarray:
+    """Vectorized ``beta(n_i, other_count)`` with scalar-formula parity."""
+    log_terms = (
+        math.log(k1 / (delta * delta))
+        + np.log(4.0 + np.log(counts))
+        + math.log(4.0 + math.log(other_count))
+    )
+    np.maximum(log_terms, 1e-12, out=log_terms)
+    calibration = log_terms + np.log(log_terms)
+    return np.sqrt(
+        np.maximum(calibration, 0.0)
+        * (1.0 / counts + 1.0 / other_count)
+    )
+
+
+def _ape_pairwise_scores(
+    values: np.ndarray,
+    counts: np.ndarray,
+    *,
+    delta: float,
+    k1: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Vectorized ``(M(i,j), beta(i,j))`` matrices for APE.
+
+    This is algebraically identical to :func:`ape_pairwise_bonus`, but moves
+    the quadratic work out of Python.  APE necessarily compares every arm
+    pair; on 1,000+ arm datasets the old nested scalar loops dominated the
+    entire replay by orders of magnitude.
+    """
+    if not math.isfinite(delta) or not 0.0 < delta < 1.0:
+        raise ValueError("delta must lie in (0, 1)")
+    if not math.isfinite(k1) or k1 <= 0.0:
+        raise ValueError("k1 must be finite and positive")
+
+    first = values[:, 0, None] - values[None, :, 0]
+    for objective in range(1, values.shape[1]):
+        difference = values[:, objective, None] - values[None, :, objective]
+        np.maximum(first, difference, out=first)
+
+    count_logs = np.log(4.0 + np.log(counts.astype(np.float64)))
+    log_terms = count_logs[:, None] + count_logs[None, :]
+    log_terms += math.log(k1 / (delta * delta))
+    np.maximum(log_terms, 1e-12, out=log_terms)
+    calibration = log_terms + np.log(log_terms)
+    np.maximum(calibration, 0.0, out=calibration)
+    inverse_counts = 1.0 / counts
+    calibration *= inverse_counts[:, None] + inverse_counts[None, :]
+    np.sqrt(calibration, out=calibration)
+    return first, calibration
 
 
 def _finite_means(means: np.ndarray) -> np.ndarray:

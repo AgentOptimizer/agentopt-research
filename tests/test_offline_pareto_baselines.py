@@ -37,6 +37,34 @@ def _toy_table(n_questions: int = 16):
 
 
 class ParetoBaselineReplayTests(unittest.TestCase):
+    def test_checkpoint_downsampling_does_not_change_policy(self):
+        models, datapoints, table = _toy_table(n_questions=32)
+        dense = simulate_pareto_baseline(
+            models,
+            datapoints,
+            table,
+            method=APE_K,
+            seed=9,
+            batch_size=2,
+            recommendation_checkpoint_interval=1,
+        )
+        sparse = simulate_pareto_baseline(
+            models,
+            datapoints,
+            table,
+            method=APE_K,
+            seed=9,
+            batch_size=2,
+            recommendation_checkpoint_interval=10,
+        )
+        self.assertEqual(dense.selected_arm_indices, sparse.selected_arm_indices)
+        np.testing.assert_array_equal(
+            dense.estimated_raw_vectors,
+            sparse.estimated_raw_vectors,
+        )
+        self.assertEqual(dense.total_evaluations, sparse.total_evaluations)
+        self.assertLess(len(sparse.recommendation_trajectory), len(dense.recommendation_trajectory))
+
     def test_ege_sh_full_budget_recovers_true_front(self):
         models, datapoints, table = _toy_table()
         result = simulate_pareto_baseline(
