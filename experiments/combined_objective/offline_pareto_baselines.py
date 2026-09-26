@@ -2,7 +2,8 @@
 """Offline Pareto-set baselines: EGE-SH/SR, APE-k sampling, and qNEHVI.
 
 These methods identify a set of configurations under maximize-accuracy /
-minimize-deployment-cost.  They do not use the radial-Gittins direction
+minimize-deployment-cost, optionally including mean latency as a third
+objective.  They do not use the radial-Gittins direction
 scheduler.  Each pull reads one batch of frozen lookup-table questions for
 one configuration.  There is no endogenous stop: a run continues until the
 cell budget is exhausted (or every remaining question has been used).
@@ -69,11 +70,20 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
     hypervolume_2d,
     inverted_generational_distance,
 )
+from experiments.combined_objective.three_objective_metrics import (  # noqa: E402
+    evaluation_space as evaluation_space_3d,
+    front_distance as front_distance_3d,
+    hypervolume_3d,
+    raw_pareto_indices as raw_pareto_indices_3d,
+    raw_truth_vectors as raw_truth_vectors_3d,
+)
 
 
 QNEHVI = "qnehvi"
 METHODS = (EGE_SH, EGE_SR, APE_K, QNEHVI)
 DEFAULT_BATCH_SIZE = 4
+DEFAULT_OBJECTIVES = ("Q", "D")
+THREE_OBJECTIVES = ("Q", "L", "D")
 
 
 @dataclass(frozen=True)
@@ -130,10 +140,12 @@ class _QuestionPuller:
         table: LookupTable,
         *,
         seed: int,
+        objectives: Sequence[str] = DEFAULT_OBJECTIVES,
     ) -> None:
         self.models = tuple(models)
         self.questions = tuple(int(q) for q in questions)
         self.table = table
+        self.objectives = tuple(objectives)
         rng = np.random.default_rng(seed)
         self.remaining: List[List[int]] = [
             [int(q) for q in rng.permutation(self.questions)]
@@ -141,8 +153,7 @@ class _QuestionPuller:
         ]
         n_arms = len(self.models)
         self.n_pulls = np.zeros(n_arms, dtype=np.int64)
-        self.sum_score = np.zeros(n_arms, dtype=np.float64)
-        self.sum_cost = np.zeros(n_arms, dtype=np.float64)
+        self.sums = np.zeros((n_arms, len(self.objectives)), dtype=np.float64)
         self.total_evaluations = 0
         self.total_cost_usd = 0.0
 
@@ -159,17 +170,27 @@ class _QuestionPuller:
         return bool(self.remaining[int(arm)])
 
     def raw_means(self) -> np.ndarray:
-        means = np.full((self.n_arms, 2), np.nan, dtype=np.float64)
+        means = np.full((self.n_arms, len(self.objectives)), np.nan, dtype=np.float64)
         pulled = self.n_pulls > 0
-        means[pulled, 0] = self.sum_score[pulled] / self.n_pulls[pulled]
-        means[pulled, 1] = self.sum_cost[pulled] / self.n_pulls[pulled]
+        means[pulled] = self.sums[pulled] / self.n_pulls[pulled, None]
         return means
 
-    def maximization_means(self, cost_reference_usd: float) -> np.ndarray:
+    def maximization_means(self, references: Sequence[float]) -> np.ndarray:
         raw = self.raw_means()
         if not np.all(self.n_pulls > 0):
             raise ValueError("maximization_means requires at least one pull per arm")
-        return normalized_truth_vectors(raw, cost_reference_usd)
+        scales = np.asarray(references, dtype=np.float64)
+        if scales.shape != (len(self.objectives),) or np.any(scales <= 0.0):
+            raise ValueError("positive algorithm references must match objectives")
+        if self.objectives == DEFAULT_OBJECTIVES:
+            # Preserve the historical two-axis acquisition geometry.
+            return normalized_truth_vectors(raw, float(scales[1]))
+        values = raw.copy()
+        for column, objective in enumerate(self.objectives):
+            if objective != "Q":
+                # Affine transformation preserves the ordering of mean L/D.
+                values[:, column] = 1.0 - raw[:, column] / scales[column]
+        return values
 
     def pull(self, arm: int, n_questions: int) -> int:
         arm_index = int(arm)
@@ -180,9 +201,9 @@ class _QuestionPuller:
         samples = self.table[model]
         for _ in range(take):
             question_id = self.remaining[arm_index].pop()
-            score, cost, _ = _sample_values(samples[question_id])
-            self.sum_score[arm_index] += score
-            self.sum_cost[arm_index] += cost
+            score, cost, latency = _sample_values(samples[question_id])
+            observed = {"Q": score, "L": latency, "D": cost}
+            self.sums[arm_index] += [observed[name] for name in self.objectives]
             self.total_cost_usd += cost
         self.n_pulls[arm_index] += take
         self.total_evaluations += take
@@ -203,6 +224,28 @@ def _validate_fraction(value: float) -> float:
     return fraction
 
 
+def _score_selection(
+    selected: Sequence[int],
+    truth_normalized: np.ndarray,
+    true_front_vectors: np.ndarray,
+    reference: Sequence[float],
+) -> tuple[float, float, float]:
+    dimensions = truth_normalized.shape[1]
+    obtained = (truth_normalized[list(selected)] if selected
+                else np.empty((0, dimensions), dtype=np.float64))
+    if dimensions == 2:
+        hv = hypervolume_2d(obtained, reference) if selected else 0.0
+        gd = generational_distance(obtained, true_front_vectors)
+        igd = inverted_generational_distance(obtained, true_front_vectors)
+    elif dimensions == 3:
+        hv = hypervolume_3d(obtained, reference)
+        gd = front_distance_3d(obtained, true_front_vectors)
+        igd = front_distance_3d(true_front_vectors, obtained)
+    else:
+        raise ValueError("Pareto scoring requires two or three objectives")
+    return float(hv), float(gd), float(igd)
+
+
 def _checkpoint(
     puller: _QuestionPuller,
     *,
@@ -215,12 +258,9 @@ def _checkpoint(
     reference: Sequence[float],
 ) -> BaselineCheckpoint:
     arms = tuple(int(i) for i in selected)
-    obtained = (
-        truth_normalized[list(arms)]
-        if arms
-        else np.empty((0, 2), dtype=np.float64)
+    selected_hv, selected_gd, selected_igd = _score_selection(
+        arms, truth_normalized, true_front_vectors, reference,
     )
-    selected_hv = hypervolume_2d(obtained, reference) if arms else 0.0
     return BaselineCheckpoint(
         cumulative_evaluations=int(puller.total_evaluations),
         cumulative_search_cost_usd=float(puller.total_cost_usd),
@@ -229,21 +269,27 @@ def _checkpoint(
         selected_models=tuple(puller.models[i] for i in arms),
         hypervolume=float(selected_hv),
         hypervolume_regret=float(max(0.0, ground_truth_hv - selected_hv)),
-        generational_distance=generational_distance(obtained, true_front_vectors),
-        inverted_generational_distance=inverted_generational_distance(
-            obtained, true_front_vectors
-        ),
+        generational_distance=selected_gd,
+        inverted_generational_distance=selected_igd,
         event=event,
     )
 
 
+def _raw_pareto_indices(raw: np.ndarray, objectives: Sequence[str]) -> Sequence[int]:
+    if tuple(objectives) == DEFAULT_OBJECTIVES:
+        return pareto_min_cost_indices(raw)
+    if tuple(objectives) == THREE_OBJECTIVES:
+        return raw_pareto_indices_3d(raw)
+    raise ValueError("unsupported objective order")
+
+
 def empirical_raw_pareto_arms(puller: _QuestionPuller) -> Tuple[int, ...]:
-    """Recommend the current raw accuracy/cost Pareto set of sampled arms."""
+    """Recommend the observed raw Pareto set of sampled arms."""
     raw = puller.raw_means()
     sampled = [i for i in range(puller.n_arms) if puller.n_pulls[i] > 0]
     if not sampled:
         return ()
-    local = pareto_min_cost_indices(raw[sampled])
+    local = _raw_pareto_indices(raw[sampled], puller.objectives)
     return tuple(sampled[i] for i in local)
 
 
@@ -255,7 +301,7 @@ def completed_raw_pareto_arms(puller: _QuestionPuller) -> Tuple[int, ...]:
     ]
     if not completed:
         return ()
-    local = pareto_min_cost_indices(puller.raw_means()[completed])
+    local = _raw_pareto_indices(puller.raw_means()[completed], puller.objectives)
     return tuple(completed[i] for i in local)
 
 
@@ -281,16 +327,22 @@ def _warm_start_all(
     return used
 
 
-def _algorithm_cost_reference(
+def _algorithm_references(
     puller: _QuestionPuller,
-    fallback: float,
-) -> float:
+    fallback: Sequence[float],
+) -> np.ndarray:
+    """Scale minimization axes using sampled means only; never oracle means."""
+    references = np.asarray(fallback, dtype=np.float64).copy()
     observed = puller.raw_means()
-    sampled_costs = observed[:, 1][puller.n_pulls > 0]
-    positive = sampled_costs[np.isfinite(sampled_costs) & (sampled_costs > 0.0)]
-    if positive.size == 0:
-        return float(fallback)
-    return float(np.median(positive))
+    for column, objective in enumerate(puller.objectives):
+        if objective == "Q":
+            references[column] = 1.0
+            continue
+        sampled = observed[:, column][puller.n_pulls > 0]
+        positive = sampled[np.isfinite(sampled) & (sampled > 0.0)]
+        if positive.size:
+            references[column] = float(np.median(positive))
+    return references
 
 
 def _run_ege(
@@ -299,13 +351,13 @@ def _run_ege(
     variant: str,
     batch_size: int,
     cell_budget: int,
-    fallback_cost_reference: float,
+    fallback_references: Sequence[float],
     record: Callable[[str, Sequence[int]], None],
-) -> Tuple[Tuple[int, ...], str, float]:
+) -> Tuple[Tuple[int, ...], str, np.ndarray]:
     n_arms = puller.n_arms
     active: Tuple[int, ...] = tuple(range(n_arms))
     accepted: List[int] = []
-    cost_reference = fallback_cost_reference
+    references = np.asarray(fallback_references, dtype=np.float64).copy()
     sr_schedule = (
         ege_successive_rejects_schedule(n_arms, cell_budget)
         if variant == EGE_SR
@@ -343,13 +395,13 @@ def _run_ege(
                 record("ege_pull", empirical_raw_pareto_arms(puller))
         if not np.all(puller.n_pulls[list(active)] > 0):
             break
-        cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
+        references = _algorithm_references(puller, fallback_references)
         if len(active) <= 1:
             break
         n_keep = ege_keep_count(len(active), variant)
         if n_keep >= len(active):
             continue
-        means = puller.maximization_means(cost_reference)
+        means = puller.maximization_means(references)
         survivors, newly_accepted, _rejected = ege_select_survivors(
             means, active, n_keep
         )
@@ -386,7 +438,7 @@ def _run_ege(
         if puller.total_evaluations >= cell_budget
         else "all_arms_exhausted"
     )
-    return recommended, stop, cost_reference
+    return recommended, stop, references
 
 
 def _run_ape(
@@ -394,17 +446,17 @@ def _run_ape(
     *,
     batch_size: int,
     cell_budget: int,
-    fallback_cost_reference: float,
+    fallback_references: Sequence[float],
     epsilon1: float,
     delta: float,
     k1: float,
     record: Callable[[str, Sequence[int]], None],
-) -> Tuple[Tuple[int, ...], str, float]:
+) -> Tuple[Tuple[int, ...], str, np.ndarray]:
     _warm_start_all(puller, batch_size=1, cell_budget=cell_budget)
-    cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
+    references = _algorithm_references(puller, fallback_references)
     record("ape_warm_start", empirical_raw_pareto_arms(puller))
     while puller.total_evaluations < cell_budget and puller.has_remaining():
-        means = puller.maximization_means(cost_reference)
+        means = puller.maximization_means(references)
         arm = ape_select_arm(
             means,
             puller.n_pulls,
@@ -427,7 +479,7 @@ def _run_ape(
         if puller.total_evaluations >= cell_budget
         else "all_arms_exhausted"
     )
-    return empirical_raw_pareto_arms(puller), stop, cost_reference
+    return empirical_raw_pareto_arms(puller), stop, references
 
 
 def _run_qnehvi(
@@ -435,7 +487,7 @@ def _run_qnehvi(
     *,
     batch_size: int,
     cell_budget: int,
-    fallback_cost_reference: float,
+    fallback_references: Sequence[float],
     features: np.ndarray,
     categorical_dims: Sequence[int],
     reference_point: Sequence[float],
@@ -443,11 +495,11 @@ def _run_qnehvi(
     refit_every: int,
     seed: int,
     record: Callable[[str, Sequence[int]], None],
-) -> Tuple[Tuple[int, ...], str, float]:
+) -> Tuple[Tuple[int, ...], str, np.ndarray]:
     from agentopt.model_selection.qnehvi import select_qnehvi_index
 
     _warm_start_all(puller, batch_size=batch_size, cell_budget=cell_budget)
-    cost_reference = _algorithm_cost_reference(puller, fallback_cost_reference)
+    references = _algorithm_references(puller, fallback_references)
     record("qnehvi_warm_start", empirical_raw_pareto_arms(puller))
     sticky_arm: Optional[int] = None
     steps_since_refit = refit_every
@@ -462,7 +514,7 @@ def _run_qnehvi(
             or steps_since_refit >= refit_every
         )
         if need_refit:
-            train_y = puller.maximization_means(cost_reference)
+            train_y = puller.maximization_means(references)
             try:
                 local = select_qnehvi_index(
                     features,
@@ -476,7 +528,9 @@ def _run_qnehvi(
                 arm = remaining_arms[local]
             except ImportError:
                 raise
-            except Exception:
+            except Exception as error:
+                if puller.objectives == THREE_OBJECTIVES:
+                    raise RuntimeError("three-objective qNEHVI acquisition failed") from error
                 arm = min(remaining_arms, key=lambda i: (int(puller.n_pulls[i]), i))
             sticky_arm = arm
             steps_since_refit = 0
@@ -492,7 +546,7 @@ def _run_qnehvi(
         if puller.total_evaluations >= cell_budget
         else "all_arms_exhausted"
     )
-    return empirical_raw_pareto_arms(puller), stop, cost_reference
+    return empirical_raw_pareto_arms(puller), stop, references
 
 
 def simulate_pareto_baseline(
@@ -511,35 +565,59 @@ def simulate_pareto_baseline(
     ape_k: int = 3,
     qnehvi_mc_samples: int = 64,
     qnehvi_refit_every: int = 8,
-    reference_point: Sequence[float] = (0.0, 0.0),
+    reference_point: Optional[Sequence[float]] = None,
     evaluation_question_ids: Optional[Sequence[int]] = None,
     complete_only: bool = False,
+    objectives: Sequence[str] = DEFAULT_OBJECTIVES,
 ) -> ParetoBaselineResult:
-    """Run one full-budget Pareto identification baseline on a lookup table."""
+    """Run a Pareto baseline on Q/D or Q/L/D observations.
+
+    The default retains the historical two-objective protocol.  The explicit
+    three-objective protocol requires a complete aligned question matrix.
+    """
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}, got {method!r}")
+    objective_order = tuple(objectives)
+    if objective_order not in (DEFAULT_OBJECTIVES, THREE_OBJECTIVES):
+        raise ValueError("objectives must be ('Q', 'D') or ('Q', 'L', 'D')")
     batch_size = _positive_int(batch_size, "batch_size")
     fraction = _validate_fraction(observation_budget_fraction)
     questions = tuple(
         evaluation_question_ids
         if evaluation_question_ids is not None
-        else common_question_ids(models, datapoints, table)
+        else (datapoints if objective_order == THREE_OBJECTIVES
+              else common_question_ids(models, datapoints, table))
     )
     if not models or not questions:
         raise ValueError("models and the common question universe must be nonempty")
+    if objective_order == THREE_OBJECTIVES:
+        if len(set(questions)) != len(questions):
+            raise ValueError("three-objective question IDs must be unique")
+        for model in models:
+            if model not in table or any(q not in table[model] for q in questions):
+                raise ValueError("three-objective baselines require a complete aligned matrix")
 
-    truth_raw = mean_raw_vectors(models, questions, table)
-    positive_costs = truth_raw[:, 1][truth_raw[:, 1] > 0.0]
-    if positive_costs.size == 0:
-        raise ValueError("at least one configuration must have positive mean cost")
-    eval_cost_reference = float(np.median(positive_costs))
-    truth_normalized = normalized_truth_vectors(truth_raw, eval_cost_reference)
-    true_front = set(pareto_min_cost_indices(truth_raw))
-    true_front_vectors = truth_normalized[list(true_front)]
-    reference = tuple(float(x) for x in reference_point)
-    if len(reference) != 2:
-        raise ValueError("reference_point must be a length-2 vector")
-    ground_truth_hv = hypervolume_2d(true_front_vectors, reference)
+    reference = (tuple(0.0 for _ in objective_order) if reference_point is None
+                 else tuple(float(x) for x in reference_point))
+    if len(reference) != len(objective_order) or not np.all(np.isfinite(reference)):
+        raise ValueError("reference_point must match the objective dimension and be finite")
+    if objective_order == THREE_OBJECTIVES:
+        truth_raw = raw_truth_vectors_3d(models, questions, table)
+        (truth_normalized, true_front_vectors, eval_latency_reference,
+         eval_cost_reference, _) = evaluation_space_3d(truth_raw)
+        true_front = set(raw_pareto_indices_3d(truth_raw))
+        ground_truth_hv = hypervolume_3d(true_front_vectors, reference)
+    else:
+        truth_raw = mean_raw_vectors(models, questions, table)
+        positive_costs = truth_raw[:, 1][truth_raw[:, 1] > 0.0]
+        if positive_costs.size == 0:
+            raise ValueError("at least one configuration must have positive mean cost")
+        eval_cost_reference = float(np.median(positive_costs))
+        eval_latency_reference = None
+        truth_normalized = normalized_truth_vectors(truth_raw, eval_cost_reference)
+        true_front = set(pareto_min_cost_indices(truth_raw))
+        true_front_vectors = truth_normalized[list(true_front)]
+        ground_truth_hv = hypervolume_2d(true_front_vectors, reference)
     bruteforce_cost = 0.0
     for model in models:
         samples = table[model]
@@ -548,7 +626,8 @@ def simulate_pareto_baseline(
         raise ValueError("brute-force search cost must be finite and positive")
 
     cell_budget = max(1, int(math.floor(fraction * len(models) * len(questions))))
-    puller = _QuestionPuller(models, questions, table, seed=seed)
+    puller = _QuestionPuller(models, questions, table, seed=seed, objectives=objective_order)
+    fallback_references = np.ones(len(objective_order), dtype=np.float64)
     trajectory: List[BaselineCheckpoint] = []
 
     def record(event: str, selected: Sequence[int]) -> None:
@@ -571,20 +650,20 @@ def simulate_pareto_baseline(
 
     wall_start = time.perf_counter()
     if method in (EGE_SH, EGE_SR):
-        selected, stop_reason, algo_cost_reference = _run_ege(
+        selected, stop_reason, algo_references = _run_ege(
             puller,
             variant=method,
             batch_size=batch_size,
             cell_budget=cell_budget,
-            fallback_cost_reference=eval_cost_reference,
+            fallback_references=fallback_references,
             record=record,
         )
     elif method == APE_K:
-        selected, stop_reason, algo_cost_reference = _run_ape(
+        selected, stop_reason, algo_references = _run_ape(
             puller,
             batch_size=batch_size,
             cell_budget=cell_budget,
-            fallback_cost_reference=eval_cost_reference,
+            fallback_references=fallback_references,
             epsilon1=epsilon1,
             delta=ape_delta,
             k1=ape_k1,
@@ -594,11 +673,11 @@ def simulate_pareto_baseline(
         from agentopt.model_selection.qnehvi import encode_configuration_features
 
         features, cat_dims = encode_configuration_features(models)
-        selected, stop_reason, algo_cost_reference = _run_qnehvi(
+        selected, stop_reason, algo_references = _run_qnehvi(
             puller,
             batch_size=batch_size,
             cell_budget=cell_budget,
-            fallback_cost_reference=eval_cost_reference,
+            fallback_references=fallback_references,
             features=features,
             categorical_dims=cat_dims,
             reference_point=reference,
@@ -619,10 +698,9 @@ def simulate_pareto_baseline(
         selected = completed_pareto
     record("terminal", selected)
 
-    selected_hv = hypervolume_2d(truth_normalized[list(selected)], reference)
-    obtained = truth_normalized[list(selected)] if selected else np.empty((0, 2))
-    selected_gd = generational_distance(obtained, true_front_vectors)
-    selected_igd = inverted_generational_distance(obtained, true_front_vectors)
+    selected_hv, selected_gd, selected_igd = _score_selection(
+        selected, truth_normalized, true_front_vectors, reference,
+    )
     recalled = len(true_front.intersection(selected))
     params: Dict[str, object] = {
         "method": method,
@@ -631,13 +709,17 @@ def simulate_pareto_baseline(
         "cell_budget": cell_budget,
         "n_models": len(models),
         "n_questions": len(questions),
-        "algorithm_cost_reference_usd": algo_cost_reference,
+        "algorithm_cost_reference_usd": float(algo_references[objective_order.index("D")]),
         "evaluation_cost_reference_usd": eval_cost_reference,
         "bruteforce_search_cost_usd": bruteforce_cost,
         "reference_point": list(reference),
+        "objectives": list(objective_order),
         "halt_on_identification_stop": False,
         "complete_only": bool(complete_only),
     }
+    if objective_order == THREE_OBJECTIVES:
+        params["algorithm_latency_reference_seconds"] = float(algo_references[1])
+        params["evaluation_latency_reference_seconds"] = float(eval_latency_reference)
     if method == APE_K:
         params.update(
             {
