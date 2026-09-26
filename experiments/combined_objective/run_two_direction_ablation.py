@@ -33,6 +33,9 @@ from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
 from experiments.combined_objective.compare_lcb_recommendations import (  # noqa: E402
     compact_lcb_run,
 )
+from experiments.combined_objective.search_cost_checkpoint import (  # noqa: E402
+    actual_cost_checkpoint,
+)
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
     DEFAULT_RADIAL_BOUNDARY_CACHE_DIR,
     load_pickle,
@@ -66,7 +69,7 @@ PRIMARY_PAIR = "cost_near__accuracy_axis"
 DEFAULT_OUTDIR = (
     ROOT
     / "experiments/combined_objective/results"
-    / "two_direction_finite_lcb_raw_mean_seed42_independent"
+    / "two_direction_finite_lcb_raw_mean_estimated_actual_seed42_independent"
 )
 
 
@@ -238,8 +241,14 @@ def run_one(
     directions = PAIRS[pair_name]
     output_path = outdir / pair_name / benchmark / "result.json"
     if output_path.exists():
+        saved = json.loads(output_path.read_text())
+        if "search_cost_checkpoint_10pct" not in saved:
+            raise ValueError(
+                f"Refusing to reuse {output_path}: it predates the actual-dollar "
+                "checkpoint. Choose a new --outdir."
+            )
         print(f"Reusing {output_path}", flush=True)
-        return json.loads(output_path.read_text())
+        return saved
 
     models, questions, table, hashes = load_benchmark(benchmark)
     cache = RadialGittinsBoundaryCache(cache_dir=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR)
@@ -286,6 +295,7 @@ def run_one(
     )
     elapsed = time.perf_counter() - started
     run = enrich_frontier_metrics(compact_lcb_run(result))
+    search_cost_checkpoint = actual_cost_checkpoint(result, target_fraction=0.1)
     eta_events = list(result.direction_eta_events)
     payload = {
         "config": {
@@ -314,6 +324,7 @@ def run_one(
             "wall_time_seconds": elapsed,
         },
         "summary": summarize_run(run, eta_events),
+        "search_cost_checkpoint_10pct": search_cost_checkpoint,
         "direction_eta_events": eta_events,
         "run": run,
         "parameters": result.params,
@@ -344,6 +355,8 @@ def export_combined(outdir: Path, benchmarks: list[str], pairs: list[str]) -> No
                     "pair_name": pair_name,
                     "directions": payload["config"]["directions"],
                     "benchmark": benchmark,
+                    "estimated_search_cost_percent_at_10pct": payload["search_cost_checkpoint_10pct"]["estimated_search_cost_percent"],
+                    "actual_search_cost_percent_at_10pct": payload["search_cost_checkpoint_10pct"]["actual_search_cost_percent"],
                     **payload["summary"],
                 }
             )
