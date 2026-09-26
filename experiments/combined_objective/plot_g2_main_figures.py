@@ -535,7 +535,7 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
             axis.get_xticklabels()[-1].set_ha("right")
         axis.yaxis.set_major_locator(MaxNLocator(4))
         axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
-        axis.tick_params(axis="both", labelsize=25, width=1.1, length=6)
+        axis.tick_params(axis="both", labelsize=26, width=1.1, length=6)
         axis.grid(color="#D5D9DE", linewidth=0.65, alpha=0.65)
         axis.set_axisbelow(True)
     figure.text(0.5, 0.168, "Percentage of Exhaustive Evaluation Cost",
@@ -548,7 +548,7 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
                for method in METHODS]
     handles.append(Patch(facecolor="#777777", alpha=0.14, edgecolor="none", label=r"$\pm2$ SE"))
     figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.014),
-                  ncol=4, frameon=False, fontsize=25, handlelength=3.15,
+                  ncol=4, frameon=False, fontsize=27, handlelength=3.15,
                   columnspacing=1.55, handletextpad=0.75, labelspacing=0.70)
     figure.subplots_adjust(
         left=0.085, right=0.985, top=0.945, bottom=0.265,
