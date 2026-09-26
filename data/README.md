@@ -30,8 +30,10 @@ PYTHONPATH=. .venv/bin/python data/extract_response_matrices.py
 
 ## SCOPE matrices
 
-`data/scope/` contains the same five matrices for each SCOPE benchmark, plus
-`configs.json` and compressed cell-level `records.csv.gz`. Regenerate them from
+`data/scope/` contains five matrices per SCOPE benchmark: accuracy, USD cost,
+input tokens, output tokens, and total tokens. These directories do not include
+the QA latency matrix. Each also contains `metadata.json`, `configs.json`, and
+compressed cell-level `records.csv.gz`. Regenerate them from
 the adjacent SCOPE checkout with:
 
 ```bash

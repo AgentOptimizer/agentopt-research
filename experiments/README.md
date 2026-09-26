@@ -24,11 +24,12 @@ python3 -m venv .venv
 HotpotQA and MathQA use the committed complete 100-configuration × 200-question
 matrices in `data/hotpotqa/` and `data/mathqa/`. Other protocol benchmarks use
 `data/scope/{restaurant_test,stackoverflow,bird_dev,restaurant_valid,bing_querylogs,bird_mini_dev}/`.
-A full eight-benchmark run requires those directories locally. See
+A full eight-benchmark run uses all of these committed directories. See
 [`data/README.md`](../data/README.md) for input formats.
 
 The algorithm reads frozen matrices; these commands make no model API calls.
-Results and DP caches are written under `experiments/combined_objective/results/`.
+Replay results and DP caches default to `experiments/combined_objective/results/`;
+the ablation plotters have separate output paths, described below.
 Do not mix results from different matrix versions: saved input hashes, model
 ordering, and full-data truth must agree across each comparison.
 
@@ -39,9 +40,16 @@ ordering, and full-data truth must agree across each comparison.
   --benchmarks hotpotqa mathqa
 ```
 
-This defaults to `exact_axes`, seed 42, and the full observation budget. Output:
+This defaults to `exact_axes`, seed 42, and an observation-count budget of 100%.
+The budget limits the number of evaluated configuration-question cells; it is
+not a dollar-spend target, and the policy can stop before exhausting it.
+Reported search-cost percentages and the 10% checkpoint use actual USD instead.
+Output:
 `experiments/combined_objective/results/two_axis_finite_lcb_raw_mean_seed42_independent/exact_axes/<benchmark>/result.json`.
 Use a fresh `--outdir` when changing the seed, protocol, or input data.
+This quick-run directory is separate from the canonical ablation grid. Use the
+task wrapper below to produce G0–G9 results with the labels and metadata expected
+by the collector.
 
 The file includes finite-LCB membership checkpoints, raw truth for offline
 scoring, direction eta events, timing, and the estimated/actual dollar-spend
@@ -53,6 +61,11 @@ not invalidate the run. See [checkpoint semantics](combined_objective/estimated_
 .venv/bin/python -m experiments.combined_objective.plot.plot_estimated_actual_10pct \
   --benchmarks hotpotqa mathqa
 ```
+
+If you changed the runner's `--outdir`, pass the same directory as `--results`
+to both plotters. The estimated/actual plot requires a non-null
+`search_cost_checkpoint_10pct`; restrict its `--benchmarks` to runs that reached
+10% actual spend. An earlier stop remains valid for the other diagnostics.
 
 ## Retained ablations
 
@@ -111,11 +124,30 @@ saved two-axis results, not an additional algorithm.
 .venv/bin/python -m experiments.combined_objective.plot_gittins_direction_runtime_v2_20seed
 ```
 
-The collector validates all 1,600 runs, checks configuration and input agreement,
-and reports missing/invalid results. Use `--families directions` on the ablation
+The collector expects 1,600 runs and checks protocol fields, full-data truth,
+arm ordering, total exhaustive USD cost, and successful native-task metadata.
+It requires a G0 seed-42 truth reference for each benchmark before it can report
+missing or invalid runs. It does not compare saved input hashes, so keep all
+configurations on the same input version. Use `--families directions` on the ablation
 plotter to render just a completed family. Plots show the same reciprocal mean
 USD evaluation space as the paper; it is distinct from the raw-cost acquisition
 model. Runtime plots compare the two-, three-, and five-direction policies.
+
+The collector writes `aggregate/` under its results root. The ablation plotters
+default to `analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_figures/gittins_g2_main_figures/ablation/`,
+with runtime figures under `runtime/`. The `g2` directory name preserves the
+historical paper output location; the current control is G0.
+
+For a separate experiment directory, pass that same directory to every reader:
+
+```bash
+.venv/bin/python -m experiments.combined_objective.aggregate_gittins_ablation_v2_20seed \
+  path/to/results
+.venv/bin/python -m experiments.combined_objective.plot_gittins_ablation_v2_20seed \
+  --results-root path/to/results --output path/to/figures
+.venv/bin/python -m experiments.combined_objective.plot_gittins_direction_runtime_v2_20seed \
+  --results-root path/to/results --output-dir path/to/figures/runtime
+```
 
 ## Baselines and shared libraries
 

@@ -1,6 +1,6 @@
 # Combined-objective 实验结果索引
 
-这份 README 解释本目录下 **31 个一级文件夹**分别在验证什么、相对前一版改变了什么，以及应该从哪里读结果。按实验关系分组，不按文件修改时间排序。整理日期：2026-09-13。
+本文件先说明当前结果入口，再保留截至 2026-09-13 整理的历史实验索引。历史部分按实验关系分组，不代表当前工作区的目录清单；许多报告和图表仅保存在本地，不随 Git 分发。
 
 以下历史索引记录的是保存下来的实验协议；当前源码的默认参数和推荐语义已经多次变化。目录名中的 “LCB”“completed-only”“full Pareto” 不能单独用来判断实验内容。
 
@@ -12,7 +12,9 @@
 G0–G9，覆盖 cost、directions、continuation、scheduler 四组。
 运行和绘图命令见 [`experiments/README.md`](../../README.md)。
 
-新结果写入 `gittins_ablation_v2_8bench_20seed/<configuration>/seed-<seed>/...`。
+完整消融的新结果写入 `gittins_ablation_v2_8bench_20seed/<configuration>/seed-<seed>/...`。
+快速运行的默认结果另存于 `two_axis_finite_lcb_raw_mean_seed42_independent/exact_axes/`，
+不直接计入消融汇总；完整消融应通过 task wrapper 运行。
 本地有 G0 时优先读本地结果；否则可以复用旧 `g2_exact_axes` 结果。
 汇总时会验证配置、输入真值与 arm 顺序，不能把不同矩阵版本混在一组比较里。
 
