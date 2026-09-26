@@ -899,7 +899,7 @@ def plot_stackoverflow_method_frontier(
     figure.supxlabel(
         "Mean deployment cost (USD per query, log scale)", fontsize=40, y=0.115
     )
-    figure.supylabel("Mean accuracy", fontsize=40, x=0.012, y=0.535)
+    figure.supylabel("Mean accuracy", fontsize=40, x=0.004, y=0.535)
     figure.legend(
         handles=(
             Line2D(
