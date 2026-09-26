@@ -547,7 +547,7 @@ def plot_metric(metric: str, curves: dict[tuple[str, str, str], MeanCurve],
                       linestyle=styles[method]["linestyle"], label=styles[method]["label"])
                for method in METHODS]
     handles.append(Patch(facecolor="#777777", alpha=0.14, edgecolor="none", label=r"$\pm2$ SE"))
-    figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.014),
+    figure.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, -0.030),
                   ncol=4, frameon=False, fontsize=27, handlelength=3.15,
                   columnspacing=1.55, handletextpad=0.75, labelspacing=0.70)
     figure.subplots_adjust(
