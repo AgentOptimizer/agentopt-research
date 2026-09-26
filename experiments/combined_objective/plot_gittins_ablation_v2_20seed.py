@@ -359,7 +359,7 @@ def plot_family_metric(
                 alpha=0.12,
                 linewidth=0,
             )
-        axis.set_title(DATASET_LABELS[benchmark], fontsize=23, pad=9)
+        axis.set_title(DATASET_LABELS[benchmark], fontsize=25, pad=9)
         axis.set_xlim(-0.0045, 0.306)
         y_top = axis.get_ylim()[1]
         axis.set_ylim(-0.02 * y_top, y_top)
@@ -367,7 +367,7 @@ def plot_family_metric(
         axis.xaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:.0%}"))
         axis.yaxis.set_major_locator(MaxNLocator(4))
         axis.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
-        axis.tick_params(axis="both", labelsize=21, width=1.0, length=5)
+        axis.tick_params(axis="both", labelsize=23, width=1.0, length=5)
         axis.grid(color="#d9dde3", linewidth=0.6, alpha=0.55)
         axis.spines[["top", "right"]].set_visible(False)
     handles = [
@@ -391,16 +391,16 @@ def plot_family_metric(
         bbox_to_anchor=(0.5, 0.085),
         ncol=len(handles),
         frameon=False,
-        fontsize=20,
+        fontsize=23,
         columnspacing=0.6,
         handlelength=1.6,
         handletextpad=0.5,
     )
     figure.supxlabel(
-        "Percentage of Exhaustive Evaluation Cost", fontsize=25, x=0.54, y=0.175
+        "Percentage of Exhaustive Evaluation Cost", fontsize=27, x=0.54, y=0.175
     )
-    figure.supylabel(METRICS[metric], fontsize=25, x=0.010, y=0.585)
-    figure.suptitle(FAMILY_LABELS[family], fontsize=27, y=1.055)
+    figure.supylabel(METRICS[metric], fontsize=27, x=0.010, y=0.585)
+    figure.suptitle(FAMILY_LABELS[family], fontsize=29, y=1.055)
     figure.subplots_adjust(
         left=0.08, right=0.985, top=0.93, bottom=0.30, wspace=0.34, hspace=0.42
     )
