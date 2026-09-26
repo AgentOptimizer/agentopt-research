@@ -421,19 +421,45 @@ class _DirectionScheduler:
     """Visit direction groups while tracking stops under unchanged observations.
 
     Accuracy-last drains the other directions first, then the exact accuracy
-    endpoint. An endpoint pull invalidates earlier stops, so the other group
-    must be checked again before the policy may stop or lower lambda.
+    endpoint.  The two sequential axis policies similarly drain one exact
+    endpoint before visiting the other.  An observation invalidates earlier
+    stops, so a previously drained group must be checked again before the
+    policy may terminate.
     """
 
     def __init__(self, directions: Sequence[Tuple[float, float]], policy: str):
-        if policy not in {"round_robin", "accuracy_last"}:
-            raise ValueError("direction_scheduler must be 'round_robin' or 'accuracy_last'")
+        policies = {
+            "round_robin",
+            "accuracy_last",
+            "quality_then_deployment",
+            "deployment_then_quality",
+        }
+        if policy not in policies:
+            raise ValueError(
+                "direction_scheduler must be 'round_robin', 'accuracy_last', "
+                "'quality_then_deployment', "
+                "or 'deployment_then_quality'"
+            )
         self.policy = policy
         indices = tuple(range(len(directions)))
         if policy == "accuracy_last":
             primary = tuple(i for i in indices if _direction_axis(directions[i]) != 0)
             accuracy = tuple(i for i in indices if _direction_axis(directions[i]) == 0)
             self.groups = tuple(group for group in (primary, accuracy) if group)
+        elif policy in {"quality_then_deployment", "deployment_then_quality"}:
+            quality = tuple(i for i in indices if _direction_axis(directions[i]) == 0)
+            deployment = tuple(i for i in indices if _direction_axis(directions[i]) == 1)
+            if len(directions) != 2 or len(quality) != 1 or len(deployment) != 1:
+                raise ValueError(
+                    f"direction_scheduler={policy!r} requires exactly the quality "
+                    "and deployment axes"
+                )
+            ordered = (
+                (quality, deployment)
+                if policy == "quality_then_deployment"
+                else (deployment, quality)
+            )
+            self.groups = ordered
         else:
             self.groups = (indices,)
         self._direction_count = len(directions)
@@ -845,24 +871,44 @@ def evaluate_direction_status(
 
 
 def nondominated_indices(points: np.ndarray) -> List[int]:
-    """Return indices not strictly dominated under maximization of both columns."""
+    """Return indices not strictly dominated under maximization of both columns.
+
+    The two-objective sweep is exact and preserves the input order (including
+    duplicate nondominated points).  Sorting replaces the former all-pairs
+    scan, which made diagnostic checkpoints quadratic in the number of
+    configurations on the large SCOPE matrices.
+    """
     points = np.asarray(points, dtype=np.float64)
     if points.ndim != 2 or points.shape[1] != 2:
         raise ValueError("points must have shape (n, 2)")
     if not np.all(np.isfinite(points)):
         raise ValueError("points must be finite")
-    keep: List[int] = []
-    for i in range(points.shape[0]):
-        dominated = False
-        for j in range(points.shape[0]):
-            if i == j:
-                continue
-            if np.all(points[j] >= points[i]) and np.any(points[j] > points[i]):
-                dominated = True
-                break
-        if not dominated:
-            keep.append(i)
-    return keep
+    n_points = int(points.shape[0])
+    if n_points == 0:
+        return []
+
+    # Visit equal-x groups from largest x to smallest.  Within one group only
+    # points attaining its largest y can survive.  Such a point is dominated
+    # by an earlier (strictly larger x) group exactly when that prefix already
+    # contains y >= its own.  Equal duplicate maxima survive together because
+    # neither strictly dominates the other.
+    order = np.argsort(-points[:, 0], kind="stable")
+    keep_mask = np.zeros(n_points, dtype=bool)
+    prefix_max_y = -math.inf
+    start = 0
+    while start < n_points:
+        stop = start + 1
+        x_value = points[order[start], 0]
+        while stop < n_points and points[order[stop], 0] == x_value:
+            stop += 1
+        group = order[start:stop]
+        group_max_y = float(np.max(points[group, 1]))
+        if prefix_max_y < group_max_y:
+            maxima = group[points[group, 1] == group_max_y]
+            keep_mask[maxima] = True
+        prefix_max_y = max(prefix_max_y, group_max_y)
+        start = stop
+    return np.flatnonzero(keep_mask).tolist()
 
 
 def raw_nondominated_indices(points: np.ndarray) -> List[int]:
@@ -1932,8 +1978,15 @@ def simulate_radial_gittins(
     independent_eta = eta_decay_schedule == "direction_stop"
     if independent_eta and not anytime:
         raise ValueError("eta_decay_schedule='direction_stop' requires anytime=True")
-    if independent_eta and direction_scheduler != "round_robin":
-        raise ValueError("eta_decay_schedule='direction_stop' requires direction_scheduler='round_robin'")
+    if independent_eta and direction_scheduler not in {
+        "round_robin",
+        "quality_then_deployment",
+        "deployment_then_quality",
+    }:
+        raise ValueError(
+            "eta_decay_schedule='direction_stop' requires direction_scheduler "
+            "to use a supported asynchronous policy"
+        )
     requested_checkpoint_interval = (
         None
         if recommendation_checkpoint_interval is None
@@ -3024,6 +3077,11 @@ def simulate_radial_gittins(
                 online_value_cache.clear_direction_radial_indices(direction_index)
             else:
                 direction_floor_stops.add(direction_index)
+                # Sequential endpoint schedules stay on one axis through its
+                # eta decays and move to the other only after reaching the
+                # numerical floor.  Round-robin policies are unaffected by
+                # recording this stop because they have a single group.
+                scheduler.record_stop()
             eta_event = {
                 "event": "direction_eta_decay" if floor_reason is None else "direction_eta_floor_stop",
                 "global_step": global_step, "direction_index": direction_index,
@@ -4124,9 +4182,18 @@ def main() -> None:
         ),
     )
     parser.add_argument(
-        "--direction-scheduler", choices=("round_robin", "accuracy_last"),
+        "--direction-scheduler",
+        choices=(
+            "round_robin",
+            "accuracy_last",
+            "quality_then_deployment",
+            "deployment_then_quality",
+        ),
         default="round_robin",
-        help="Run (1, 0) only after the other directions stop with accuracy_last",
+        help=(
+            "Use balanced round-robin, defer (1, 0) with accuracy_last, or "
+            "drain the exact axes sequentially in quality/deployment order"
+        ),
     )
     parser.add_argument(
         "--eta-decay-schedule", choices=("global_stop", "direction_stop"),

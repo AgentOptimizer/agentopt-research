@@ -54,4 +54,7 @@ The committed HotpotQA and MathQA per-sample matrices live in `data/hotpotqa/`
 and `data/mathqa/`. Each directory contains accuracy, USD cost, input-token,
 output-token, and total-token CSVs for 100 configurations x 200 questions.
 
-See `experiments/README.md` for offline simulation usage.
+The current paper method is **CC-Gittins (two-axis)**: exact deployment and
+quality axes with real continuation costs, asynchronous eta decay, and
+finite-LCB recommendations. The current G0–G9 ablations and supported commands
+are documented in [experiments/README.md](experiments/README.md).

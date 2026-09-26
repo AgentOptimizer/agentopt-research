@@ -6,7 +6,10 @@ import unittest
 from agentopt.model_selection.radial_gittins import PerArmQuestionSchedule
 from experiments.combined_objective.compare_lcb_recommendations import compact_lcb_run
 from experiments.combined_objective.offline_radial_gittins import simulate_radial_gittins
-from experiments.combined_objective.search_cost_checkpoint import actual_cost_checkpoint
+from experiments.combined_objective.search_cost_checkpoint import (
+    CheckpointNotReachedError,
+    actual_cost_checkpoint,
+)
 from experiments.single_objective.offline_selector_sim import SampleResult
 
 
@@ -106,8 +109,21 @@ class SearchCostCheckpointTests(unittest.TestCase):
         result = _result()
         result.trace = result.trace[:2]
         result.total_cost = 0.6
-        with self.assertRaisesRegex(ValueError, "never reached"):
+        with self.assertRaisesRegex(CheckpointNotReachedError, "never reached"):
             actual_cost_checkpoint(result)
+
+    def test_unit_acquisition_uses_warm_dollars_for_the_cost_estimate(self):
+        result = _result()
+        result.params["expected_batch_costs_usd"] = [1.0, 1.0]
+        for event in result.trace:
+            event["expected_batch_search_cost_usd"] = 1.0
+        checkpoint = actual_cost_checkpoint(result, acquisition_cost_mode="unit")
+        self.assertAlmostEqual(checkpoint["actual_search_cost_usd"], 2.0)
+        self.assertAlmostEqual(checkpoint["estimated_search_cost_usd"], 1.0)
+        self.assertAlmostEqual(checkpoint["estimated_search_cost_percent"], 10.0)
+        result.trace[2]["expected_batch_search_cost_usd"] = 0.9
+        with self.assertRaisesRegex(ValueError, "frozen estimate"):
+            actual_cost_checkpoint(result, acquisition_cost_mode="unit")
 
     def test_threshold_within_warm_start_uses_first_available_recommendation(self):
         checkpoint = actual_cost_checkpoint(_result(), target_fraction=0.05)

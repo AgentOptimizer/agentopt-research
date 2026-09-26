@@ -11,6 +11,10 @@ import math
 from typing import Any
 
 
+class CheckpointNotReachedError(ValueError):
+    """The replay ended before reaching the requested actual-dollar spend."""
+
+
 def _physical_pulls(trace: list[dict[str, Any]]):
     for event in trace:
         if event.get("event") == "warm_start":
@@ -19,7 +23,12 @@ def _physical_pulls(trace: list[dict[str, Any]]):
             yield False, int(event["selected_arm"]), event
 
 
-def actual_cost_checkpoint(result: Any, target_fraction: float = 0.1) -> dict[str, Any]:
+def actual_cost_checkpoint(
+    result: Any,
+    target_fraction: float = 0.1,
+    *,
+    acquisition_cost_mode: str = "real",
+) -> dict[str, Any]:
     """Return the first post-warm state at or above the actual-dollar threshold.
 
     ``result`` must retain its physical trace and changes-only recommendation
@@ -29,6 +38,8 @@ def actual_cost_checkpoint(result: Any, target_fraction: float = 0.1) -> dict[st
     """
     if not math.isfinite(target_fraction) or not 0.0 < target_fraction <= 1.0:
         raise ValueError("target_fraction must be in (0, 1]")
+    if acquisition_cost_mode not in {"real", "unit"}:
+        raise ValueError("acquisition_cost_mode must be 'real' or 'unit'")
     params = result.params
     if not params.get("record_trace") or not params.get("record_recommendation_trajectory"):
         raise ValueError("the checkpoint requires a physical trace and recommendation history")
@@ -39,12 +50,17 @@ def actual_cost_checkpoint(result: Any, target_fraction: float = 0.1) -> dict[st
 
     full_cost = float(params["bruteforce_search_cost_usd"])
     batch_size = int(params["batch_size"])
-    expected_batch_costs = tuple(float(x) for x in params["expected_batch_costs_usd"])
+    acquisition_batch_costs = tuple(float(x) for x in params["expected_batch_costs_usd"])
     n_arms = len(result.model_results)
     if (not math.isfinite(full_cost) or full_cost <= 0.0 or batch_size <= 0
-            or len(expected_batch_costs) != n_arms
-            or any(not math.isfinite(cost) or cost < 0.0 for cost in expected_batch_costs)):
+            or len(acquisition_batch_costs) != n_arms
+            or any(not math.isfinite(cost) or cost < 0.0 for cost in acquisition_batch_costs)):
         raise ValueError("invalid full cost, batch size, or expected batch costs")
+    if acquisition_cost_mode == "unit" and any(
+        not math.isclose(cost, 1.0, rel_tol=0.0, abs_tol=1e-12)
+        for cost in acquisition_batch_costs
+    ):
+        raise ValueError("unit acquisition requires one unit per planned batch")
 
     counts = [0] * n_arms
     score_sums = [0.0] * n_arms
@@ -56,13 +72,20 @@ def actual_cost_checkpoint(result: Any, target_fraction: float = 0.1) -> dict[st
     adaptive_pulls = [pull for pull in pulls if not pull[0]]
     if len(warm_pulls) != n_arms:
         raise ValueError("the estimator requires one recorded warm-start batch per arm")
+    expected_batch_costs = list(acquisition_batch_costs)
     for _, arm, event in warm_pulls:
         warm_count = len(event["question_ids"])
         warm_batch_cost = float(event["actual_batch_search_cost_usd"])
-        if (warm_count <= 0 or not math.isclose(
-            expected_batch_costs[arm], warm_batch_cost * batch_size / warm_count,
-            rel_tol=1e-9, abs_tol=1e-10,
-        )):
+        if warm_count <= 0 or not math.isfinite(warm_batch_cost) or warm_batch_cost < 0:
+            raise ValueError("invalid warm-start batch count or realized cost")
+        warm_expected = warm_batch_cost * batch_size / warm_count
+        if acquisition_cost_mode == "unit":
+            # Unit acquisition penalties are not dollar estimates. Keep the
+            # same warm-start USD estimator used by the real-cost protocol.
+            expected_batch_costs[arm] = warm_expected
+        elif not math.isclose(
+            expected_batch_costs[arm], warm_expected, rel_tol=1e-9, abs_tol=1e-10,
+        ):
             raise ValueError("frozen expected batch costs are not the per-arm warm-start means")
 
     def consume(pull: tuple[bool, int, dict[str, Any]]) -> None:
@@ -81,8 +104,9 @@ def actual_cost_checkpoint(result: Any, target_fraction: float = 0.1) -> dict[st
             estimated_cost += realized
         else:
             predicted = expected_batch_costs[arm] * count / batch_size
+            acquisition_predicted = acquisition_batch_costs[arm] * count / batch_size
             recorded = float(event["expected_batch_search_cost_usd"])
-            if not math.isclose(predicted, recorded, rel_tol=1e-9, abs_tol=1e-10):
+            if not math.isclose(acquisition_predicted, recorded, rel_tol=1e-9, abs_tol=1e-10):
                 raise ValueError("the recorded expected batch cost differs from the frozen estimate")
             estimated_cost += predicted
         evaluations += count
@@ -102,7 +126,7 @@ def actual_cost_checkpoint(result: Any, target_fraction: float = 0.1) -> dict[st
                 crossing_event = pull[2]
                 break
     if crossing_event is None:
-        raise ValueError(
+        raise CheckpointNotReachedError(
             f"the run spent only {100 * result.total_cost / full_cost:.3f}% of full cost; "
             f"it never reached the requested {100 * target_fraction:g}% checkpoint"
         )

@@ -1,4 +1,4 @@
-"""The four-dataset runner keeps one policy and exports honest budget snapshots."""
+"""Historical replay helpers preserve honest budget snapshots without legacy CLIs."""
 import csv
 import copy
 import gzip
@@ -79,20 +79,15 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
                     self.assertEqual(loaded[:3], problem)
                     self.assertEqual(loaded[3], hashes)
 
-    def test_cli_preserves_four_defaults_and_accepts_optional_restaurant_validation(self):
-        for requested, expected in (
-            ([], ["hotpotqa", "mathqa", "restaurant_test", "stackoverflow"]),
-            (["--benchmarks", "restaurant_valid"], ["restaurant_valid"]),
-            (["--benchmarks", "bird_dev"], ["bird_dev"]),
-        ):
-            with self.subTest(requested=requested), tempfile.TemporaryDirectory() as temporary:
-                argv = ["run_lcb_benchmarks.py", "--outdir", temporary, *requested]
-                with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(
-                    runner, "run_benchmark",
-                ) as run, mock.patch.object(runner, "export_summary") as export:
-                    runner.main()
-                self.assertEqual([call.args[0] for call in run.call_args_list], expected)
-                export.assert_called_with(Path(temporary), expected)
+    def test_legacy_modules_keep_library_helpers_without_command_entrypoints(self):
+        from experiments.combined_objective import compare_lcb_recommendations as reports
+        from experiments.combined_objective.plot import plot_lcb_recommendations as plots
+
+        for module in (runner, reports, plots):
+            with self.subTest(module=module.__name__):
+                self.assertFalse(hasattr(module, "main"))
+        self.assertTrue(callable(reports.compact_lcb_run))
+        self.assertTrue(callable(plots.with_reference))
 
     def test_simulation_dispatch_keeps_seed42_async_finite_lcb_and_deferred_diagnostics(self):
         problem, cache = toy_problem(), object()
@@ -148,17 +143,7 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
             self.assertEqual([point["partial_recommended_count"] for point in points], [1, 0])
             self.assertEqual(points[0]["selected_arm_indices"], points[-1]["selected_arm_indices"])
 
-    def test_completed_cli_keeps_acquisition_settings_and_isolates_output(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            argv = ["run_lcb_benchmarks.py", "--benchmarks", "restaurant_valid",
-                    "--recommendation-rule", "completed_only", "--cost-model", "raw_mean"]
-            with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(
-                runner, "DEFAULT_OUTDIR", Path(temporary) / "original",
-            ), mock.patch.object(runner, "run_benchmark") as run, mock.patch.object(runner, "export_summary"):
-                runner.main()
-            self.assertEqual(run.call_args.kwargs["recommendation_rule"], "completed_only")
-            self.assertEqual(run.call_args.kwargs["cost_model"], "raw_mean")
-            self.assertEqual(run.call_args.args[1].name, "completed_only_benchmarks_seed42_raw_mean_shared_questions")
+    def test_completed_helper_keeps_acquisition_settings(self):
         result = SimpleNamespace(total_evaluations=4, total_cost=.4)
         with mock.patch.object(runner, "simulate_radial_gittins", return_value=result) as simulate:
             runner.simulate_rule("restaurant_valid", "completed_only", *toy_problem(), object(), 1., cost_model="raw_mean")
@@ -194,19 +179,7 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
             self.assertEqual(summaries[0]["method"], "completed_only")
             self.assertTrue(all(point["method"] == "completed_only" for point in matched))
 
-    def test_finite_cli_preserves_beta_and_exploration_and_isolates_output(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            argv = ["run_lcb_benchmarks.py", "--benchmarks", "bird_dev", "stackoverflow",
-                    "--recommendation-rule", "finite_lcb", "--cost-model", "raw_mean", "--beta", "1.5"]
-            with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(
-                runner, "DEFAULT_OUTDIR", Path(temporary) / "original",
-            ), mock.patch.object(runner, "run_benchmark") as run, mock.patch.object(runner, "export_summary"):
-                runner.main()
-            self.assertEqual([call.args[0] for call in run.call_args_list], ["bird_dev", "stackoverflow"])
-            self.assertEqual(run.call_args.args[2], 1.5)
-            self.assertEqual(run.call_args.kwargs["recommendation_rule"], "finite_lcb")
-            self.assertEqual(run.call_args.kwargs["cost_model"], "raw_mean")
-            self.assertEqual(run.call_args.args[1].name, "finite_lcb_benchmarks_seed42_beta1.5_raw_mean_shared_questions")
+    def test_finite_helper_preserves_beta_and_exploration(self):
         result = SimpleNamespace(total_evaluations=4, total_cost=.4)
         with mock.patch.object(runner, "simulate_radial_gittins", return_value=result) as simulate:
             runner.simulate_rule("bird_dev", "finite_lcb", *toy_problem(), object(), 1.5, cost_model="raw_mean")
@@ -215,12 +188,6 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
         self.assertEqual(simulate.call_args.kwargs["eta_decay_schedule"], "direction_stop")
 
     def test_finite_rule_rejects_incompatible_cost_model(self):
-        argv = ["run_lcb_benchmarks.py", "--recommendation-rule", "finite_lcb", "--cost-model", "reciprocal"]
-        with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(
-            runner, "run_benchmark",
-        ) as run, self.assertRaises(SystemExit):
-            runner.main()
-        run.assert_not_called()
         with mock.patch.object(runner, "load_benchmark") as load, self.assertRaises(ValueError):
             runner.run_benchmark("bird_dev", Path("unused"), 1.0,
                                  recommendation_rule="finite_lcb", cost_model="reciprocal")
@@ -253,18 +220,7 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
             summaries, _ = runner.export_summary(outdir, ["hotpotqa"])
             self.assertEqual(summaries[0]["method"], "finite_lcb")
 
-    def test_finite_mean_cli_passes_observation_gate_and_forces_zero_beta(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            argv = ["run_lcb_benchmarks.py", "--benchmarks", "bird_dev", "--recommendation-rule", "finite_mean",
-                    "--recommendation-min-samples", "32", "--cost-model", "raw_mean", "--beta", "9"]
-            with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(
-                runner, "DEFAULT_OUTDIR", Path(temporary) / "original",
-            ), mock.patch.object(runner, "run_benchmark") as run, mock.patch.object(runner, "export_summary"):
-                runner.main()
-            self.assertEqual(run.call_args.args[2], 0.0)
-            self.assertEqual(run.call_args.kwargs["recommendation_rule"], "finite_mean")
-            self.assertEqual(run.call_args.kwargs["recommendation_min_samples"], 32)
-            self.assertEqual(run.call_args.args[1].name, "finite_mean_benchmarks_seed42_min32_raw_mean_shared_questions")
+    def test_finite_mean_helper_passes_observation_gate_and_forces_zero_beta(self):
         with mock.patch.object(runner, "simulate_radial_gittins", return_value=SimpleNamespace(total_evaluations=4, total_cost=.4)) as simulate:
             runner.simulate_rule("bird_dev", "finite_mean", *toy_problem(), object(), 9.,
                                  cost_model="raw_mean", recommendation_min_samples=32)
@@ -344,18 +300,17 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             with_completed_reference(saved, mismatched)
 
-    def test_summarize_only_uses_last_available_event_without_replaying_or_claiming_current_counts(self):
+    def test_summary_uses_last_available_event_without_replaying_or_claiming_current_counts(self):
         run = runner.compact_lcb_run(toy_result())
         with tempfile.TemporaryDirectory() as temporary:
             outdir = Path(temporary)
             folder = outdir / "hotpotqa"
             folder.mkdir()
             runner.save_json(folder / "comparison.json", {"runs": {"finite_lcb": run}})
-            argv = ["run_lcb_benchmarks.py", "--benchmarks", "hotpotqa", "--outdir", str(outdir), "--summarize-only"]
-            with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(
+            with mock.patch.object(
                 runner, "run_benchmark", side_effect=AssertionError("replayed benchmark"),
             ), mock.patch.object(runner, "load_benchmark", side_effect=AssertionError("loaded source")):
-                runner.main()
+                runner.export_summary(outdir, ["hotpotqa"])
             with (outdir / "matched_budgets.csv").open(newline="") as handle:
                 rows = {float(row["budget_fraction"]): row for row in csv.DictReader(handle)}
             self.assertEqual(json.loads(rows[0.20]["selected_arm_indices"]), [])
@@ -387,22 +342,15 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
                                                                      recommendation_min_samples=minimum))}}
 
         primary, finite, completed = payload("finite_mean", 2), payload("finite_lcb"), payload("completed_only")
-        with tempfile.TemporaryDirectory() as temporary:
-            folder = Path(temporary)
-            for name, value in (("primary", primary), ("finite", finite), ("completed", completed)):
-                (folder / f"{name}.json").write_text(json.dumps(value))
-            argv = ["plot_lcb_recommendations.py", str(folder / "primary.json"),
-                    "--reference", str(folder / "completed.json"), "--reference", str(folder / "finite.json")]
-            with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(plot, "export_plots", return_value={}) as export:
-                plot.main()
-            merged, outdir = export.call_args.args
-            self.assertEqual(list(merged["runs"]), ["completed_only", "finite_lcb", "finite_mean"])
-            self.assertEqual(merged["config"]["recommendation_rule"], "finite_mean")
-            self.assertEqual(outdir, folder)
-            self.assertEqual(plot._method_label("finite_mean", {"recommendation_min_samples": 32}),
-                             "Full-test mean Pareto (n≥32)")
-            self.assertIn("finite_mean", plot.PARTIAL_RULES)
-            self.assertNotIn("finite_mean", plot.PENALIZED_RULES)
+        merged = plot.with_reference(primary, completed)
+        merged = plot.with_reference(merged, finite)
+        self.assertEqual(list(merged["runs"]), ["completed_only", "finite_lcb", "finite_mean"])
+        self.assertEqual(merged["config"]["recommendation_rule"], "finite_mean")
+        self.assertEqual(list(primary["runs"]), ["finite_mean"])
+        self.assertEqual(plot._method_label("finite_mean", {"recommendation_min_samples": 32}),
+                         "Full-test mean Pareto (n≥32)")
+        self.assertIn("finite_mean", plot.PARTIAL_RULES)
+        self.assertNotIn("finite_mean", plot.PENALIZED_RULES)
         with self.assertRaises(ValueError):
             plot.with_reference(merged, finite)
         mismatched = copy.deepcopy(finite)
@@ -410,16 +358,7 @@ class FiniteLcbBenchmarkTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             plot.with_reference(primary, mismatched)
 
-    def test_independent_question_order_is_explicit_and_preserves_legacy_output_name(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            argv = ["run_lcb_benchmarks.py", "--benchmarks", "stackoverflow", "--recommendation-rule", "finite_mean",
-                    "--recommendation-min-samples", "32", "--cost-model", "raw_mean", "--question-order", "independent"]
-            with mock.patch.object(runner.sys, "argv", argv), mock.patch.object(
-                runner, "DEFAULT_OUTDIR", Path(temporary) / "original",
-            ), mock.patch.object(runner, "run_benchmark") as run, mock.patch.object(runner, "export_summary"):
-                runner.main()
-            self.assertEqual(run.call_args.kwargs["question_order"], "independent")
-            self.assertEqual(run.call_args.args[1].name, "finite_mean_benchmarks_seed42_min32_raw_mean")
+    def test_independent_question_order_is_explicit_in_helper(self):
         with mock.patch.object(runner, "simulate_radial_gittins", return_value=SimpleNamespace(total_evaluations=4,total_cost=.4)) as simulate:
             runner.simulate_rule("stackoverflow", "finite_mean", *toy_problem(), object(), 9., cost_model="raw_mean",
                                  recommendation_min_samples=32, question_order="independent")

@@ -2,39 +2,28 @@
 
 这份 README 解释本目录下 **31 个一级文件夹**分别在验证什么、相对前一版改变了什么，以及应该从哪里读结果。按实验关系分组，不按文件修改时间排序。整理日期：2026-09-13。
 
-这里记录的是保存下来的实验协议；当前源码的默认参数和推荐语义已经多次变化。目录名中的 “LCB”“completed-only”“full Pareto” 不能单独用来判断实验内容。
+以下历史索引记录的是保存下来的实验协议；当前源码的默认参数和推荐语义已经多次变化。目录名中的 “LCB”“completed-only”“full Pareto” 不能单独用来判断实验内容。
 
-> **当前实现状态（2026-09-13）：** 可执行的推荐规则只有
-> `finite_lcb`、`finite_mean` 和对照用的 `completed_only`；其中唯一的
-> LCB 规则是 `finite_lcb`。下文出现的早期 all-arm LCB、hybrid-LCB 及
-> completed-raw guard 都只是历史结果标签，当前 API/CLI 已删除，不能再
-> 作为 `--recommendation-rule` 运行。保留这些目录仅用于复核既有结论，
-> 不代表仍支持对应算法。
+## 当前协议（2026-09-26）
 
-## 先看哪里
+当前论文方法是 **CC-Gittins / two-axis**：G0 使用 `(0,1)`、`(1,0)`，
+真实 continuation cost、1:1 round-robin、逐方向 η 衰减和 finite-LCB 推荐。
+唯一的消融清单是 [`gittins_ablation_v2.py`](../gittins_ablation_v2.py)：
+G0–G9，覆盖 cost、directions、continuation、scheduler 四组。
+运行和绘图命令见 [`experiments/README.md`](../../README.md)。
 
-- **当前 two-directional 方法说明**：[Two-Directional Gauss-Radau Gittins](../two_directional_gauss_radau.md)，包括方向来源、1:1 async 调度、separable approximation、计算优势和可声称的理论边界。
-- **最近在讨论的版本**：[finite-LCB＋共享题序五数据集报告](finite_lcb_raw_mean_seed42_beta1_shared_questions/five_benchmark_shared_lcb_report.md)。
-- **同一采样轨迹上的推荐规则对照**：上面的 finite-LCB，与 [finite mean＋n≥32＋共享题序](finite_mean_min32_raw_mean_seed42_shared_questions/five_benchmark_question_order_report.md)。
-- **独立题序的三方对照**：[completed-only / finite-LCB / finite mean≥32](finite_mean_min32_raw_mean_seed42/five_benchmark_report.md)。
-- **为什么引入异步 η**：[BIRD 全局停止与按方向停止对照](direction_eta_decay_bird_dev_completed_only_seed42/summary.csv)。
-- **为什么 raw cost 之后看起来覆盖变差**：[restaurant_valid 的 raw-mean 实验及同轨迹 completed-frontier 审计](hybrid_lcb_raw_mean_seed42/restaurant_valid/experiment_notes.md)。
+新结果写入 `gittins_ablation_v2_8bench_20seed/<configuration>/seed-<seed>/...`。
+本地有 G0 时优先读本地结果；否则可以复用旧 `g2_exact_axes` 结果。
+汇总时会验证配置、输入真值与 arm 顺序，不能把不同矩阵版本混在一组比较里。
 
-最近 finite-LCB＋共享题序的全部 checkpoint 图：
-
-| 数据集 | 完整 PDF | 面板 / 页数 |
-|---|---|---:|
-| HotpotQA | [Pareto snapshots](finite_lcb_raw_mean_seed42_beta1_shared_questions/hotpotqa/pareto_snapshots.pdf) | 107 / 12 |
-| MathQA | [Pareto snapshots](finite_lcb_raw_mean_seed42_beta1_shared_questions/mathqa/pareto_snapshots.pdf) | 31 / 4 |
-| StackOverflow | [Pareto snapshots](finite_lcb_raw_mean_seed42_beta1_shared_questions/stackoverflow/pareto_snapshots.pdf) | 56 / 7 |
-| BIRD Dev | [Pareto snapshots](finite_lcb_raw_mean_seed42_beta1_shared_questions/bird_dev/pareto_snapshots.pdf) | 83 / 10 |
-| restaurant_valid | [Pareto snapshots](finite_lcb_raw_mean_seed42_beta1_shared_questions/restaurant_valid/pareto_snapshots.pdf) | 157 / 18 |
+Gauss-Radau 已退役。下方是历史结果索引，目录名、指标和结论仅适用于当时的协议；
+相关实验命令已清理，不作为当前运行说明。历史结果本身保留用于核对。
 
 ## 读结果前统一口径
 
 ### 数据、成本和“找到”
 
-当前五数据集实验使用所有 arms 都有结果的共同题集：
+下述历史五数据集实验使用所有 arms 都有结果的共同题集：
 
 | 数据集 | Arms | 每个 arm 的共同题数 |
 |---|---:|---:|
@@ -177,67 +166,9 @@ variance = [(N - n)^2 * v + (N - n) * tau^2] / N^2
 
 ## 复现入口
 
-以下命令均从**仓库根目录**执行。原始 lookup/SCOPE 数据和绝大多数结果产物只在本地保存；Git 只为本目录的 README 开例外。
-
-### 当前 raw-mean 规则：原生运行
-
-下面是独立题序 finite-LCB 的明确配置，输出到新目录，便于与归档比较：
-
-```bash
-python experiments/combined_objective/run_lcb_benchmarks.py \
-  --benchmarks hotpotqa mathqa stackoverflow bird_dev restaurant_valid \
-  --cost-model raw_mean --question-order independent \
-  --recommendation-rule finite_lcb --beta 1 --recommendation-min-samples 0 \
-  --outdir tmp/results_readme_repro/finite_lcb_independent
-```
-
-此 runner 固定 seed42、batch4、十方向 round-robin 和异步 η。其余规则改以下参数，并给 --outdir 使用不同目录：
-
-| 要复现的规则 | 参数 |
-|---|---|
-| completed 实测前沿 / 独立题序 | --recommendation-rule completed_only --question-order independent |
-| finite mean≥32 / 独立题序 | --recommendation-rule finite_mean --recommendation-min-samples 32 --question-order independent |
-| finite mean≥32 / 共享题序 | --recommendation-rule finite_mean --recommendation-min-samples 32 --question-order shared |
-| 原生 finite-LCB / 共享题序 | --recommendation-rule finite_lcb --beta 1 --recommendation-min-samples 0 --question-order shared |
-
-**旧独立题序报告的命令经常省略 --question-order；当前默认已经是 shared，重跑时必须显式补 independent。** 表中原生 shared finite-LCB 是新的完整运行方式，不是现存 shared-LCB 目录的生成方式。
-
-### 复现已有共享轨迹上的 finite-LCB
-
-```bash
-python experiments/combined_objective/results/finite_lcb_raw_mean_seed42_beta1_shared_questions/replay_shared_finite_lcb.py \
-  --benchmarks hotpotqa mathqa stackoverflow bird_dev restaurant_valid \
-  --source-parent experiments/combined_objective/results/finite_mean_min32_raw_mean_seed42_shared_questions \
-  --outdir tmp/results_readme_repro/finite_lcb_shared_replay
-```
-
-它只重算推荐，保留并引用原始采样/η轨迹。归档目录中还保存了 validate_native_controls.py、build_shared_lcb_report.py 和 generate_pareto_plots.py；这些配套脚本针对归档目录布局，不能当成自动发现任意新输出路径的通用命令。
-
-### 只重画已有结果
-
-```bash
-python experiments/combined_objective/plot/plot_lcb_recommendations.py \
-  experiments/combined_objective/results/finite_lcb_raw_mean_seed42_beta1_shared_questions/mathqa/comparison.json \
-  --outdir tmp/results_readme_repro/mathqa_plots
-```
-
-对归档 shared-LCB 五组统一重画，可运行该目录的 generate_pareto_plots.py；它要求原 comparison/validation 已存在，输出回各归档子目录。更新 comparison 后，应先重新验证，再更新依赖 SHA 的报告和图。
-
-### 历史实验入口
-
-| 实验系列 | 保存实现所对应的入口 |
-|---|---|
-| 全局 anytime / variance025 | [plot_anytime_radial_gittins.py](../plot/plot_anytime_radial_gittins.py)；variance025 的旧参数见其 comparison.md，需要历史实现。 |
-| round-robin / accuracy-last | [compare_direction_schedulers.py](../compare_direction_schedulers.py)，使用 --benchmarks 指定 hotpotqa mathqa 或 bird_dev。 |
-| 全局 / 异步 η | [compare_eta_decay.py](../compare_eta_decay.py)；异步实现的历史 core 为 d545648。 |
-| BIRD LCB / hybrid-LCB | [compare_lcb_recommendations.py](../compare_lcb_recommendations.py)，--recommendation-rule lcb 或 hybrid_lcb，--beta 1。 |
-| completed 工程拆分 | 同一 eta runner，历史 core 为7d2e82c；其验证文件记录提交。 |
-| BIRD 单方向诊断 | [diagnosis/run_accuracy_only.py](direction_schedulers_bird_dev_completed_only_seed42/diagnosis/run_accuracy_only.py)。它导入当前 core，需对应历史实现/参数才能精确复现旧结果。 |
-| raw cost 共同指标对照 | [compare_cost_models.py](../compare_cost_models.py)，原始/新模型输入及命令见 raw_mean 的 experiment_notes.md。 |
-| Pareto baselines | [offline_pareto_baselines.py](../offline_pareto_baselines.py)；只重画已有 CSV 可使用 plot_pareto_identification_baselines.py 的 --from-csv。 |
-| weighted-J 表格 | [run_all_selectors.py](../run_all_selectors.py) 和 [offline_selector_sim.py](../offline_selector_sim.py)；权重、seed数及预算以各 LaTeX 表注为准。 |
-
-这些是**历史入口索引，不是当前代码下逐字复现旧结果的保证**。除题序以外，completed-only 语义、tie 处理、metric space 都曾改动；优先保留并检查原 config/parameters、lookup/source SHA、原生 trace 和 validation，再比较新输出。
+使用当前 [two-axis 与四组 ablations 命令](../../README.md)。
+早期推荐规则、accuracy-last 和全局 η 对照的独立命令已退役；
+复核历史实验应使用对应的 Git 历史版本与其原始数据。
 
 ## 新实验如何归档
 

@@ -1,31 +1,20 @@
-#!/usr/bin/env python3
-"""Compare completed-only and a finite-test output rule on one BIRD replay.
+"""Shared recommendation reporting helpers for the maintained ablation runners.
 
-Acquisition uses asynchronous per-direction eta decay and required completion
-for both rules. Full-data quality and dominance checks below are offline
-diagnostics; neither the finite-test recommendation nor acquisition can access them.
+Full-data quality and dominance checks are offline diagnostics. This module has
+no command-line entry point; experiment configuration belongs to the ablations.
 """
 from __future__ import annotations
 
-import argparse
 import copy
 import csv
-import gzip
 import hashlib
 import json
 import math
-from pathlib import Path
-import sys
-import threading
 import time
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 
 import numpy as np
 
-RESULTS = ROOT / "experiments/combined_objective/results"
-RAW_BASELINE = RESULTS / "completed_raw_pareto_seed42/bird_dev/comparison.json"
 BUDGETS = (0.0025, 0.005, 0.01, 0.02, 0.05, 0.10, 0.15, 0.20, 0.25, 0.50, 0.75, 1.0)
 CALIBRATION_KEYS = ("prior_variance", "obs_noise_variance", "cost_reference_usd", "expected_batch_costs_usd")
 
@@ -327,181 +316,3 @@ def export(saved, outdir, *, plots=False):
     }
     (outdir / "comparison.json").write_text(json.dumps(saved, indent=2, allow_nan=False) + "\n")
     print(json.dumps(summaries, indent=2), flush=True)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", type=Path,
-                        help="Saved completed reference; defaults to the raw empirical run")
-    parser.add_argument("--recommendation-rule", choices=("finite_lcb", "finite_mean"), default="finite_lcb",
-                        help="finite_lcb/finite_mean use full-test means with/without a std penalty and require raw_mean")
-    parser.add_argument("--recommendation-min-samples", type=int, default=0,
-                        help="Minimum observed questions per recommended arm (finite_lcb/finite_mean only)")
-    parser.add_argument("--cost-model", choices=("reciprocal", "raw_mean"), default="raw_mean")
-    parser.add_argument("--beta", type=float, default=1.0)
-    parser.add_argument("--question-order", choices=("shared", "independent"), default="independent",
-                        help="Question order must match the completed baseline for this exact-acquisition comparison; default reproduces historical independent runs")
-    parser.add_argument("--outdir", type=Path)
-    rendering = parser.add_mutually_exclusive_group()
-    rendering.add_argument("--plot-only", action="store_true",
-                           help="Redraw all figures and tables from the saved comparison")
-    rendering.add_argument("--plots", action="store_true",
-                           help="Also render all figures after replay (default: save results without plots)")
-    rendering.add_argument("--no-plots", action="store_true",
-                           help="Compatibility alias for the default: save results without rendering figures")
-    args = parser.parse_args()
-    if not math.isfinite(args.beta) or args.beta < 0:
-        parser.error("--beta must be finite and nonnegative")
-    rule = args.recommendation_rule
-    if rule in ("finite_lcb", "finite_mean") and args.cost_model != "raw_mean":
-        parser.error(f"{rule} requires --cost-model raw_mean")
-    if args.recommendation_min_samples < 0 or (args.recommendation_min_samples and rule not in ("finite_lcb", "finite_mean")):
-        parser.error("--recommendation-min-samples must be nonnegative and only applies to finite_lcb/finite_mean")
-    if rule == "finite_mean":
-        args.beta = 0.0
-    args.baseline = args.baseline or RAW_BASELINE
-    suffix = "_raw_mean" if args.cost_model == "raw_mean" else ""
-    if args.question_order == "shared":
-        suffix += "_shared_questions"
-    method_name = f"{rule}_recommendations_bird_dev_seed42"
-    if rule != "finite_mean":
-        method_name += f"_beta{args.beta:g}"
-    if args.recommendation_min_samples:
-        method_name += f"_min{args.recommendation_min_samples}"
-    outdir = args.outdir or RESULTS / f"{method_name}{suffix}"
-    outdir.mkdir(parents=True, exist_ok=True)
-    output = outdir / "comparison.json"
-    if args.plot_only:
-        export(json.loads(output.read_text()), outdir, plots=True)
-        return
-
-    # Import the evolving selector only when an actual replay is requested.
-    replay_source_sha256 = hashlib.sha256(
-        (ROOT / "experiments/combined_objective/offline_radial_gittins.py").read_bytes()
-    ).hexdigest()
-    from agentopt.model_selection.radial_gittins_dp import RadialGittinsBoundaryCache, RadialGittinsGrid
-    from experiments.combined_objective.offline_radial_gittins import DEFAULT_RADIAL_BOUNDARY_CACHE_DIR, load_scope, simulate_radial_gittins
-
-    saved_baseline = json.loads(args.baseline.read_text())
-    baseline_method = "completed_only" if "completed_only" in saved_baseline["runs"] else "direction_stop"
-    baseline = copy.deepcopy(saved_baseline["runs"][baseline_method])
-    if baseline.get("question_order", "independent") != args.question_order:
-        raise ValueError("Exact-acquisition comparison requires the same question_order as its baseline; use the benchmark runner and plot references for comparisons across question orders")
-    if baseline.get("cost_model", "reciprocal") != args.cost_model:
-        raise ValueError("The saved completed reference must use the requested acquisition cost model")
-    if rule in ("finite_lcb", "finite_mean") and baseline.get("recommendation_filter") != "all_completed_empirical_raw_pareto":
-        raise ValueError(f"{rule} requires a completed empirical Pareto reference, not historical direction-filtered recommendations")
-    baseline_trace_path = args.baseline.parent / f"{baseline_method}_trace.json.gz"
-    with gzip.open(baseline_trace_path, "rt", encoding="utf-8") as handle:
-        baseline_trace = json.load(handle)
-    lookup = ROOT / "data/scope/bird_dev"
-    hashes = {name: hashlib.sha256((lookup / name).read_bytes()).hexdigest()
-              for name in ("accuracy_matrix.csv", "cost_matrix_usd.csv", "metadata.json")}
-    baseline_hashes = {Path(name).name: value for name, value in saved_baseline["config"]["lookup_sha256"].items()}
-    if hashes != baseline_hashes:
-        raise AssertionError("Frozen BIRD inputs differ from the saved baseline")
-    models, questions, table = load_scope(str(lookup))
-    finished, started = threading.Event(), time.perf_counter()
-
-    def progress():
-        while not finished.wait(45):
-            print(f"BIRD {rule} beta={args.beta:g}, seed42: {time.perf_counter() - started:.0f}s elapsed", flush=True)
-
-    threading.Thread(target=progress, daemon=True).start()
-    print(f"Running BIRD dev: {rule} beta={args.beta:g}, asynchronous eta, seed42, all membership changes", flush=True)
-    try:
-        result = simulate_radial_gittins(
-            models, questions, table, anytime=True, direction_scheduler="round_robin",
-            eta_decay_schedule="direction_stop", recommendation_rule=rule, recommendation_beta=args.beta,
-            recommendation_min_samples=args.recommendation_min_samples,
-            question_order=args.question_order,
-            cost_model=args.cost_model,
-            seed=42, batch_size=4, lambda_initial=1.0, lambda_decay=0.5, search_cost_scale_eta=1.0,
-            observation_budget_fraction=1.0, boundary_z_padding_extra=2.0, effective_cost_bin_ratio=2.0,
-            boundary_grid=RadialGittinsGrid(z_size=129, delta_size=129, state_size=129, boundary_margin_cells=4),
-            boundary_cache=RadialGittinsBoundaryCache(cache_dir=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR),
-            record_trace=True, record_recommendation_trajectory=True,
-            recommendation_checkpoint_interval=None, recommendation_changes_only=True,
-            defer_recommendation_diagnostics=True,
-        )
-    finally:
-        finished.set()
-    replay_seconds = time.perf_counter() - started
-    trace_path = outdir / f"{rule}_trace.json.gz"
-    trace_started = time.perf_counter()
-    with gzip.open(trace_path, "wt", encoding="utf-8") as handle:
-        json.dump(result.trace, handle)
-    trace_seconds = time.perf_counter() - trace_started
-    report_started = time.perf_counter()
-    run = compact_lcb_run(result)
-    report_seconds = time.perf_counter() - report_started
-    for key in ("warm_start_sha256", "calibration_sha256", "model_names", "raw_truth_vectors",
-                "bruteforce_search_cost_usd", "ground_truth_hypervolume", "cost_usd", "evaluations", "stop_reason"):
-        if baseline[key] != run[key]:
-            raise AssertionError(f"Baseline mismatch: {key}")
-    validation = verify_identical_acquisition(result.trace, baseline_trace, result.direction_eta_events,
-                                             saved_baseline["direction_eta_events"])
-    baseline.update(recommendation_rule="completed_only", recommendation_beta=None, eta_decay_schedule="direction_stop")
-    # Normalize the old compact format: preserve every change and both ends.
-    normalized_points = []
-    previous = set(baseline["points"][0]["selected_arm_indices"])
-    for index, point in enumerate(baseline["points"]):
-        current = set(point["selected_arm_indices"])
-        if index == 0 or current != previous:
-            normalized_points.append({**point, "snapshot_role": "warm_start" if index == 0 else "membership_change"})
-        previous = current
-    normalized_points.append({**baseline["points"][-1], "snapshot_role": "final"})
-    baseline["points"] = normalized_points
-    add_truth_diagnostics(baseline, result.truth_vectors, result.params.get("metric_reference_point", result.params["reference_point"]))
-    enrich_counts(baseline, baseline_trace)
-    for point in baseline["points"]:
-        if point["partial_recommended_count"]:
-            raise AssertionError("Saved completed-only baseline recommends an unfinished arm")
-    payload = {
-        "config": {
-            "benchmark": "bird_dev", "seed": 42, "algorithm": "Radial-Gittins-decay", "anytime": True,
-            "question_order": args.question_order,
-            "eta_decay_schedule": "direction_stop", "direction_scheduler": "round_robin",
-            "recommendation_rule": rule, "recommendation_beta": args.beta,
-            "recommendation_min_samples": args.recommendation_min_samples,
-            "recommendation_eligibility": result.params.get("recommendation_eligibility", "no_minimum_sample_gate"),
-            "cost_model": args.cost_model,
-            "recommendation_changes_only": True, "batch_size": 4, "grid_size": 129,
-            "defer_recommendation_diagnostics": True,
-            "recommendation_recording": copy.deepcopy(result.params["recommendation_recording"]),
-            "timing": {
-                "replay_wall_time_seconds": replay_seconds,
-                "trace_write_wall_time_seconds": trace_seconds,
-                "report_wall_time_seconds": report_seconds,
-            },
-            "boundary_z_padding_extra": 2.0, "eta_initial": 1.0, "eta_decay": 0.5,
-            "baseline_file": str(args.baseline), "baseline_trace_file": str(baseline_trace_path),
-            "trace_file": str(trace_path),
-            "baseline_file_sha256": hashlib.sha256(args.baseline.read_bytes()).hexdigest(),
-            "baseline_trace_file_sha256": hashlib.sha256(baseline_trace_path.read_bytes()).hexdigest(),
-            "lookup_sha256": hashes,
-            "replay_source_sha256": replay_source_sha256,
-            "matched_warm_calibration_inputs_and_hv_verified": True,
-            "acquisition_validation": validation,
-            "recommendation_formula": (
-                "Pareto frontier of eligible arms at full-fixed-test predictive mean accuracy and mean USD cost, without a standard-deviation penalty; eligibility uses actual observed question count >= recommendation_min_samples"
-                if rule == "finite_mean" else
-                "Pareto frontier of eligible arms at full-fixed-test predictive mean accuracy minus beta standard deviations and mean USD cost plus beta standard deviations; eligibility uses actual observed question count >= recommendation_min_samples; completed rows have their empirical means and zero variance"
-            ),
-            "metric_space": run["metric_space"],
-            "budget_alignment": "Latest recommendation at or below each shared budget; held until next membership change",
-            "early_mistake_definition": "Selected configuration strictly dominated in raw accuracy and mean cost by some full-data configuration; offline diagnostic only",
-            "sustained_recovery_definition": "First checkpoint containing a highest-accuracy configuration with no later withdrawal through final",
-            "comparison_scope": "Output recommendations only; exact same acquisitions and total search spend, no acquisition savings",
-            "runtime_note": "Baseline reused and shared cache; elapsed times are not a controlled runtime comparison",
-        },
-        "runs": {"completed_only": baseline, rule: run},
-        "parameters": result.params,
-        "direction_eta_events": result.direction_eta_events,
-    }
-    print(f"Exact acquisition parity verified: {validation['physical_evaluations']:,} cells; {len(run['points'])} {rule} snapshots", flush=True)
-    export(payload, outdir, plots=args.plots)
-
-
-if __name__ == "__main__":
-    main()

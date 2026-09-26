@@ -1,13 +1,13 @@
-"""Plot saved LCB recommendations and every membership checkpoint.
+"""Shared plotting helpers for saved recommendation membership checkpoints.
 
 All accuracy/cost positions use full-data evaluations. Completed recommended
 points equal their observed means; partial-arm truth and the full reference
 frontier are offline diagnostics. Hollow versus filled circles indicate
 completion at that checkpoint; gray dots do not encode observation status.
+The retired standalone LCB comparison command has no entry point here.
 """
 from __future__ import annotations
 
-import argparse
 import csv
 import json
 import math
@@ -389,19 +389,6 @@ def export_plots(saved, outdir):
     return manifest
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("comparison", type=Path)
-    parser.add_argument("--reference", type=Path, action="append", default=[],
-                        help="Overlay a compatible saved completed-only or finite-test comparison; repeat for multiple references; also render their checkpoints")
-    parser.add_argument("--outdir", type=Path,
-                        help="Plot output directory; defaults to the primary comparison's directory")
-    args = parser.parse_args()
-    saved = json.loads(args.comparison.read_text())
-    for reference_path in args.reference:
-        saved = with_reference(saved, json.loads(reference_path.read_text()))
-    print(json.dumps(export_plots(saved, args.outdir or args.comparison.parent), indent=2))
-
 
 def with_completed_reference(saved, reference):
     """Compatibility wrapper for the original completed-only overlay API."""
@@ -443,10 +430,6 @@ def with_reference(saved, reference, *, method=None):
         for name, run in saved["runs"].items()
     }}
     # Keep comparable panels and annotations in the same order regardless of
-    # the CLI order, while the primary config still controls the PDF alias.
+    # the reference order, while the primary config still controls the PDF alias.
     combined = {name: combined[name] for name in LABELS if name in combined}
     return {**saved, "config": config, "runs": combined}
-
-
-if __name__ == "__main__":
-    main()

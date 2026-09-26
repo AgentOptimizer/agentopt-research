@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Run fixed two-direction Radial-Gittins ablations.
+"""Run two-axis CC-Gittins and its retained direction, cost, and scheduler ablations.
 
 This runner deliberately keeps acquisition directions fixed.  Adaptive direction
 insertion is a separate algorithmic question and is not mixed into these runs.
-The committed HotpotQA and MathQA 10x10 matrices are the default benchmarks;
-the remaining SCOPE benchmarks are still available through ``--benchmarks``.
 """
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
@@ -34,6 +33,7 @@ from experiments.combined_objective.compare_lcb_recommendations import (  # noqa
     compact_lcb_run,
 )
 from experiments.combined_objective.search_cost_checkpoint import (  # noqa: E402
+    CheckpointNotReachedError,
     actual_cost_checkpoint,
 )
 from experiments.combined_objective.offline_radial_gittins import (  # noqa: E402
@@ -47,29 +47,36 @@ from experiments.combined_objective.offline_radial_gittins import (  # noqa: E40
 DATASETS = {
     "hotpotqa": ("scope", "data/hotpotqa"),
     "mathqa": ("scope", "data/mathqa"),
+    "restaurant_test": ("scope", "data/scope/restaurant_test"),
     "stackoverflow": ("scope", "data/scope/stackoverflow"),
     "bird_dev": ("scope", "data/scope/bird_dev"),
     "restaurant_valid": ("scope", "data/scope/restaurant_valid"),
+    "bing_querylogs": ("scope", "data/scope/bing_querylogs"),
+    "bird_mini_dev": ("scope", "data/scope/bird_mini_dev"),
 }
+
 DEFAULT_BENCHMARKS = ("hotpotqa", "mathqa")
 
-GAUSS_RADAU_TWO_POINT_INTERIOR = 1.0 / 3.0
-
 PAIRS = {
-    "cost_near__accuracy_axis": ((0.1, 0.9), (1.0, 0.0)),
-    "gauss_radau_accuracy_endpoint": (
-        (GAUSS_RADAU_TWO_POINT_INTERIOR, 1.0 - GAUSS_RADAU_TWO_POINT_INTERIOR),
-        (1.0, 0.0),
-    ),
-    "symmetric_interior": ((0.1, 0.9), (0.9, 0.1)),
+    # Keep the paper protocol order: deployment axis, then quality axis.
     "exact_axes": ((0.0, 1.0), (1.0, 0.0)),
+    "quality_only": ((1.0, 0.0),),
+    "deployment_only": ((0.0, 1.0),),
+    "axes_midpoint": ((0.0, 1.0), (0.5, 0.5), (1.0, 0.0)),
+    "five_directions": (
+        (1.0, 0.0),
+        (0.75, 0.25),
+        (0.5, 0.5),
+        (0.25, 0.75),
+        (0.0, 1.0),
+    ),
 }
-PRIMARY_PAIR = "cost_near__accuracy_axis"
+PRIMARY_PAIR = "exact_axes"
 
 DEFAULT_OUTDIR = (
     ROOT
     / "experiments/combined_objective/results"
-    / "two_direction_finite_lcb_raw_mean_estimated_actual_seed42_independent"
+    / "two_axis_finite_lcb_raw_mean_seed42_independent"
 )
 
 
@@ -78,20 +85,124 @@ def _json_dump(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + "\n")
 
 
+def _recommendation_membership_intervals(
+    points: list[dict[str, Any]], terminal_cost_fraction: float
+) -> dict[int, list[tuple[float, float]]]:
+    intervals: dict[int, list[tuple[float, float]]] = {}
+    active: dict[int, float] = {}
+    previous: set[int] = set()
+    for point in points:
+        cost_fraction = float(point["cost_fraction"])
+        current = set(map(int, point["selected_arm_indices"]))
+        for arm in previous - current:
+            intervals.setdefault(arm, []).append((active.pop(arm), cost_fraction))
+        for arm in current - previous:
+            active[arm] = cost_fraction
+        previous = current
+    for arm, start in active.items():
+        intervals.setdefault(arm, []).append((start, terminal_cost_fraction))
+    return intervals
+
+
+def build_plotting_payload(
+    run: dict[str, Any], targets: tuple[float, ...] = (0.10, 0.30)
+) -> dict[str, Any]:
+    """Freeze every value needed by the 10%/30% frontier and persistence plot."""
+    points = run["points"]
+    terminal = float(run["cost_fraction"])
+    intervals = _recommendation_membership_intervals(points, terminal)
+    truth = run["raw_truth_vectors"]
+    model_names = run["model_names"]
+    target_payloads: list[dict[str, Any]] = []
+    for target in targets:
+        eligible = [point for point in points if float(point["cost_fraction"]) <= target]
+        if not eligible or target > terminal + 1e-12:
+            target_payloads.append(
+                {
+                    "target_cost_fraction": target,
+                    "available": False,
+                    "terminal_cost_fraction": terminal,
+                }
+            )
+            continue
+        point = eligible[-1]
+        selected = list(map(int, point["selected_arm_indices"]))
+        target_payloads.append(
+            {
+                "target_cost_fraction": target,
+                "available": True,
+                "source_snapshot_cost_fraction": float(point["cost_fraction"]),
+                "source_snapshot_evaluations": int(point["evaluations"]),
+                "selected_arm_indices": selected,
+                "selected_model_names": [model_names[arm] for arm in selected],
+                "selected_full_data_vectors": [truth[arm] for arm in selected],
+                "selected_membership_intervals": {
+                    str(arm): [
+                        [start, end]
+                        for start, end in intervals.get(arm, [])
+                        if start <= target < end
+                    ]
+                    for arm in selected
+                },
+                "pareto_precision": point["pareto_precision"],
+                "pareto_recall": point["pareto_recall"],
+                "pareto_false_positive_count": point["pareto_false_positive_count"],
+                "pareto_false_negative_count": point["pareto_false_negative_count"],
+                "relative_hv_regret": point["relative_hv_regret"],
+            }
+        )
+    return {
+        "schema_version": 1,
+        "targets": target_payloads,
+        "terminal_cost_fraction": terminal,
+        "full_data_pareto_arm_indices": run["full_data_pareto_arm_indices"],
+        "full_data_pareto_vectors": [
+            truth[arm] for arm in run["full_data_pareto_arm_indices"]
+        ],
+        "canonical_background_fields": {
+            "model_names": "run.model_names",
+            "full_data_vectors": "run.raw_truth_vectors",
+            "membership_change_points": "run.points",
+        },
+    }
+
+
 def _input_files(kind: str, path: Path) -> list[Path]:
     if kind == "pickle":
         return [path]
-    return [path / name for name in ("accuracy_matrix.csv", "cost_matrix_usd.csv", "metadata.json")]
+    files = [
+        path / name
+        for name in ("accuracy_matrix.csv", "cost_matrix_usd.csv", "metadata.json")
+    ]
+    files.extend(
+        candidate
+        for candidate in (
+            path / "input_token_matrix.csv",
+            path / "output_token_matrix.csv",
+            path / "total_token_matrix.csv",
+        )
+        if candidate.is_file()
+    )
+    price_file = ROOT / "data/aws_bedrock_prices_10x10.json"
+    if path.name in {"hotpotqa", "mathqa"} and price_file.is_file():
+        files.append(price_file)
+    return files
+
+
+def benchmark_input_hashes(benchmark: str) -> dict[str, str]:
+    kind, relative = DATASETS[benchmark]
+    path = ROOT / relative
+    files = _input_files(kind, path)
+    return {
+        str(file.relative_to(ROOT)): hashlib.sha256(file.read_bytes()).hexdigest()
+        for file in files
+    }
 
 
 def load_benchmark(benchmark: str):
     kind, relative = DATASETS[benchmark]
     path = ROOT / relative
-    files = _input_files(kind, path)
-    hashes = {
-        str(file.relative_to(ROOT)): hashlib.sha256(file.read_bytes()).hexdigest()
-        for file in files
-    }
+    hashes = benchmark_input_hashes(benchmark)
     models, questions, table = (load_pickle if kind == "pickle" else load_scope)(str(path))
     return models, questions, table, hashes
 
@@ -161,7 +272,12 @@ def _eta_summary(events: Iterable[dict[str, Any]], direction_count: int) -> list
     return rows
 
 
-def summarize_run(run: dict[str, Any], eta_events: list[dict[str, Any]]) -> dict[str, Any]:
+def summarize_run(
+    run: dict[str, Any],
+    eta_events: list[dict[str, Any]],
+    *,
+    direction_count: int = 2,
+) -> dict[str, Any]:
     points = run["points"]
     first_endpoint = _first_point(points, lambda point: point["contains_accuracy_endpoint"])
     sustained_endpoint = _sustained_first_point(points, lambda point: point["contains_accuracy_endpoint"])
@@ -213,7 +329,7 @@ def summarize_run(run: dict[str, Any], eta_events: list[dict[str, Any]]) -> dict
         "final_false_negative_count": final["pareto_false_negative_count"],
         "final_relative_hv_regret": final["relative_hv_regret"],
         "final_selected_arm_indices": final["selected_arm_indices"],
-        "direction_eta": _eta_summary(eta_events, 2),
+        "direction_eta": _eta_summary(eta_events, direction_count),
     }
     for target in (0.5, 0.8, 0.9, 1.0):
         tag = str(target).replace(".", "p")
@@ -237,8 +353,23 @@ def run_one(
     seed: int,
     outdir: Path,
     observation_budget_fraction: float,
+    eta_decay_schedule: str = "direction_stop",
+    direction_scheduler: str = "round_robin",
+    acquisition_cost_mode: str = "real",
+    continuation_mode: str = "eta_decay",
+    ablation_name: str | None = None,
 ) -> dict[str, Any]:
+    run_started_at_utc = datetime.now(timezone.utc).isoformat()
+    run_started = time.perf_counter()
     directions = PAIRS[pair_name]
+    if acquisition_cost_mode not in {"real", "unit"}:
+        raise ValueError("acquisition_cost_mode must be 'real' or 'unit'")
+    if continuation_mode not in {"eta_decay", "fixed_eta_no_stop"}:
+        raise ValueError(
+            "continuation_mode must be 'eta_decay' or 'fixed_eta_no_stop'"
+        )
+    anytime = continuation_mode == "eta_decay"
+    resolved_eta_decay_schedule = eta_decay_schedule if anytime else "global_stop"
     output_path = outdir / pair_name / benchmark / "result.json"
     if output_path.exists():
         saved = json.loads(output_path.read_text())
@@ -247,24 +378,59 @@ def run_one(
                 f"Refusing to reuse {output_path}: it predates the actual-dollar "
                 "checkpoint. Choose a new --outdir."
             )
+        requested = {
+            "ablation_name": ablation_name,
+            "benchmark": benchmark,
+            "seed": seed,
+            "pair_name": pair_name,
+            "directions": [list(direction) for direction in directions],
+            "acquisition_cost_mode": acquisition_cost_mode,
+            "continuation_mode": continuation_mode,
+            "eta_decay_schedule": resolved_eta_decay_schedule,
+            "direction_scheduler": direction_scheduler,
+            "question_universe": "common",
+            "question_order": "independent",
+            "warm_start_question_order": "independent",
+            "cost_model": "raw_mean",
+            "recommendation_rule": "finite_lcb",
+            "recommendation_beta": 1.0,
+            "recommendation_min_samples": 0,
+            "batch_size": 4,
+            "eta_initial": 1.0,
+            "eta_decay": 0.5,
+            "observation_budget_fraction": observation_budget_fraction,
+            "input_sha256": benchmark_input_hashes(benchmark),
+        }
+        existing = saved.get("config", {})
+        mismatches = [
+            key for key, value in requested.items() if existing.get(key) != value
+        ]
+        if mismatches:
+            raise ValueError(
+                f"Refusing to reuse {output_path}: configuration differs in "
+                f"{', '.join(mismatches)}. Choose a new --outdir."
+            )
         print(f"Reusing {output_path}", flush=True)
         return saved
 
+    load_started = time.perf_counter()
     models, questions, table, hashes = load_benchmark(benchmark)
+    data_load_wall_time = time.perf_counter() - load_started
     cache = RadialGittinsBoundaryCache(cache_dir=DEFAULT_RADIAL_BOUNDARY_CACHE_DIR)
-    started = time.perf_counter()
+    simulation_started = time.perf_counter()
     print(
         f"Running {benchmark} / {pair_name}: directions={directions}, seed={seed}",
         flush=True,
     )
+    expected_batch_cost_usd = 1.0 if acquisition_cost_mode == "unit" else None
     result = simulate_radial_gittins(
         models,
         questions,
         table,
         directions=directions,
-        anytime=True,
-        direction_scheduler="round_robin",
-        eta_decay_schedule="direction_stop",
+        anytime=anytime,
+        direction_scheduler=direction_scheduler,
+        eta_decay_schedule=resolved_eta_decay_schedule,
         recommendation_rule="finite_lcb",
         recommendation_beta=1.0,
         recommendation_min_samples=0,
@@ -277,6 +443,7 @@ def run_one(
         lambda_initial=1.0,
         lambda_decay=0.5,
         search_cost_scale_eta=1.0,
+        expected_batch_cost_usd=expected_batch_cost_usd,
         observation_budget_fraction=observation_budget_fraction,
         boundary_z_padding_extra=2.0,
         effective_cost_bin_ratio=2.0,
@@ -292,13 +459,25 @@ def run_one(
         recommendation_checkpoint_interval=None,
         recommendation_changes_only=True,
         defer_recommendation_diagnostics=True,
+        halt_on_gittins_stop=continuation_mode != "fixed_eta_no_stop",
     )
-    elapsed = time.perf_counter() - started
+    simulation_wall_time = time.perf_counter() - simulation_started
+    postprocess_started = time.perf_counter()
     run = enrich_frontier_metrics(compact_lcb_run(result))
-    search_cost_checkpoint = actual_cost_checkpoint(result, target_fraction=0.1)
+    checkpoint_unavailable_reason = None
+    try:
+        search_cost_checkpoint = actual_cost_checkpoint(
+            result, target_fraction=0.1, acquisition_cost_mode=acquisition_cost_mode,
+        )
+    except CheckpointNotReachedError as error:
+        search_cost_checkpoint = None
+        checkpoint_unavailable_reason = str(error)
     eta_events = list(result.direction_eta_events)
+    plotting = build_plotting_payload(run)
+    postprocess_wall_time = time.perf_counter() - postprocess_started
     payload = {
         "config": {
+            "ablation_name": ablation_name,
             "benchmark": benchmark,
             "seed": seed,
             "directions": [list(direction) for direction in directions],
@@ -313,18 +492,35 @@ def run_one(
             "cost_model": "raw_mean",
             "eta_initial": 1.0,
             "eta_decay": 0.5,
-            "eta_decay_schedule": "direction_stop",
-            "direction_scheduler": "round_robin",
+            "eta_decay_schedule": resolved_eta_decay_schedule,
+            "requested_eta_decay_schedule": eta_decay_schedule,
+            "direction_scheduler": direction_scheduler,
+            "acquisition_cost_mode": acquisition_cost_mode,
+            "continuation_mode": continuation_mode,
+            "expected_batch_cost_usd_override": expected_batch_cost_usd,
+            "anytime": anytime,
+            "halt_on_gittins_stop": continuation_mode != "fixed_eta_no_stop",
             "observation_budget_fraction": observation_budget_fraction,
             "input_sha256": hashes,
             "engine_source_sha256": hashlib.sha256(
                 (ROOT / "experiments/combined_objective/offline_radial_gittins.py").read_bytes()
             ).hexdigest(),
             "runner_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            "wall_time_seconds": elapsed,
+            "wall_time_seconds": simulation_wall_time,
+            "wall_time_scope": "simulate_radial_gittins_only",
+            "run_started_at_utc": run_started_at_utc,
+            "data_load_wall_time_seconds": data_load_wall_time,
+            "postprocess_wall_time_seconds": postprocess_wall_time,
+            "pre_write_wall_time_seconds": time.perf_counter() - run_started,
         },
-        "summary": summarize_run(run, eta_events),
+        "summary": summarize_run(
+            run,
+            eta_events,
+            direction_count=len(directions),
+        ),
+        "plotting": plotting,
         "search_cost_checkpoint_10pct": search_cost_checkpoint,
+        "search_cost_checkpoint_10pct_unavailable_reason": checkpoint_unavailable_reason,
         "direction_eta_events": eta_events,
         "run": run,
         "parameters": result.params,
@@ -332,7 +528,7 @@ def run_one(
     _json_dump(output_path, payload)
     print(
         f"Finished {benchmark} / {pair_name}: BF={run['cost_fraction']:.3%}, "
-        f"stop={run['stop_reason']}, time={elapsed:.1f}s",
+        f"stop={run['stop_reason']}, time={simulation_wall_time:.1f}s",
         flush=True,
     )
     return payload
@@ -346,8 +542,11 @@ def export_combined(outdir: Path, benchmarks: list[str], pairs: list[str]) -> No
             if not path.exists():
                 continue
             payload = json.loads(path.read_text())
+            checkpoint = payload.get("search_cost_checkpoint_10pct")
             payload["summary"] = summarize_run(
-                payload["run"], payload["direction_eta_events"]
+                payload["run"],
+                payload["direction_eta_events"],
+                direction_count=len(payload["config"]["directions"]),
             )
             _json_dump(path, payload)
             rows.append(
@@ -355,8 +554,9 @@ def export_combined(outdir: Path, benchmarks: list[str], pairs: list[str]) -> No
                     "pair_name": pair_name,
                     "directions": payload["config"]["directions"],
                     "benchmark": benchmark,
-                    "estimated_search_cost_percent_at_10pct": payload["search_cost_checkpoint_10pct"]["estimated_search_cost_percent"],
-                    "actual_search_cost_percent_at_10pct": payload["search_cost_checkpoint_10pct"]["actual_search_cost_percent"],
+                    "estimated_search_cost_percent_at_10pct": None if checkpoint is None else checkpoint["estimated_search_cost_percent"],
+                    "actual_search_cost_percent_at_10pct": None if checkpoint is None else checkpoint["actual_search_cost_percent"],
+                    "search_cost_checkpoint_10pct_unavailable_reason": payload.get("search_cost_checkpoint_10pct_unavailable_reason"),
                     **payload["summary"],
                 }
             )
@@ -365,26 +565,46 @@ def export_combined(outdir: Path, benchmarks: list[str], pairs: list[str]) -> No
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--benchmarks",
-        nargs="+",
-        choices=tuple(DATASETS),
-        default=list(DEFAULT_BENCHMARKS),
-    )
+    parser.add_argument("--benchmarks", nargs="+", choices=tuple(DATASETS), default=list(DEFAULT_BENCHMARKS))
     parser.add_argument(
         "--pairs",
         nargs="+",
         choices=tuple(PAIRS),
         default=[PRIMARY_PAIR],
         help=(
-            "Direction pairs to run; defaults to the primary "
-            "(0.1, 0.9) + (1, 0) configuration. Pass the other named pairs "
-            "explicitly for ablations."
+            "Direction sets to run; defaults to the paper method's "
+            "(0, 1) + (1, 0) axes. Other choices are retained ablations."
         ),
     )
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
     parser.add_argument("--observation-budget-fraction", type=float, default=1.0)
+    parser.add_argument(
+        "--direction-scheduler",
+        choices=(
+            "round_robin",
+            "quality_then_deployment",
+            "deployment_then_quality",
+        ),
+        default="round_robin",
+    )
+    parser.add_argument(
+        "--acquisition-cost-mode",
+        choices=("real", "unit"),
+        default="real",
+        help="Use per-arm expected USD continuation costs or one unit for every arm.",
+    )
+    parser.add_argument(
+        "--continuation-mode",
+        choices=("eta_decay", "fixed_eta_no_stop"),
+        default="eta_decay",
+        help="Decay eta after stops or keep eta fixed and force continuation.",
+    )
+    parser.add_argument(
+        "--ablation-name",
+        default=None,
+        help="Stable configuration identifier recorded in the result payload.",
+    )
     parser.add_argument("--summarize-only", action="store_true")
     parser.add_argument(
         "--skip-combined-export",
@@ -404,6 +624,10 @@ def main() -> None:
                     seed=args.seed,
                     outdir=args.outdir,
                     observation_budget_fraction=args.observation_budget_fraction,
+                    direction_scheduler=args.direction_scheduler,
+                    acquisition_cost_mode=args.acquisition_cost_mode,
+                    continuation_mode=args.continuation_mode,
+                    ablation_name=args.ablation_name,
                 )
     if not args.skip_combined_export:
         export_combined(args.outdir, args.benchmarks, args.pairs)
