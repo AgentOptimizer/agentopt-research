@@ -892,14 +892,14 @@ def plot_stackoverflow_method_frontier(
             summary,
             method_label,
             cmap,
-            title_fontsize=32,
-            subtitle_fontsize=31,
-            tick_labelsize=29,
+            title_fontsize=35,
+            subtitle_fontsize=34,
+            tick_labelsize=32,
         )
     figure.supxlabel(
-        "Mean deployment cost (USD per query, log scale)", fontsize=35, y=0.115
+        "Mean deployment cost (USD per query, log scale)", fontsize=38, y=0.115
     )
-    figure.supylabel("Mean accuracy", fontsize=35, x=0.022)
+    figure.supylabel("Mean accuracy", fontsize=38, x=0.022)
     figure.legend(
         handles=(
             Line2D(
@@ -922,7 +922,7 @@ def plot_stackoverflow_method_frontier(
         bbox_to_anchor=(0.48, 0.035),
         ncol=3,
         frameon=False,
-        fontsize=33,
+        fontsize=36,
         columnspacing=2.2,
         handletextpad=0.65,
     )
@@ -936,10 +936,10 @@ def plot_stackoverflow_method_frontier(
         cax=colorbar_axis,
     )
     colorbar.set_label(
-        "Recommendation frequency (out of 20 seeds)", fontsize=33, labelpad=19
+        "Recommendation frequency (out of 20 seeds)", fontsize=36, labelpad=19
     )
     colorbar.set_ticks((1, 5, 10, 15, 20))
-    colorbar.ax.tick_params(labelsize=29)
+    colorbar.ax.tick_params(labelsize=32)
     colorbar.outline.set_linewidth(0.9)
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output.with_suffix(".png"), dpi=200, facecolor="white")
