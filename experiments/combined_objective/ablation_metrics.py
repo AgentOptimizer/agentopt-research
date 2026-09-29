@@ -39,13 +39,16 @@ def hypervolume_2d(points: np.ndarray) -> float:
 
 
 def front_distance(obtained: np.ndarray, reference: np.ndarray) -> float:
-    obtained_front = obtained[nondominated_indices(obtained)]
-    reference_front = reference[nondominated_indices(reference)]
-    if not len(obtained_front):
-        return math.inf if len(reference_front) else 0.0
-    if not len(reference_front):
+    """Mean nearest-point distance over the complete supplied sets.
+
+    GD supplies returned points first; IGD supplies them second. The caller
+    constructs the true reference front separately.
+    """
+    if not len(obtained):
+        return math.inf if len(reference) else 0.0
+    if not len(reference):
         return math.inf
-    delta = obtained_front[:, None, :] - reference_front[None, :, :]
+    delta = obtained[:, None, :] - reference[None, :, :]
     return float(np.sqrt(np.sum(delta * delta, axis=-1)).min(axis=1).mean())
 
 

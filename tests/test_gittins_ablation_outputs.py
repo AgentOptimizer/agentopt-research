@@ -91,3 +91,14 @@ def test_frontier_metrics_preserve_full_frontier_and_penalize_missing_points():
     assert partial["hv_regret"] > 0
     assert partial["generational_distance"] == 0
     assert partial["inverted_generational_distance"] > 0
+
+
+def test_plotter_rejects_cache_with_filtered_distance_metrics(monkeypatch, tmp_path):
+    import pickle
+    from experiments.combined_objective import plot_gittins_ablation_v2_20seed as plotter
+
+    cache = {"version": 1, "configurations": tuple(protocol.CONFIGURATIONS)}
+    (tmp_path / "ablation_plot_cache.pkl").write_bytes(pickle.dumps(cache))
+    monkeypatch.setattr(sys, "argv", ["plot", "--reuse-cache", "--output", str(tmp_path)])
+    with pytest.raises(ValueError, match="unsupported cache version"):
+        plotter.main()
