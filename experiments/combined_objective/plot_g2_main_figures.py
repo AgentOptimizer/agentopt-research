@@ -111,7 +111,8 @@ QNEHVI_SEEDS = {
 }
 GRID = np.linspace(0.0, 1.0, 201)
 CHECKPOINTS = (0.10, 0.30)
-CACHE_VERSION = 2
+# Version 3 scores GD/IGD against the complete returned configuration set.
+CACHE_VERSION = 3
 FULL_METHOD_NAME = "Cost-Coupled Gittins"
 SHORT_METHOD_NAME = "CC-Gittins"
 
@@ -171,13 +172,17 @@ def hypervolume_2d(points: np.ndarray) -> float:
 
 
 def front_distance(obtained: np.ndarray, reference: np.ndarray) -> float:
-    obtained_front = obtained[nondominated_indices(obtained)]
-    reference_front = reference[nondominated_indices(reference)]
-    if not len(obtained_front):
-        return math.inf if len(reference_front) else 0.0
-    if not len(reference_front):
+    """Mean nearest-point distance over the complete supplied sets.
+
+    ``score_selection`` constructs the true Pareto front separately.  The
+    other input is deliberately left unfiltered so GD/IGD score every
+    returned configuration, including true-space dominated configurations.
+    """
+    if not len(obtained):
+        return math.inf if len(reference) else 0.0
+    if not len(reference):
         return math.inf
-    delta = obtained_front[:, None, :] - reference_front[None, :, :]
+    delta = obtained[:, None, :] - reference[None, :, :]
     return float(np.sqrt(np.sum(delta * delta, axis=-1)).min(axis=1).mean())
 
 
@@ -427,20 +432,18 @@ def combined_timing_rows(
 
 
 def combined_rows(
-    source_rows: list[dict[str, str]], g2_curves: dict[tuple[str, str], MeanCurve]
+    baseline_curves: dict[tuple[str, str, str], MeanCurve],
+    g2_curves: dict[tuple[str, str], MeanCurve],
 ) -> list[dict[str, str]]:
-    baselines = [row.copy() for row in source_rows if row["method"] != "radial_gittins"]
-    by_key: dict[tuple[str, str, str], list[dict[str, str]]] = defaultdict(list)
-    for row in baselines:
-        by_key[(row["dataset"], row["method"], row["metric"])].append(row)
     rows: list[dict[str, str]] = []
     for dataset in DATASETS:
         for method in METHODS:
             for metric in METRICS:
-                if method != "radial_gittins":
-                    rows.extend(by_key[(dataset, method, metric)])
-                    continue
-                curve = g2_curves[(dataset, metric)]
+                curve = (
+                    g2_curves[(dataset, metric)]
+                    if method == "radial_gittins"
+                    else baseline_curves[(dataset, method, metric)]
+                )
                 for x, mean, two_se, count in zip(
                     curve.x, curve.mean, curve.two_se, curve.count
                 ):
@@ -456,8 +459,6 @@ def combined_rows(
                                 "n_runs": str(int(count)),
                             }
                         )
-    if [row for row in rows if row["method"] != "radial_gittins"] != baselines:
-        raise AssertionError("baseline row order or values changed")
     return rows
 
 
@@ -1111,6 +1112,25 @@ def read_saved_metric_trajectory(
     if not rows:
         raise ValueError(f"empty saved trajectory: {path}")
     rows.sort(key=lambda row: float(row["budget_fraction"]))
+    vectors_path = path.with_name("vectors.npz")
+    if not vectors_path.is_file():
+        raise FileNotFoundError(f"missing saved truth vectors: {vectors_path}")
+    with np.load(vectors_path) as vectors:
+        raw_truth = np.asarray(vectors["truth_raw_vectors"], dtype=np.float64)
+    metric_truth, truth_front, _, truth_hv = evaluation_space(raw_truth)
+    metric_cache: dict[tuple[int, ...], dict[str, float]] = {}
+    for row in rows:
+        selected = tuple(
+            int(value) for value in row["selected_arm_indices"].split(";") if value
+        )
+        metrics = metric_cache.get(selected)
+        if metrics is None:
+            metrics = score_selection(selected, metric_truth, truth_front, truth_hv)
+            metric_cache[selected] = metrics
+        row["generational_distance"] = str(metrics["generational_distance"])
+        row["inverted_generational_distance"] = str(
+            metrics["inverted_generational_distance"]
+        )
     return (
         np.asarray([float(row["budget_fraction"]) for row in rows]),
         {
@@ -1142,6 +1162,47 @@ def saved_baseline_trajectories(
             raise FileNotFoundError(f"missing saved baseline trajectory: {path}")
         trajectories.append(read_saved_metric_trajectory(path))
     return trajectories
+
+
+def aggregate_saved_baselines() -> dict[tuple[str, str, str], MeanCurve]:
+    """Rebuild every baseline curve from saved selections and truth vectors."""
+    output: dict[tuple[str, str, str], MeanCurve] = {}
+    for dataset in DATASETS:
+        for method in METHODS:
+            if method == "radial_gittins":
+                continue
+            trajectories = saved_baseline_trajectories(dataset, method)
+            grid = (
+                np.unique(np.concatenate([xs for xs, _ in trajectories]))
+                if method in {"random_configurations", "random_questions"}
+                else GRID
+            )
+            aligned = {
+                metric: np.full((len(trajectories), len(grid)), np.nan)
+                for metric in METRICS
+            }
+            for row_index, (xs, values) in enumerate(trajectories):
+                positions = np.searchsorted(xs, grid, side="right") - 1
+                available = (positions >= 0) & (grid <= xs[-1] + 1e-12)
+                for metric in METRICS:
+                    aligned[metric][row_index, available] = values[metric][
+                        positions[available]
+                    ]
+            for metric, values in aligned.items():
+                count = np.sum(np.isfinite(values), axis=0)
+                mean = np.full(len(grid), np.nan)
+                two_se = np.full(len(grid), np.nan)
+                for column in np.flatnonzero(count):
+                    finite = values[:, column][np.isfinite(values[:, column])]
+                    mean[column] = float(np.mean(finite))
+                    two_se[column] = (
+                        2.0 * float(np.std(finite, ddof=1)) / math.sqrt(len(finite))
+                        if len(finite) > 1 else 0.0
+                    )
+                output[(dataset, method, metric)] = MeanCurve(
+                    grid.copy(), mean, two_se, count
+                )
+    return output
 
 
 def saved_frontier_runs(
@@ -1502,7 +1563,8 @@ def main() -> None:
         source_rows, styles = read_source_rows()
         runs, raw_truth, spaces, g2_runtime_rows = load_g2_runs()
         g2_curves = aggregate_g2(runs)
-        rows = combined_rows(source_rows, g2_curves)
+        baseline_curves = aggregate_saved_baselines()
+        rows = combined_rows(baseline_curves, g2_curves)
         runtime_by_seed, runtime_summary = combined_timing_rows(g2_runtime_rows)
         payload = {
             "version": CACHE_VERSION,
@@ -1571,11 +1633,7 @@ def main() -> None:
     )
     plot_timing(timing_summary_path, output / "time")
 
-    source_rows, _ = read_source_rows()
-    baseline_source = [row for row in source_rows if row["method"] != "radial_gittins"]
     baseline_output = [row for row in rows if row["method"] != "radial_gittins"]
-    if baseline_output != baseline_source:
-        raise AssertionError("baseline curves differ from the source main figures")
     manifest = {
         "configuration": "g2_exact_axes",
         "public_method_label": FULL_METHOD_NAME,
@@ -1589,7 +1647,12 @@ def main() -> None:
             "radial_gittins wall-clock timing",
         ],
         "untouched_scope": ["all five baselines", "ablation figures"],
-        "baseline_rows_copied_verbatim": True,
+        "baseline_rows_copied_verbatim": False,
+        "baseline_distance_metrics_recomputed_from_saved_selections": True,
+        "distance_metric_definition": (
+            "GD/IGD score every returned configuration, including configurations "
+            "dominated in true evaluation space"
+        ),
         "baseline_row_count": len(baseline_output),
         "baseline_timing_rows_copied_verbatim": True,
         "qa_configuration_grid": {
@@ -1619,8 +1682,9 @@ def main() -> None:
     )
     (output / "README.md").write_text(
         "# Gittins G2 main figures\n\n"
-        f"Only {FULL_METHOD_NAME} is replaced by `g2_exact_axes`; all five baseline curve "
-        "rows are copied verbatim from `../hv_frontier_source/curve_summary.csv`. "
+        f"{FULL_METHOD_NAME} uses `g2_exact_axes`; all five baseline curve "
+        "rows are rebuilt from saved per-seed trajectories. GD and IGD score every "
+        "returned configuration, including true-space dominated configurations. "
         f"The timing plot likewise replaces only {FULL_METHOD_NAME}. Frontier plots "
         "reuse the exact historical 4800x2900 layout. HotpotQA and MathQA are "
         "validated as 10x10 (100-configuration) grids. Ablation figures are not "

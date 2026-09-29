@@ -91,7 +91,8 @@ CONFIG_COLORS = {
 }
 CUTOFF = 0.30
 GRID = np.linspace(0.0, CUTOFF, 61)
-CACHE_VERSION = 1
+# Version 2 scores GD/IGD against all returned configurations.
+CACHE_VERSION = 2
 
 
 @dataclass

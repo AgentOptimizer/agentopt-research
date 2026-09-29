@@ -1009,11 +1009,12 @@ def generational_distance(
     obtained: np.ndarray,
     reference_front: np.ndarray,
 ) -> float:
-    """Mean distance from the obtained front to the ground-truth front.
+    """Mean distance from every returned point to the ground-truth front.
 
     Both arguments are points in the same maximization space used by
-    :func:`hypervolume_2d` (normalized desirability).  Dominated obtained
-    points are dropped first.  The reported value is
+    :func:`hypervolume_2d` (normalized desirability).  Every returned point
+    contributes, including points dominated in the true evaluation space.
+    The reported value is
 
     ``GD(A, P*) = (1/|A|) sum_{a in A} min_{z in P*} ||a - z||_2``.
 
@@ -1021,34 +1022,37 @@ def generational_distance(
     if the archive is only a subset of that front.  An empty obtained set is
     ``+inf`` unless the reference front is also empty.
     """
-    obtained_front = _nondominated_front(obtained)
+    obtained_points = _front_points(obtained)
     truth_front = _nondominated_front(reference_front)
-    if obtained_front.shape[0] == 0:
+    if obtained_points.shape[0] == 0:
         return 0.0 if truth_front.shape[0] == 0 else math.inf
     if truth_front.shape[0] == 0:
         return math.inf
-    return float(np.mean(_nearest_front_distances(obtained_front, truth_front)))
+    return float(np.mean(_nearest_front_distances(obtained_points, truth_front)))
 
 
 def inverted_generational_distance(
     obtained: np.ndarray,
     reference_front: np.ndarray,
 ) -> float:
-    """Mean distance from the ground-truth front to the obtained front.
+    """Mean distance from the ground-truth front to the full returned set.
 
     ``IGD(A, P*) = (1/|P*|) sum_{z in P*} min_{a in A} ||z - a||_2``.
+
+    All returned points remain eligible nearest neighbors, including points
+    dominated in the true evaluation space.
 
     Unlike GD, a missing region of the true front increases IGD even when
     every returned point is itself Pareto optimal.  An empty obtained set is
     ``+inf`` unless the reference front is also empty.
     """
-    obtained_front = _nondominated_front(obtained)
+    obtained_points = _front_points(obtained)
     truth_front = _nondominated_front(reference_front)
     if truth_front.shape[0] == 0:
         return 0.0
-    if obtained_front.shape[0] == 0:
+    if obtained_points.shape[0] == 0:
         return math.inf
-    return float(np.mean(_nearest_front_distances(truth_front, obtained_front)))
+    return float(np.mean(_nearest_front_distances(truth_front, obtained_points)))
 
 
 @dataclass(frozen=True)
