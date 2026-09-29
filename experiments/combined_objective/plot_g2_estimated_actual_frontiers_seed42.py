@@ -46,6 +46,15 @@ DEFAULT_OUTPUT = (
     / "analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_figures"
     / "gittins_g2_main_figures/estimated_actual"
 )
+
+
+def configure_source_data_root(source_data_root: Path) -> None:
+    """Route the seed-42 inputs through the consolidated source directory."""
+    global SOURCE_ROOT, G2_ROOT
+    SOURCE_ROOT = source_data_root / "estimated_actual/runs"
+    G2_ROOT = source_data_root / "cc_gittins/g2_exact_axes/seed-42/exact_axes"
+
+
 DATASETS = (("hotpotqa", "HotpotQA"), ("stackoverflow", "Stack Overflow"))
 FULL_METHOD_NAME = "Cost-Coupled Gittins"
 METHODS = (
@@ -349,10 +358,18 @@ def render_target(cache: dict[str, Any], target: float, output: Path) -> list[di
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--source-data-root", type=Path)
     parser.add_argument("--reuse-cache", action="store_true")
     args = parser.parse_args()
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    source_data_root = (
+        args.source_data_root.resolve()
+        if args.source_data_root is not None
+        else output.parent / "source_data"
+    )
+    if source_data_root.is_dir():
+        configure_source_data_root(source_data_root)
     cache_path = output / "plot_cache.pkl"
     if args.reuse_cache:
         cache = read_cache(cache_path)

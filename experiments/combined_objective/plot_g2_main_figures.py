@@ -40,6 +40,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 FIGURE_ROOT = ROOT / "analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_figures"
+DEFAULT_OUTPUT = FIGURE_ROOT / "gittins_g2_main_figures"
 SOURCE_FIGURES = FIGURE_ROOT / "hv_frontier_source"
 SOURCE_TIMING = FIGURE_ROOT / "time"
 SAVED_BASELINE_ROOT = (
@@ -55,7 +56,20 @@ G2_RUN_ROOT = (
     / "analysis/usd_cost_checkpoints_latest_under_20seed/new_qa_runs/combined"
     / "gittins_ablation_8bench_20seed/g2_exact_axes"
 )
-DEFAULT_OUTPUT = FIGURE_ROOT / "gittins_g2_main_figures"
+
+
+def configure_source_data_root(source_data_root: Path) -> None:
+    """Route all raw inputs through the consolidated source-data directory."""
+    global SOURCE_FIGURES, SOURCE_TIMING
+    global SAVED_BASELINE_ROOT, NEW_QA_BASELINE_ROOT, SAVED_QNEHVI_ROOT
+    global G2_RUN_ROOT
+
+    SOURCE_FIGURES = source_data_root / "plot_inputs/hv_frontier_source"
+    SOURCE_TIMING = source_data_root / "plot_inputs/time"
+    SAVED_BASELINE_ROOT = source_data_root / "baselines/non_qa_latest_under"
+    NEW_QA_BASELINE_ROOT = source_data_root / "baselines/new_qa_10x10"
+    SAVED_QNEHVI_ROOT = source_data_root / "baselines/non_qa_qnehvi"
+    G2_RUN_ROOT = source_data_root / "cc_gittins/g2_exact_axes"
 
 DATASETS = (
     "hotpotqa",
@@ -1437,6 +1451,15 @@ def write_carried_recommendation_outputs(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--source-data-root",
+        type=Path,
+        help=(
+            "Consolidated raw-data directory. Defaults to source_data under "
+            "the output directory when present, then falls back to the "
+            "historical repository paths."
+        ),
+    )
     parser.add_argument("--reuse-cache", action="store_true",
                         help="Draw using plot_cache.pkl without reading result JSONs.")
     parser.add_argument(
@@ -1463,6 +1486,13 @@ def main() -> None:
         parser.error("--refresh-all-frontiers requires --reuse-cache")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
+    source_data_root = (
+        args.source_data_root.resolve()
+        if args.source_data_root is not None
+        else output / "source_data"
+    )
+    if source_data_root.is_dir():
+        configure_source_data_root(source_data_root)
     cache_path = output / "plot_cache.pkl"
     configure_matplotlib()
 
