@@ -115,6 +115,8 @@ CHECKPOINTS = (0.10, 0.30)
 CACHE_VERSION = 3
 FULL_METHOD_NAME = "Cost-Coupled Gittins"
 SHORT_METHOD_NAME = "CC-Gittins"
+CURVE_LINEWIDTH = 2.4
+HIGHLIGHT_LINEWIDTH = CURVE_LINEWIDTH * 1.35
 
 
 @dataclass
@@ -1596,6 +1598,9 @@ def main() -> None:
         for method, style in payload["styles"].items()
     }
     styles["radial_gittins"]["label"] = SHORT_METHOD_NAME
+    for method in METHODS:
+        styles[method]["linewidth"] = CURVE_LINEWIDTH
+    styles["radial_gittins"]["linewidth"] = HIGHLIGHT_LINEWIDTH
     if args.refresh_all_frontiers:
         frontier_output = FIGURE_ROOT / "frontier" / "by_method"
         checkpoint_rows = plot_all_method_frontiers(

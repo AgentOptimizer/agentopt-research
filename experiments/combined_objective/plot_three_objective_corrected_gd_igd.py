@@ -44,6 +44,8 @@ SEEDS = tuple(range(42, 62))
 DATASETS = ("hotpotqa", "mathqa")
 DATASET_LABELS = {"hotpotqa": "HotpotQA", "mathqa": "MathQA"}
 GRID = np.arange(1, 61, dtype=np.float64) / 200.0
+CURVE_LINEWIDTH = 2.4
+HIGHLIGHT_LINEWIDTH = CURVE_LINEWIDTH * 1.35
 
 # Match the method subset, colors, and ordering used by the earlier paper
 # figures.  The axes-only CC-Gittins variant and EGE-SR are intentionally
@@ -59,27 +61,27 @@ METHODS = (
 STYLES: dict[str, dict[str, str | float]] = {
     "cc_gittins": {
         "color": "tab:orange", "label": "CC-Gittins",
-        "linewidth": 2.88, "linestyle": "-",
+        "linewidth": HIGHLIGHT_LINEWIDTH, "linestyle": "-",
     },
     "ege_sh": {
         "color": "tab:green", "label": "EGE-SH",
-        "linewidth": 2.4, "linestyle": "-",
+        "linewidth": CURVE_LINEWIDTH, "linestyle": "-",
     },
     "ape_k": {
         "color": "tab:purple", "label": "APE-k",
-        "linewidth": 2.4, "linestyle": "-",
+        "linewidth": CURVE_LINEWIDTH, "linestyle": "-",
     },
     "qnehvi": {
         "color": "tab:pink", "label": "qNEHVI",
-        "linewidth": 2.4, "linestyle": "-",
+        "linewidth": CURVE_LINEWIDTH, "linestyle": "-",
     },
     "random_configurations": {
         "color": "tab:brown", "label": "Random configurations",
-        "linewidth": 2.25, "linestyle": "-",
+        "linewidth": CURVE_LINEWIDTH, "linestyle": "-",
     },
     "random_questions": {
         "color": "tab:cyan", "label": "Random questions",
-        "linewidth": 2.25, "linestyle": "-",
+        "linewidth": CURVE_LINEWIDTH, "linestyle": "-",
     },
 }
 METRICS = (

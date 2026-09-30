@@ -93,6 +93,8 @@ CUTOFF = 0.30
 GRID = np.linspace(0.0, CUTOFF, 61)
 # Version 2 scores GD/IGD against all returned configurations.
 CACHE_VERSION = 2
+CURVE_LINEWIDTH = 2.4
+HIGHLIGHT_LINEWIDTH = CURVE_LINEWIDTH * 1.35
 
 
 @dataclass
@@ -349,7 +351,7 @@ def plot_family_metric(
                 curve.x,
                 curve.mean,
                 color=color,
-                linewidth=2.8 if is_g0 else 2.0,
+                linewidth=HIGHLIGHT_LINEWIDTH if is_g0 else CURVE_LINEWIDTH,
                 zorder=10 if is_g0 else 3,
             )
             axis.fill_between(
@@ -387,7 +389,11 @@ def plot_family_metric(
             [],
             [],
             color=CONFIG_COLORS[name],
-            linewidth=2.8 if name == G0_CONFIGURATION else 2.0,
+            linewidth=(
+                HIGHLIGHT_LINEWIDTH
+                if name == G0_CONFIGURATION
+                else CURVE_LINEWIDTH
+            ),
             label=str(CONFIGURATIONS[name]["label"]),
         )
         for name in legend_configurations
