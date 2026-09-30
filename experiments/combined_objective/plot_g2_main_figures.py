@@ -1259,23 +1259,17 @@ def g2_metric_trajectories(
     return trajectories
 
 
-def aggregate_from_mean_start(
+def aggregate_at_fixed_targets(
     trajectories: list[tuple[np.ndarray, dict[str, np.ndarray]]],
     *,
-    exact_event_grid: bool,
     cutoff: float,
-) -> tuple[dict[str, MeanCurve], dict[str, dict[str, float]]]:
-    """Align runs at the mean first-event cost with all seeds contributing.
-
-    Runs beginning before the mean are read at the mean using their latest
-    output. Runs beginning after it carry their first output backward to the
-    mean. Terminal outputs are likewise carried forward as recommendation
-    outputs, so every displayed point has the full seed count.
-    """
+) -> tuple[dict[str, MeanCurve], dict[str, dict[str, Any]]]:
+    """Aggregate latest recommendations on fixed targets without start backfill."""
     if not trajectories:
         raise ValueError("expected at least one trajectory")
     output: dict[str, MeanCurve] = {}
-    alignment: dict[str, dict[str, float]] = {}
+    availability: dict[str, dict[str, Any]] = {}
+    grid = GRID[(GRID > 0.0) & (GRID <= cutoff + 1e-12)]
     for metric in METRICS:
         finite_trajectories = []
         for xs, metric_values in trajectories:
@@ -1283,44 +1277,42 @@ def aggregate_from_mean_start(
             if not np.any(finite):
                 raise ValueError(f"trajectory has no finite {metric} output")
             finite_trajectories.append((xs[finite], metric_values[metric][finite]))
-        starts = np.asarray([float(xs[0]) for xs, _ in finite_trajectories])
-        mean_start = float(np.mean(starts))
-        if exact_event_grid:
-            later_events = np.concatenate(
-                [
-                    xs[(xs > mean_start) & (xs <= cutoff + 1e-12)]
-                    for xs, _ in finite_trajectories
-                ]
-            )
-            grid = np.unique(np.concatenate(([mean_start, cutoff], later_events)))
-        else:
-            grid = np.unique(
-                np.concatenate(
-                    (
-                        [mean_start],
-                        GRID[(GRID > mean_start) & (GRID <= cutoff + 1e-12)],
-                    )
-                )
-            )
-        aligned = np.empty((len(trajectories), len(grid)), dtype=np.float64)
+        aligned = np.full(
+            (len(finite_trajectories), len(grid)), np.nan, dtype=np.float64
+        )
         for row_index, (xs, values) in enumerate(finite_trajectories):
             positions = np.searchsorted(xs, grid, side="right") - 1
-            positions = np.clip(positions, 0, len(xs) - 1)
-            aligned[row_index] = values[positions]
-        mean = np.mean(aligned, axis=0)
-        two_se = 2.0 * np.std(aligned, axis=0, ddof=1) / math.sqrt(len(trajectories))
+            available = positions >= 0
+            aligned[row_index, available] = values[positions[available]]
+        count = np.sum(np.isfinite(aligned), axis=0)
+        mean = np.full(len(grid), np.nan, dtype=np.float64)
+        two_se = np.full(len(grid), np.nan, dtype=np.float64)
+        for column in np.flatnonzero(count):
+            finite = aligned[:, column][np.isfinite(aligned[:, column])]
+            mean[column] = float(np.mean(finite))
+            two_se[column] = (
+                2.0 * float(np.std(finite, ddof=1)) / math.sqrt(len(finite))
+                if len(finite) > 1
+                else 0.0
+            )
         output[metric] = MeanCurve(
-            grid.copy(),
-            mean,
-            two_se,
-            np.full(len(grid), len(trajectories), dtype=int),
+            grid.copy(), mean, two_se, count
         )
-        alignment[metric] = {
-            "min_start_cost_fraction": float(np.min(starts)),
-            "mean_start_cost_fraction": mean_start,
-            "max_start_cost_fraction": float(np.max(starts)),
+        visible = np.flatnonzero(count)
+        full = np.flatnonzero(count == len(finite_trajectories))
+        availability[metric] = {
+            "first_visible_cost_fraction": (
+                float(grid[visible[0]]) if len(visible) else None
+            ),
+            "seed_count_at_first_visible": (
+                int(count[visible[0]]) if len(visible) else 0
+            ),
+            "first_full_seed_cost_fraction": (
+                float(grid[full[0]]) if len(full) else None
+            ),
+            "seed_count_at_final_target": int(count[-1]),
         }
-    return output, alignment
+    return output, availability
 
 
 def curve_rows_from_curves(
@@ -1361,7 +1353,7 @@ def write_carried_recommendation_outputs(
         payload["runs"], payload["spaces"]
     )
     aligned_curves: dict[tuple[str, str, str], MeanCurve] = {}
-    start_alignment: dict[str, dict[str, dict[str, dict[str, float]]]] = {
+    availability_by_target: dict[str, dict[str, dict[str, dict[str, Any]]]] = {
         dataset: {} for dataset in DATASETS
     }
     for dataset in DATASETS:
@@ -1370,23 +1362,24 @@ def write_carried_recommendation_outputs(
                 trajectories = g2_metric_trajectories(extended_runs[dataset])
             else:
                 trajectories = saved_baseline_trajectories(dataset, method)
-            method_curves, alignment = aggregate_from_mean_start(
-                trajectories,
-                exact_event_grid=method in {
-                    "random_configurations", "random_questions"
-                },
-                cutoff=cutoff,
+            method_curves, availability = aggregate_at_fixed_targets(
+                trajectories, cutoff=cutoff
             )
-            start_alignment[dataset][method] = alignment
+            availability_by_target[dataset][method] = availability
             for metric, curve in method_curves.items():
                 expected_count = len(
                     QNEHVI_SEEDS.get(dataset, SEEDS)
                     if method == "qnehvi"
                     else SEEDS
                 )
-                if not np.all(curve.count == expected_count):
+                if np.any(curve.count > expected_count):
                     raise AssertionError(
-                        f"{dataset} {method} {metric}: incomplete seed count"
+                        f"{dataset} {method} {metric}: invalid seed count"
+                    )
+                if curve.count[-1] != expected_count:
+                    raise AssertionError(
+                        f"{dataset} {method} {metric}: not all seeds are available "
+                        f"at the final displayed target"
                     )
                 aligned_curves[(dataset, method, metric)] = curve
 
@@ -1457,10 +1450,10 @@ def write_carried_recommendation_outputs(
         "synthetic_terminal_points_are_evaluations": False,
         "displayed_cost_fraction_range": [0.0, cutoff],
         "aggregation": (
-            "align each method-dataset at the mean per-seed first-event cost; "
-            "truncate earlier prefixes, backfill later starts with their first "
-            "output, then use stepwise last observation carried forward; "
-            "mean +/- 2 SE over the retained seed set"
+            "fixed 0.5% budget grid; no mean-start alignment or first-value "
+            "backfill; latest recommendation at/below each target; terminal "
+            "recommendations carried forward; mean +/- 2 SE over seeds available "
+            "at each target"
         ),
         "seeds": list(SEEDS),
         "qnehvi_seeds_by_dataset": {
@@ -1472,9 +1465,9 @@ def write_carried_recommendation_outputs(
             for dataset in DATASETS
         },
         "datasets": list(DATASETS),
-        "start_alignment": start_alignment,
+        "availability_by_target": availability_by_target,
         "terminal_extensions_by_dataset": extended_seed_counts,
-        "all_curve_points_have_full_retained_seed_set": True,
+        "seed_counts_may_vary_before_all_runs_have_an_output": True,
         "baseline_source": (
             "saved per-seed cost_trajectory.csv files; no optimizer reruns"
         ),
@@ -1500,13 +1493,11 @@ def write_carried_recommendation_outputs(
         "# G2 curves at 0--30% budget\n\n"
         "These curves use the existing G2 plot cache. A stopped seed's last "
         "published recommendation is carried forward as an output through 100% "
-        "budget, without adding evaluations. Only 0--30% is displayed. For every "
-        "method and dataset, the common start is the mean first-event cost across "
-        "the retained seeds: earlier prefixes are truncated and later starts carry their "
-        "first output backward. Every displayed aggregate point therefore contains "
-        "the full retained set (20 normally; qNEHVI uses 19 for BIRD Mini Dev "
-        "and 18 for Bing Query Logs). Baselines are rebuilt only from saved per-seed trajectory "
-        "CSVs; no optimizer is rerun.\n",
+        "budget, without adding evaluations. Only 0--30% is displayed on fixed "
+        "0.5% targets. A seed contributes only after its first available "
+        "recommendation, so early targets can contain fewer seeds and no first "
+        "value is carried backward. Baselines are rebuilt only from saved per-seed "
+        "trajectory CSVs; no optimizer is rerun.\n",
         encoding="utf-8",
     )
 

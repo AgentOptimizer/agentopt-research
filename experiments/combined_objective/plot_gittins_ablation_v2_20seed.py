@@ -91,8 +91,9 @@ CONFIG_COLORS = {
 }
 CUTOFF = 0.30
 GRID = np.linspace(0.0, CUTOFF, 61)
-# Version 2 scores GD/IGD against all returned configurations.
-CACHE_VERSION = 2
+# Version 3 scores GD/IGD against all returned configurations and aggregates
+# on fixed budget targets without backfilling a run before its first output.
+CACHE_VERSION = 3
 CURVE_LINEWIDTH = 2.4
 HIGHLIGHT_LINEWIDTH = CURVE_LINEWIDTH * 1.35
 
@@ -195,37 +196,35 @@ def aggregate(
     configurations: tuple[str, ...],
 ) -> dict[tuple[str, str, str], MeanCurve]:
     curves = {}
+    grid = GRID[(GRID > 0.0) & (GRID <= CUTOFF + 1e-12)]
     for configuration in configurations:
         for benchmark in BENCHMARKS:
             dataset_runs = runs[(configuration, benchmark)]
-            starts = np.asarray(
-                [float(run["points"][0]["cost_fraction"]) for run in dataset_runs]
-            )
-            mean_start = float(np.mean(starts))
-            grid = np.unique(
-                np.concatenate(
-                    ([mean_start], GRID[(GRID > mean_start) & (GRID <= CUTOFF + 1e-12)])
-                )
-            )
             for metric in METRICS:
-                aligned = np.empty((len(dataset_runs), len(grid)), dtype=np.float64)
+                aligned = np.full(
+                    (len(dataset_runs), len(grid)), np.nan, dtype=np.float64
+                )
                 for row_index, run in enumerate(dataset_runs):
                     xs = np.asarray(
                         [float(point["cost_fraction"]) for point in run["points"]]
                     )
                     ys = np.asarray([float(point[metric]) for point in run["points"]])
                     positions = np.searchsorted(xs, grid, side="right") - 1
-                    positions = np.clip(positions, 0, len(xs) - 1)
-                    aligned[row_index] = ys[positions]
+                    available = positions >= 0
+                    aligned[row_index, available] = ys[positions[available]]
+                count = np.sum(np.isfinite(aligned), axis=0)
+                mean = np.full(len(grid), np.nan, dtype=np.float64)
+                two_se = np.full(len(grid), np.nan, dtype=np.float64)
+                for column in np.flatnonzero(count):
+                    finite = aligned[:, column][np.isfinite(aligned[:, column])]
+                    mean[column] = float(np.mean(finite))
+                    two_se[column] = (
+                        2.0 * float(np.std(finite, ddof=1)) / math.sqrt(len(finite))
+                        if len(finite) > 1
+                        else 0.0
+                    )
                 curves[(configuration, benchmark, metric)] = MeanCurve(
-                    x=grid,
-                    mean=np.mean(aligned, axis=0),
-                    two_se=(
-                        2.0
-                        * np.std(aligned, axis=0, ddof=1)
-                        / math.sqrt(len(dataset_runs))
-                    ),
-                    count=np.full(len(grid), len(dataset_runs), dtype=int),
+                    x=grid.copy(), mean=mean, two_se=two_se, count=count
                 )
     return curves
 
@@ -249,8 +248,8 @@ def write_curve_csv(
                             "dataset": benchmark,
                             "metric": metric,
                             "cost_fraction": float(x),
-                            "mean": float(mean),
-                            "two_se": float(two_se),
+                            "mean": float(mean) if np.isfinite(mean) else "",
+                            "two_se": float(two_se) if np.isfinite(two_se) else "",
                             "n_runs": int(count),
                         }
                     )
@@ -543,9 +542,15 @@ def main() -> None:
         "recommendation_output_semantics": (
             "last published recommendation carried forward to 100% without evaluations"
         ),
+        "aggregation": (
+            "fixed 0.5% budget grid; no mean-start alignment or first-value "
+            "backfill; latest recommendation at/below each target; mean +/- 2 SE "
+            "over seeds available at each target"
+        ),
         "metric_space": "same shared reciprocal-cost desirability space as G2 main figures",
-        "uncertainty": "mean +/- 2 standard errors over 20 matched seeds",
-        "all_displayed_curve_points_have_n_runs": len(SEEDS),
+        "uncertainty": "mean +/- 2 standard errors over available matched seeds",
+        "full_seed_count": len(SEEDS),
+        "seed_counts_may_vary_before_all_runs_have_an_output": True,
         "plot_ready_curve_data": curve_name,
         "checkpoint_data": checkpoint_name,
         "terminal_data": terminal_name,
@@ -561,8 +566,10 @@ def main() -> None:
             "and 1:1 interleaving. The plots are grouped into cost mechanism, "
             "directions, continuation, and scheduler comparisons. Overlapping controls "
             "are run once and reused across panels. Curves show 0--30% of exhaustive "
-            "USD evaluation cost and carry a stopped run's last recommendation forward "
-            "as an output only; no synthetic point is treated as an evaluation.\n",
+            "USD evaluation cost on fixed 0.5% targets. A run contributes only after "
+            "its first recommendation; late starts are not backfilled. A stopped run's "
+            "last recommendation is carried forward as an output only, and no synthetic "
+            "point is treated as an evaluation.\n",
             encoding="utf-8",
         )
     print(output)
