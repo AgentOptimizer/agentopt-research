@@ -214,16 +214,18 @@ def hypervolume_3d(points: Any, reference: Sequence[float] | None = None) -> flo
 
 
 def front_distance(obtained: Any, reference: Any) -> float:
-    """Mean nearest-front Euclidean distance in the 3D scoring coordinates."""
+    """Mean nearest-point distance, preserving both supplied sets in full.
+
+    Callers supply the true Pareto front and the complete returned set, in
+    opposite orders for GD and IGD. Neither input is Pareto-filtered here.
+    """
     obtained_array = _three_points(obtained)
     reference_array = _three_points(reference)
-    obtained_front = obtained_array[nondominated_indices(obtained_array)]
-    reference_front = reference_array[nondominated_indices(reference_array)]
-    if not len(obtained_front):
-        return math.inf if len(reference_front) else 0.0
-    if not len(reference_front):
+    if not len(obtained_array):
+        return math.inf if len(reference_array) else 0.0
+    if not len(reference_array):
         return math.inf
-    differences = obtained_front[:, None, :] - reference_front[None, :, :]
+    differences = obtained_array[:, None, :] - reference_array[None, :, :]
     return float(np.sqrt(np.sum(differences ** 2, axis=-1)).min(axis=1).mean())
 
 

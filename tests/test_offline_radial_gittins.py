@@ -118,13 +118,24 @@ class ParetoMetricTests(unittest.TestCase):
             1.0,
         )
 
-    def test_dominated_extra_points_do_not_change_gd_or_igd(self):
-        true_front = np.array([[0.0, 1.0], [1.0, 0.0]])
-        obtained = np.array([[0.0, 1.0], [0.0, 0.0]])
-        self.assertAlmostEqual(generational_distance(obtained, true_front), 0.0)
+    def test_dominated_returned_point_contributes_to_gd(self):
+        true_front = np.array([[0.2, 1.0], [1.0, 0.2]])
+        obtained = np.array([[0.2, 1.0], [0.2, 0.2]])
+        self.assertAlmostEqual(generational_distance(obtained, true_front), 0.4)
+        self.assertAlmostEqual(hypervolume_2d(obtained), hypervolume_2d(obtained[:1]))
+
+    def test_igd_can_use_a_dominated_returned_point_nearest_to_missing_front(self):
+        true_front = np.array([[0.2, 1.0], [1.0, 0.2]])
+        obtained = np.array([[0.2, 1.0], [0.2, 0.2]])
+        # The second returned point is dominated by the first, but is closer
+        # to the missing (1.0, 0.2) endpoint than the first returned point is.
         self.assertAlmostEqual(
             inverted_generational_distance(obtained, true_front),
-            inverted_generational_distance(true_front[:1], true_front),
+            0.4,
+        )
+        self.assertLess(
+            inverted_generational_distance(obtained, true_front),
+            inverted_generational_distance(obtained[:1], true_front),
         )
 
     def test_empty_obtained_front_is_infinite(self):
