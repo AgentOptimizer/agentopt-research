@@ -363,7 +363,7 @@ def plot(summary_path: Path, output_stem: Path) -> None:
         bbox_to_anchor=(0.5, 0.035),
         ncol=4,
         frameon=False,
-        fontsize=26,
+        fontsize=28,
         handlelength=2.7,
         columnspacing=1.15,
         handletextpad=0.65,
