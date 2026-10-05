@@ -794,7 +794,7 @@ def finish_frontier_figure(
     figure.supxlabel(
         "Mean deployment cost (USD per query, log scale)", fontsize=40, y=0.080
     )
-    figure.supylabel("Mean accuracy", fontsize=40, x=0.015)
+    figure.supylabel("Mean quality", fontsize=40, x=0.015)
     figure.suptitle(
         f"{method_label} recommendations at {checkpoint:.0%} "
         "of brute-force search cost",
@@ -922,7 +922,7 @@ def plot_stackoverflow_method_frontier(
     figure.supxlabel(
         "Mean deployment cost (USD per query, log scale)", fontsize=40, y=0.115
     )
-    figure.supylabel("Mean accuracy", fontsize=40, x=0.004, y=0.535)
+    figure.supylabel("Mean quality", fontsize=40, x=0.004, y=0.535)
     figure.legend(
         handles=(
             Line2D(

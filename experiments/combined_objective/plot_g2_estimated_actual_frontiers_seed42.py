@@ -326,7 +326,7 @@ def render_target(cache: dict[str, Any], target: float, output: Path) -> list[di
         wspace=0.09, hspace=0.16,
     )
     figure.supxlabel("Mean deployment cost (USD, log scale)", fontsize=27, y=0.045)
-    figure.supylabel("Mean accuracy", fontsize=27, x=0.018)
+    figure.supylabel("Mean quality", fontsize=27, x=0.018)
     handles = (
         Line2D([], [], linestyle="none", marker="o", markersize=11,
                markerfacecolor=BACKGROUND_COLOR, markeredgecolor="none",
