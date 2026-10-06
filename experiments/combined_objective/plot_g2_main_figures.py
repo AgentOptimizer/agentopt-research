@@ -493,10 +493,14 @@ def write_cache(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def read_cache(path: Path) -> dict[str, Any]:
+def read_cache(
+    path: Path,
+    *,
+    allowed_versions: tuple[int, ...] = (CACHE_VERSION,),
+) -> dict[str, Any]:
     with path.open("rb") as handle:
         payload = pickle.load(handle)
-    if payload.get("version") != CACHE_VERSION:
+    if payload.get("version") not in allowed_versions:
         raise ValueError(f"unsupported cache version in {path}")
     return payload
 
@@ -725,6 +729,7 @@ def draw_frontier_panel(
     subtitle_fontsize: float = 33,
     tick_labelsize: float = 34,
     show_seed_count: bool = True,
+    show_usd_interval: bool = True,
 ) -> None:
     frontier = raw_front_indices(truth)
     frontier = frontier[np.argsort(truth[frontier, 1])]
@@ -758,12 +763,19 @@ def draw_frontier_panel(
         va="bottom", fontsize=title_fontsize,
     )
     if summary.available:
-        start_usd = _usd(summary.mean_start_usd).replace("$", r"\$")
-        end_usd = _usd(summary.mean_end_usd).replace("$", r"\$")
-        subtitle = (
-            f"{start_usd}–{end_usd} "
-            f"({summary.mean_start_fraction:.1%}–{summary.mean_end_fraction:.1%})"
-        )
+        if show_usd_interval:
+            start_usd = _usd(summary.mean_start_usd).replace("$", r"\$")
+            end_usd = _usd(summary.mean_end_usd).replace("$", r"\$")
+            subtitle = (
+                f"{start_usd}–{end_usd} "
+                f"({summary.mean_start_fraction:.1%}–"
+                f"{summary.mean_end_fraction:.1%})"
+            )
+        else:
+            subtitle = (
+                f"{summary.mean_start_fraction:.1%}–"
+                f"{summary.mean_end_fraction:.1%}"
+            )
     else:
         subtitle = "pending"
     axis.text(
@@ -918,6 +930,7 @@ def plot_stackoverflow_method_frontier(
             title_fontsize=37,
             subtitle_fontsize=36,
             tick_labelsize=34,
+            show_usd_interval=False,
         )
     figure.supxlabel(
         "Mean deployment cost (USD per query, log scale)", fontsize=40, y=0.115
@@ -968,6 +981,32 @@ def plot_stackoverflow_method_frontier(
     figure.savefig(output.with_suffix(".png"), dpi=200, facecolor="white")
     figure.savefig(output.with_suffix(".pdf"), facecolor="white")
     plt.close(figure)
+
+
+def redraw_stackoverflow_method_frontier(
+    output: Path,
+    *,
+    payload: dict[str, Any],
+    styles: dict[str, Any],
+) -> None:
+    """Redraw only the six-method Stack Overflow panel from saved runs."""
+    runs_by_method = {}
+    for method in METHODS:
+        runs = (
+            payload["runs"]
+            if method == "radial_gittins"
+            else saved_frontier_runs(method)
+        )
+        runs_by_method[method] = carry_terminal_recommendations(
+            runs, payload["spaces"]
+        )
+    plot_stackoverflow_method_frontier(
+        output,
+        checkpoint=0.10,
+        runs_by_method=runs_by_method,
+        payload=payload,
+        styles=styles,
+    )
 
 
 def plot_all_method_frontiers(
@@ -1533,11 +1572,21 @@ def main() -> None:
             "trajectories using the shared paper layout. Requires --reuse-cache."
         ),
     )
+    parser.add_argument(
+        "--refresh-stackoverflow-frontier",
+        action="store_true",
+        help=(
+            "Redraw only the six-method Stack Overflow 10% frontier panel from "
+            "saved trajectories. Requires --reuse-cache."
+        ),
+    )
     args = parser.parse_args()
     if args.carry_terminal_to_full_budget and not args.reuse_cache:
         parser.error("--carry-terminal-to-full-budget requires --reuse-cache")
     if args.refresh_all_frontiers and not args.reuse_cache:
         parser.error("--refresh-all-frontiers requires --reuse-cache")
+    if args.refresh_stackoverflow_frontier and not args.reuse_cache:
+        parser.error("--refresh-stackoverflow-frontier requires --reuse-cache")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     source_data_root = (
@@ -1551,7 +1600,14 @@ def main() -> None:
     configure_matplotlib()
 
     if args.reuse_cache:
-        payload = read_cache(cache_path)
+        # Cache v2 and v3 contain identical inputs for this frontier-only
+        # redraw; v3 changes only complete-returned-set GD/IGD scoring.
+        allowed_versions = (
+            (2, CACHE_VERSION)
+            if args.refresh_stackoverflow_frontier
+            else (CACHE_VERSION,)
+        )
+        payload = read_cache(cache_path, allowed_versions=allowed_versions)
     else:
         source_rows, styles = read_source_rows()
         runs, raw_truth, spaces, g2_runtime_rows = load_g2_runs()
@@ -1592,6 +1648,18 @@ def main() -> None:
     for method in METHODS:
         styles[method]["linewidth"] = CURVE_LINEWIDTH
     styles["radial_gittins"]["linewidth"] = HIGHLIGHT_LINEWIDTH
+    if args.refresh_stackoverflow_frontier:
+        stackoverflow_output = (
+            FIGURE_ROOT
+            / "frontier/by_dataset/stackoverflow_2x3_method_frontiers_10pct"
+        )
+        redraw_stackoverflow_method_frontier(
+            stackoverflow_output,
+            payload=payload,
+            styles=styles,
+        )
+        print(stackoverflow_output)
+        return
     if args.refresh_all_frontiers:
         frontier_output = FIGURE_ROOT / "frontier" / "by_method"
         checkpoint_rows = plot_all_method_frontiers(
