@@ -69,6 +69,19 @@ GRID_DATASETS = (
     "bing_querylogs",
     "stackoverflow",
 )
+GRID_LEGEND_LABEL_OVERRIDES = {
+    "directions": {
+        G0_CONFIGURATION: "G0 Axes",
+        "g1_q_only_real_cost": "G1 Q-only",
+        "g4_d_only_real_cost": "G4 D-only",
+    },
+    "continuation": {
+        G0_CONFIGURATION: r"G0 $\eta$-decay",
+    },
+    "scheduler": {
+        G0_CONFIGURATION: "G0 Round-robin",
+    },
+}
 
 
 class AblationCacheUnpickler(pickle.Unpickler):
@@ -333,7 +346,10 @@ def plot_ablation_metric_grid(
                 if configuration == G0_CONFIGURATION
                 else ablation_plot.CURVE_LINEWIDTH
             ),
-            label=str(CONFIGURATIONS[configuration]["label"]),
+            label=GRID_LEGEND_LABEL_OVERRIDES.get(family, {}).get(
+                configuration,
+                str(CONFIGURATIONS[configuration]["label"]),
+            ),
         )
         for configuration in legend_configurations
     ]
