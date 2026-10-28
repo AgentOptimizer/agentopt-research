@@ -10,6 +10,12 @@ experiments/combined_objective/plots/
 /plot/
 /analysis/
 /tmp/
+/figures/server_latency_*/
+/output/figures/server_latency_*/
+/data/hotpotqa/latency_matrix_seconds.csv
+/data/hotpotqa/server_latency_manifest.json
+/data/mathqa/latency_matrix_seconds.csv
+/data/mathqa/server_latency_manifest.json
 .mplconfig/
 /slurm-*.out
 /slurm_logs/*

@@ -238,11 +238,12 @@ def plot_family(root: Path, family: str, specification: dict[str, Any]) -> None:
             y_top = axis.get_ylim()[1]
             axis.set_ylim(-0.02 * y_top, y_top)
 
+    compact_legend = len(styles) <= 2
     figure.subplots_adjust(
         left=0.085,
         right=0.985,
         top=0.925,
-        bottom=0.31,
+        bottom=0.22 if compact_legend else 0.31,
         wspace=0.30,
         hspace=0.34,
     )
@@ -262,7 +263,7 @@ def plot_family(root: Path, family: str, specification: dict[str, Any]) -> None:
         )
     figure.text(
         0.535,
-        0.215,
+        0.13 if compact_legend else 0.215,
         "Percentage of Exhaustive Evaluation Cost",
         ha="center",
         va="center",
@@ -291,7 +292,7 @@ def plot_family(root: Path, family: str, specification: dict[str, Any]) -> None:
     figure.legend(
         handles=handles,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.025),
+        bbox_to_anchor=(0.5, 0.015 if compact_legend else 0.025),
         ncol=int(specification["legend_columns"]),
         frameon=False,
         fontsize=22,

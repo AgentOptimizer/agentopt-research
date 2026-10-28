@@ -212,7 +212,10 @@ def aggregate_method(
             payload = json.load(handle)
         run = payload["run"]
         saved_seed = int(payload["config"]["seed"])
-        if saved_seed != seed or run["selector"] != expected_selector:
+        accepted_selectors = {expected_selector}
+        if method == "cc_gittins":
+            accepted_selectors.add("three_objective_cc_gittins_four_direction_real_cost")
+        if saved_seed != seed or run["selector"] not in accepted_selectors:
             raise ValueError(f"run identity mismatch: {path}")
         recompute_corrected_distances(run)
         for field, _, scale in METRICS:
