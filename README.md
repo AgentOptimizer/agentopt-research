@@ -1,5 +1,9 @@
 # AgentOpt Research
 
+<p align="center">
+  <img width="900" alt="BIRD Dev evaluation-cost savings and Pareto-frontier recommendations across 20 seeds" src="docs/assets/bird_dev_cost_frontier_20seed_10pct.png" />
+</p>
+
 Offline model-selection algorithms and frozen benchmark matrices for accuracy,
 deployment cost, latency, and token usage. The repository implements
 **Cost-Coupled Gittins (CC-Gittins, two-axis)**.
