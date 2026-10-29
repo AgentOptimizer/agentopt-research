@@ -72,7 +72,12 @@ to both plotters. The estimated/actual plot requires a non-null
 The separate latency pilot uses the complete MathQA and HotpotQA matrices and
 the fixed direction order **Q, (Q+L)/2, L, D**, with coordinates `(Q, L, D)`:
 `(1,0,0)`, `(0.5,0.5,0)`, `(0,1,0)`, `(0,0,1)`. Q maximizes accuracy; L
-minimizes mean latency in seconds; D minimizes mean deployment cost in USD.
+minimizes mean cumulative server-side LLM latency in seconds; D minimizes mean
+deployment cost in USD. Latency is the sum of successful invocation response
+metrics, excluding client processing, network transfer, tools, and worker
+queues. Four MathQA context-overflow cells contain only the successful-call
+subtotal, a lower bound. The [data guide](../data/README.md#server-latency)
+documents the source revision, per-cell alignment checks, and limitations.
 The midpoint denotes a radial direction in normalized Q–L reward space, using
 the existing radial Gittins utility; it is not an arithmetic average of
 accuracy and seconds. Each endpoint uses the existing scalar DP.
@@ -110,6 +115,9 @@ never reaches the target. To regenerate figures from saved results:
 ```
 
 Use a fresh `--outdir` for changed inputs, code, seeds, or protocol parameters.
+Results and figures depend on the latency matrix: wall-clock and server-latency
+runs must not be pooled or reused interchangeably. Regenerate three-objective
+results and plots using the same input hashes for every compared method.
 
 For a matched 20-seed comparison (42–61) on both QA datasets:
 
