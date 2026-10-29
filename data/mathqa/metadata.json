@@ -11,11 +11,11 @@
   "pricing_file": "../aws_bedrock_prices_10x10.json",
   "orientation": "rows=model configurations; columns=question IDs",
   "blank_cells": "missing lookup-table observations, not zero",
-  "latency_definition": "end-to-end wall-clock seconds for the workflow cell",
+  "latency_definition": "sum of successful LLM invocation response metrics.latencyMs per workflow, in seconds",
   "input_token_definition": "sum of input tokens across workflow calls",
   "output_token_definition": "sum of output tokens across workflow calls",
   "total_token_definition": "input plus output tokens",
-  "source_note": "These matrices intentionally reflect the current research lookup pickle. They are not merged with or corrected from a separate JSONL run.",
+  "source_note": "Accuracy, cost, and token matrices come from the research lookup pickle. Latency comes from per-question server invocation totals; see server_latency_manifest.json.",
   "top_20_cost_cells": [
     {
       "model_name": "answer=Claude Haiku 4.5 + critic=Qwen3 Next 80B A3B",
@@ -177,5 +177,6 @@
       "output_tokens": 5392,
       "total_tokens": 122864
     }
-  ]
+  ],
+  "latency_source": "server_latency_manifest.json"
 }
