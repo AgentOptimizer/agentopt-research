@@ -1,0 +1,3 @@
+# Keep the committed server-latency matrix hashes stable across checkouts.
+data/hotpotqa/latency_matrix_seconds.csv text eol=lf
+data/mathqa/latency_matrix_seconds.csv text eol=lf

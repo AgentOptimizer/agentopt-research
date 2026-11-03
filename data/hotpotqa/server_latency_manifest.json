@@ -1,0 +1,27 @@
+{
+  "dataset": "hotpotqa",
+  "metric": "sum of successful LLM invocation response metrics.latencyMs per workflow, in seconds",
+  "source_lookup": "hotpotqa_lookup.10x10.csv",
+  "source_lookup_sha256": "1d40fea32dedd6b44e3b948f73fe8b869137823dd42059f085ba35c9a0da340d",
+  "output_matrix_sha256": "edd21cfbc87e38a11aa3bfa47c33230f5b522194e3b99dd5a800697b04bfb752",
+  "shape": [
+    100,
+    200
+  ],
+  "cell_count": 20000,
+  "record_sources": {
+    "historical": 12771,
+    "deepseek_supplement": 3400,
+    "luna_supplement": 3800,
+    "supplement": 29
+  },
+  "context_overflow_partial_cells": [],
+  "limitations": [
+    "Historical per-question call lists are unavailable; the lookup aggregate cannot independently prove that every historical call was included.",
+    "Rejected context-overflow requests have no server latency metric; the listed cells contain successful-call lower bounds.",
+    "Server latency excludes client execution, network transfer, tool execution, and thread-pool wait."
+  ],
+  "source_repository": "https://github.com/AgentOptimizer/agentopt",
+  "source_revision": "a4a6eb7891bec384e2d2984a575c5f7de6ac9ec5",
+  "source_path": "experiments/missing_cells/completed/hotpotqa_lookup.10x10.csv"
+}

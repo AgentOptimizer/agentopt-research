@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Regenerate the committed response matrices from the research lookup pickles.
+"""Regenerate response matrices from research pickles and server lookup CSVs.
 
 Writes, per benchmark, six configuration-by-question matrices plus a
 ``metadata.json`` describing shape, missingness and the highest-cost cells.
 
-The source is the current research lookup pickle under
-``experiments/data/lookup/``. It is deliberately not merged with or corrected
-from the separate aggregated JSONL run.
+Accuracy, cost, and tokens come from ``experiments/data/lookup/`` pickles.
+Latency comes exclusively from the explicit server lookup directory.
 
-    PYTHONPATH=. .venv/bin/python data/extract_response_matrices.py
+    python data/extract_response_matrices.py --server-lookup-dir /path/to/completed
 """
 
 from __future__ import annotations
@@ -27,6 +26,7 @@ from experiments.single_objective.offline_selector_sim import (  # noqa: E402
     SampleResult,
     load_pickle,
 )
+from data.build_server_latency_matrices import SOURCE_NOTE, build as build_server_latency  # noqa: E402
 
 BENCHMARKS = ("hotpotqa", "mathqa")
 LOOKUP_DIR = ROOT / "experiments/data/lookup"
@@ -35,7 +35,6 @@ TOP_COST_CELLS = 20
 MATRIX_NAMES = (
     "accuracy_matrix",
     "cost_matrix_usd",
-    "latency_matrix_seconds",
     "input_token_matrix",
     "output_token_matrix",
     "total_token_matrix",
@@ -45,11 +44,6 @@ TOKEN_DEFINITIONS = {
     "output_token_definition": "sum of output tokens across workflow calls",
     "total_token_definition": "input plus output tokens",
 }
-SOURCE_NOTE = (
-    "These matrices intentionally reflect the current research lookup pickle. "
-    "They are not merged with or corrected from a separate JSONL run."
-)
-
 Cell = Dict[str, object]
 
 
@@ -63,7 +57,6 @@ def _cell_values(sample: SampleResult) -> Cell:
     return {
         "accuracy_matrix": sample.score,
         "cost_matrix_usd": sample.cost,
-        "latency_matrix_seconds": sample.latency_seconds,
         "input_token_matrix": input_tokens,
         "output_token_matrix": output_tokens,
         "total_token_matrix": input_tokens + output_tokens,
@@ -85,7 +78,10 @@ def _write_matrix(
             writer.writerow([model] + [row.get(dp, "") for dp in datapoints])
 
 
-def extract_benchmark(benchmark: str, pickle_path: Path, outdir: Path) -> Cell:
+def extract_benchmark(benchmark: str, pickle_path: Path, outdir: Path,
+                      server_lookup: Path, *, source_revision: str | None = None) -> Cell:
+    if not server_lookup.is_file():
+        raise FileNotFoundError(f"Server latency lookup not found: {server_lookup}")
     models, datapoints, table = load_pickle(str(pickle_path))
     known_datapoints = frozenset(datapoints)
 
@@ -130,7 +126,6 @@ def extract_benchmark(benchmark: str, pickle_path: Path, outdir: Path) -> Cell:
         "pricing_file": "../aws_bedrock_prices_10x10.json",
         "orientation": "rows=model configurations; columns=question IDs",
         "blank_cells": "missing lookup-table observations, not zero",
-        "latency_definition": "end-to-end wall-clock seconds for the workflow cell",
         **TOKEN_DEFINITIONS,
         "source_note": SOURCE_NOTE,
         "top_20_cost_cells": cost_cells[:TOP_COST_CELLS],
@@ -138,13 +133,17 @@ def extract_benchmark(benchmark: str, pickle_path: Path, outdir: Path) -> Cell:
     with (outdir / "metadata.json").open("w", encoding="utf-8") as handle:
         json.dump(metadata, handle, indent=2)
         handle.write("\n")
-    return metadata
+    build_server_latency(benchmark, server_lookup, outdir, source_revision=source_revision)
+    return json.loads((outdir / "metadata.json").read_text(encoding="utf-8"))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--benchmarks", nargs="+", default=list(BENCHMARKS))
     parser.add_argument("--lookup-dir", type=Path, default=LOOKUP_DIR)
+    parser.add_argument("--server-lookup-dir", type=Path, required=True,
+                        help="Directory containing {hotpotqa,mathqa}_lookup.10x10.csv")
+    parser.add_argument("--source-revision", help="Source agentopt commit for server lookup CSVs")
     parser.add_argument("--outdir", type=Path, default=Path(__file__).resolve().parent)
     args = parser.parse_args()
 
@@ -156,7 +155,11 @@ def main() -> None:
                 f"{args.lookup_dir}/ is gitignored; place "
                 f"{{{','.join(BENCHMARKS)}}}_lookup.pkl there and retry."
             )
-        metadata = extract_benchmark(benchmark, pickle_path, args.outdir / benchmark)
+        metadata = extract_benchmark(
+            benchmark, pickle_path, args.outdir / benchmark,
+            args.server_lookup_dir / f"{benchmark}_lookup.10x10.csv",
+            source_revision=args.source_revision,
+        )
         rows, cols = metadata["shape"]
         print(
             f"{benchmark}: {rows}x{cols}, {metadata['observed_cells']} observed, "

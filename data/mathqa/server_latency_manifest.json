@@ -1,0 +1,49 @@
+{
+  "dataset": "mathqa",
+  "metric": "sum of successful LLM invocation response metrics.latencyMs per workflow, in seconds",
+  "source_lookup": "mathqa_lookup.10x10.csv",
+  "source_lookup_sha256": "75586a5f7444f2b6d64ac0e3b0daea8dc3c64ade79ad3252345d51b92026735b",
+  "output_matrix_sha256": "8edd6207cd709560bb5db233535e6eb7a5c3d2e38f4f4831618c31f1e4014dad",
+  "shape": [
+    100,
+    200
+  ],
+  "cell_count": 20000,
+  "record_sources": {
+    "historical": 12003,
+    "deepseek_supplement": 3396,
+    "luna_supplement": 3800,
+    "supplement": 797,
+    "context_overflow_adjudicated_incorrect": 4
+  },
+  "context_overflow_partial_cells": [
+    {
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 65,
+      "successful_calls_server_latency_seconds_lower_bound": 129.017
+    },
+    {
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 93,
+      "successful_calls_server_latency_seconds_lower_bound": 182.07
+    },
+    {
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 108,
+      "successful_calls_server_latency_seconds_lower_bound": 234.076
+    },
+    {
+      "configuration_id": "answer=Qwen3 32B + critic=DeepSeek R1",
+      "question_id": 121,
+      "successful_calls_server_latency_seconds_lower_bound": 183.157
+    }
+  ],
+  "limitations": [
+    "Historical per-question call lists are unavailable; the lookup aggregate cannot independently prove that every historical call was included.",
+    "Rejected context-overflow requests have no server latency metric; the listed cells contain successful-call lower bounds.",
+    "Server latency excludes client execution, network transfer, tool execution, and thread-pool wait."
+  ],
+  "source_repository": "https://github.com/AgentOptimizer/agentopt",
+  "source_revision": "a4a6eb7891bec384e2d2984a575c5f7de6ac9ec5",
+  "source_path": "experiments/missing_cells/completed/mathqa_lookup.10x10.csv"
+}

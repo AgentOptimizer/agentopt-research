@@ -40,8 +40,8 @@ The full observation budget is an upper limit; the policy may stop earlier.
 For the canonical eight-benchmark × 20-seed ablation grid, use the task wrapper
 in the [experiment guide](experiments/README.md#retained-ablations).
 
-An exploratory three-objective run adds measured latency on MathQA and
-HotpotQA, using directions Q, (Q+L)/2, L, D:
+An exploratory three-objective run adds cumulative server-side LLM latency
+on MathQA and HotpotQA, using directions Q, (Q+L)/2, L, D:
 
 ```bash
 .venv/bin/python -m experiments.combined_objective.run_three_objective_gittins \
@@ -65,9 +65,13 @@ optional dependency set (`all`); see [pyproject.toml](pyproject.toml).
 | Six SCOPE benchmarks | [`data/scope/`](data/scope/) | Varies by benchmark |
 
 Each QA directory contains six complete per-question CSV matrices: accuracy,
-USD cost, latency in seconds, input tokens, output tokens, and total tokens,
-plus metadata. These matrices have one row per configuration and one column
-per question. See [data/README.md](data/README.md) for formats and regeneration.
+USD cost, cumulative server latency in seconds, input tokens, output tokens,
+and total tokens, plus metadata and latency provenance manifests. Server
+latency sums successful invocation response metrics and excludes client,
+network, tool, and worker-queue time. Four MathQA context-overflow cells
+contain successful-call lower bounds. These matrices have one row per
+configuration and one column per question. See [data/README.md](data/README.md)
+for formats, limitations, and regeneration.
 
 Aggregated GPQA/BFCL summaries and lookup pickles live locally under
 `experiments/data/`, which is gitignored. The aggregated CSV columns are

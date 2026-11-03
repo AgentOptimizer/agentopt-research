@@ -35,9 +35,10 @@ def benchmark_input_hashes(benchmark_or_path: str | Path) -> dict[str, str]:
     """Fingerprint every loaded matrix, including latency, and its metadata."""
     directory = _benchmark_directory(benchmark_or_path)
     files = [directory / name for name in MATRIX_FILENAMES]
-    metadata = directory / "metadata.json"
-    if metadata.is_file():
-        files.append(metadata)
+    for name in ("metadata.json", "server_latency_manifest.json"):
+        metadata = directory / name
+        if metadata.is_file():
+            files.append(metadata)
     hashes = {}
     for path in files:
         if not path.is_file():
