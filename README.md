@@ -6,15 +6,15 @@
 
 Offline model-selection algorithms and frozen benchmark matrices for accuracy,
 deployment cost, latency, and token usage. The repository implements
-**Cost-Coupled Gittins (CC-Gittins, two-axis)**.
+**Cost-Coupled Gittins (CC-Gittins)** for multi-objective Pareto recommendation, with experiments on quality–cost and quality–cost–latency trade-offs.
 
 ## Method
 
-CC-Gittins (G0) uses the exact deployment and quality axes, `((0, 1), (1, 0))`, with real
+In the two-objective quality–cost setting, CC-Gittins (G0) uses the exact deployment and quality axes, `((0, 1), (1, 0))`, with real
 per-arm continuation costs, 1:1 round-robin scheduling, independent per-direction
 eta decay, and finite-LCB recommendations.
 
-The canonical G0–G9 configurations and four ablation families are defined in
+The canonical two-objective G0–G9 configurations and four ablation families are defined in
 [`gittins_ablation_v2.py`](experiments/combined_objective/gittins_ablation_v2.py).
 See the [experiment guide](experiments/README.md) for full runs, Slurm submission,
 validation, and plots. Use its experiment runner to reproduce the paper protocol.
@@ -28,7 +28,7 @@ python3 -m venv .venv
 .venv/bin/pip install -e '.[dev]'
 .venv/bin/python -m pytest
 
-# CC-Gittins, seed 42, on the committed complete QA matrices
+# Two-objective CC-Gittins, seed 42, on the committed complete QA matrices
 .venv/bin/python -m experiments.combined_objective.run_two_direction_ablation \
   --benchmarks hotpotqa mathqa
 ```
@@ -41,7 +41,7 @@ For the canonical eight-benchmark × 20-seed ablation grid, use the task wrapper
 in the [experiment guide](experiments/README.md#retained-ablations).
 
 An exploratory three-objective run adds cumulative server-side LLM latency
-on MathQA and HotpotQA, using directions Q, (Q+L)/2, L, D:
+on MathQA and HotpotQA, using four controllers: quality, balanced quality–latency, latency, and deployment cost:
 
 ```bash
 .venv/bin/python -m experiments.combined_objective.run_three_objective_gittins \
@@ -87,7 +87,7 @@ src/agentopt/
 ├── base_models.py             # Shared types
 └── model_price.py / .json      # Pricing table
 experiments/
-├── combined_objective/        # Two-axis runner, ablations, and Pareto baselines
+├── combined_objective/        # Two- and three-objective runners, ablations, and Pareto baselines
 ├── single_objective/          # Accuracy-only baseline replays
 └── data/                      # Local lookup pickles and aggregated CSVs
 ```
