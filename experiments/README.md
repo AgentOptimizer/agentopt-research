@@ -1,12 +1,11 @@
 # Benchmark experiments
 
-The current paper method is **CC-Gittins (two-axis)**. Its canonical definition
+**CC-Gittins** supports quality–cost and quality–cost–latency Pareto recommendation. The canonical two-axis quality–cost configuration
 is G0 in [`gittins_ablation_v2.py`](combined_objective/gittins_ablation_v2.py).
-The experiment runner defaults to the exact deployment and quality axes,
-`((0, 1), (1, 0))`, in that order. Gauss-Radau and the earlier direction grids
-are retired.
+The two-objective experiment runner defaults to the exact deployment and quality axes,
+`((0, 1), (1, 0))`, in that order.
 
-The current protocol uses raw mean USD costs, real per-arm continuation costs,
+The two-objective protocol uses raw mean USD costs, real per-arm continuation costs,
 1:1 round-robin scheduling, independent per-direction eta decay, and finite-LCB
 recommendations with beta=1. Each arm has an independent question order,
 including its four-question warm batch. The axes share observations. Eta starts
@@ -33,7 +32,7 @@ the ablation plotters have separate output paths, described below.
 Do not mix results from different matrix versions: saved input hashes, model
 ordering, and full-data truth must agree across each comparison.
 
-## Run the current method
+## Run the two-objective configuration
 
 ```bash
 .venv/bin/python -m experiments.combined_objective.run_two_direction_ablation \
@@ -193,7 +192,7 @@ For a smaller run, pass the same method names to `--methods` on the runner and
 ## Retained ablations
 
 The single source of truth is `gittins_ablation_v2.CONFIGURATIONS` and `FAMILIES`.
-Only these ten configurations belong to the current experiment protocol:
+The two-objective ablation protocol uses these ten configurations:
 
 | ID | Configuration | Change from G0 |
 |---|---|---|
