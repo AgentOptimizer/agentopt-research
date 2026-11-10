@@ -66,6 +66,39 @@ to both plotters. The estimated/actual plot requires a non-null
 `search_cost_checkpoint_10pct`; restrict its `--benchmarks` to runs that reached
 10% actual spend. An earlier stop remains valid for the other diagnostics.
 
+## Cost-aware Pareto baselines
+
+```bash
+python -m experiments.combined_objective.run_cost_aware_pareto \
+  --benchmark mathqa --seed 42 43 44 --budget-fraction 0.10 --outdir path/to/results
+```
+
+The replay uses the same seeded per-configuration question orders as
+two-axis CC-Gittins, with four warm questions per configuration. It tracks
+realized USD spend as a fraction of exhaustive search. Each result contains
+the last complete checkpoint within budget and separately records the charge
+if the final batch crossed the budget. Relative HV regret, GD, and IGD use
+the paper's affine cost scale and the full-data frontier.
+
+- **Cost-aware qNEHVI** divides BoTorch's acquisition by the predicted batch
+  cost. All observed configurations train the GP. Fully evaluated
+  configurations form the incumbent set, so eligible configurations can be
+  sampled again. This method requires the `bayesian` extra.
+- **CoPSI** uses the budget allocation and empirical gap elimination of
+  [Xue et al. (2026)](https://arxiv.org/abs/2608.04333). It freezes expected
+  costs from the warm start for allocation and charges actual USD. Its
+  terminal output preserves the paper's accept/reject decisions.
+- **Cost-aware scalarization UCB** cycles over 11 accuracy–cost weights and
+  maximizes the optimistic weighted score per predicted dollar.
+- **Optimistic HV improvement per dollar** maximizes the area an optimistic
+  point would add to the empirical frontier per predicted dollar.
+- **CoHV-UCB** uses an optimistic single-configuration hypervolume divided
+  by a lower confidence bound on price. It uses the paper's experimental
+  radius multipliers and warm-start price scales for the USD replay.
+
+The adaptive scores use accuracy and reciprocal desirability of the estimated
+mean USD cost. Except for CoPSI, recommendations use the empirical Pareto set.
+
 ## Three-objective latency pilot
 
 The separate latency pilot uses the complete MathQA and HotpotQA matrices and

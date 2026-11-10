@@ -141,16 +141,22 @@ class _QuestionPuller:
         *,
         seed: int,
         objectives: Sequence[str] = DEFAULT_OBJECTIVES,
+        question_orders: Optional[Sequence[Sequence[int]]] = None,
     ) -> None:
         self.models = tuple(models)
         self.questions = tuple(int(q) for q in questions)
         self.table = table
         self.objectives = tuple(objectives)
-        rng = np.random.default_rng(seed)
-        self.remaining: List[List[int]] = [
-            [int(q) for q in rng.permutation(self.questions)]
-            for _ in self.models
-        ]
+        if question_orders is None:
+            rng = np.random.default_rng(seed)
+            self.remaining = [rng.permutation(self.questions).tolist() for _ in self.models]
+        else:
+            if len(question_orders) != len(self.models) or any(
+                len(order) != len(self.questions) or set(order) != set(self.questions)
+                for order in question_orders
+            ):
+                raise ValueError("question_orders must contain a permutation per model")
+            self.remaining = [list(reversed(order)) for order in question_orders]
         n_arms = len(self.models)
         self.n_pulls = np.zeros(n_arms, dtype=np.int64)
         self.sums = np.zeros((n_arms, len(self.objectives)), dtype=np.float64)
