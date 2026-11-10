@@ -68,10 +68,36 @@ to both plotters. The estimated/actual plot requires a non-null
 
 ## Cost-aware Pareto baselines
 
+From the repository root, create a Python 3.10+ environment and install the
+replay and Bayesian dependencies:
+
 ```bash
-python -m experiments.combined_objective.run_cost_aware_pareto \
-  --benchmark mathqa --seed 42 43 44 --budget-fraction 0.10 --outdir path/to/results
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[radial,bayesian]"
+python -m experiments.combined_objective.run_cost_aware_pareto --help
 ```
+
+On Windows PowerShell, omit the `source` line and use
+`.\.venv\Scripts\python.exe` in place of `python` after creating the
+environment. The runner uses the committed matrices and runs on CPU without
+API keys or local lookup pickles.
+
+To run all five methods on MathQA:
+
+```bash
+python -m experiments.combined_objective.run_cost_aware_pareto --benchmark mathqa --seed 42 43 44 --budget-fraction 0.10 --outdir experiments/combined_objective/results/cost_aware_mathqa
+```
+
+For HotpotQA, use `--benchmark hotpotqa` and a separate output directory.
+The six SCOPE benchmark IDs appear in `--help`. To run the four methods
+without BoTorch, install `.[radial]` and pass
+`--methods copsi cost_aware_scalarization_ucb optimistic_hvi_per_dollar cohv_ucb`.
+
+The runner writes one `<benchmark>_<method>_seed<seed>.json` per run.
+The `final` field contains the last scored recommendation and its metrics.
+Use a fresh `--outdir` when repeating a run with the same benchmark, method,
+and seed.
 
 The replay uses the same seeded per-configuration question orders as
 two-axis CC-Gittins, with four warm questions per configuration. It tracks

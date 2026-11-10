@@ -33,7 +33,7 @@ from experiments.combined_objective.offline_radial_gittins import (
     hypervolume_2d,
     mean_cost_metric_vectors,
 )
-from experiments.combined_objective.run_two_direction_ablation import load_benchmark
+from experiments.combined_objective.run_two_direction_ablation import DATASETS, load_benchmark
 from agentopt.model_selection.pareto_identification import pairwise_M
 from agentopt.model_selection.radial_gittins import PerArmQuestionSchedule
 
@@ -271,36 +271,58 @@ def _run_online(puller, method, references, warm_prices, cap, batch_size, pull,
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--benchmark", default="mathqa")
-    parser.add_argument("--methods", nargs="+", choices=METHODS, default=METHODS)
-    parser.add_argument("--seed", type=int, nargs="+", default=[42])
-    parser.add_argument("--budget-fraction", type=float, default=0.10)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--benchmark", choices=tuple(DATASETS), default="mathqa",
+                        help="Committed benchmark matrix")
+    parser.add_argument("--methods", nargs="+", choices=METHODS, default=METHODS,
+                        help="Methods to replay; cost_aware_qnehvi requires the bayesian extra")
+    parser.add_argument("--seed", type=int, nargs="+", default=[42],
+                        help="One or more question-order seeds")
+    parser.add_argument("--budget-fraction", type=float, default=0.10,
+                        help="Fraction of exhaustive evaluation cost in USD")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--qnehvi-mc-samples", type=int, default=64)
     parser.add_argument("--qnehvi-refit-every", type=int, default=8)
-    parser.add_argument("--outdir", type=Path, required=True)
+    parser.add_argument("--outdir", type=Path, required=True,
+                        help="Directory for one JSON result per benchmark, method, and seed")
     args = parser.parse_args()
-    models, questions, table, hashes = load_benchmark(args.benchmark)
+    jobs = [
+        (seed, method, args.outdir / f"{args.benchmark}_{method}_seed{seed}.json")
+        for seed in args.seed
+        for method in args.methods
+    ]
+    if len({output for _, _, output in jobs}) != len(jobs):
+        parser.error("each seed and method must be listed only once")
+    for _, _, output in jobs:
+        if output.exists():
+            parser.error(f"result already exists: {output}. Choose a fresh --outdir.")
+
     if COST_AWARE_QNEHVI in args.methods:
+        from agentopt.model_selection.qnehvi import _require_botorch
+
+        try:
+            _require_botorch()
+        except ImportError as error:
+            parser.error(str(error))
         import torch
 
         torch.set_num_threads(1)
-    for seed in args.seed:
-        for method in args.methods:
-            result = replay(
-                models, questions, table, method=method, seed=seed,
-                budget_fraction=args.budget_fraction, batch_size=args.batch_size,
-                qnehvi_mc_samples=args.qnehvi_mc_samples, qnehvi_refit_every=args.qnehvi_refit_every,
-            )
-            result.update(benchmark=args.benchmark, input_sha256=hashes)
-            output = args.outdir / f"{args.benchmark}_{method}_seed{seed}.json"
-            output.parent.mkdir(parents=True, exist_ok=True)
-            with output.open("x", encoding="utf-8") as handle:
-                json.dump(result, handle, indent=2, allow_nan=False)
-                handle.write("\n")
-            print(f"{method} seed={seed} stop={result['stop_reason']} "
-                  f"final={result['final']} wall={result['wall_seconds']:.2f}s", flush=True)
+    models, questions, table, hashes = load_benchmark(args.benchmark)
+    for seed, method, output in jobs:
+        result = replay(
+            models, questions, table, method=method, seed=seed,
+            budget_fraction=args.budget_fraction, batch_size=args.batch_size,
+            qnehvi_mc_samples=args.qnehvi_mc_samples, qnehvi_refit_every=args.qnehvi_refit_every,
+        )
+        result.update(benchmark=args.benchmark, input_sha256=hashes)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with output.open("x", encoding="utf-8") as handle:
+            json.dump(result, handle, indent=2, allow_nan=False)
+            handle.write("\n")
+        print(f"{method} seed={seed} stop={result['stop_reason']} "
+              f"final={result['final']} wall={result['wall_seconds']:.2f}s", flush=True)
 
 
 if __name__ == "__main__":
