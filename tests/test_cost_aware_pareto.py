@@ -1,26 +1,11 @@
 import numpy as np
 
-from experiments.combined_objective.offline_radial_gittins import hypervolume_2d
 from experiments.combined_objective.run_cost_aware_pareto import (
     COHV_UCB,
-    OPTIMISTIC_HVI,
-    SCALARIZATION_UCB,
     _copsi_classify,
-    _optimistic_hvi,
     replay,
 )
 from experiments.single_objective.offline_selector_sim import SampleResult
-
-
-def test_optimistic_hvi_matches_hypervolume_difference():
-    front = np.array([[0.7, 0.4], [0.1, 0.3], [0.4, 0.8], [0.4, 0.7]])
-    upper = np.array([[0.3, 0.5], [0.5, 0.6], [0.9, 1.0], [0, 1]])
-    ref = (0, 0)
-    expected = [
-        hypervolume_2d(np.vstack([front, point]), ref) - hypervolume_2d(front, ref)
-        for point in upper
-    ]
-    np.testing.assert_allclose(_optimistic_hvi(upper, front), expected, atol=1e-12)
 
 
 def test_copsi_prefers_rejection_on_equal_classification_gaps():
@@ -39,10 +24,9 @@ def test_budget_crossing_batch_is_charged_and_excluded_from_scores():
         }
         for model, score, cost in zip(models, (0.5, 1.0, 0.25), (0.01, 0.03, 0.02))
     }
-    for method in (SCALARIZATION_UCB, OPTIMISTIC_HVI, COHV_UCB):
-        result = replay(models, questions, table, method=method, seed=42, budget_fraction=0.13,
-                        batch_size=1)
-        assert result["stop_reason"] == "budget_crossed"
-        assert result["final"]["cost_usd"] <= result["budget_usd"] < result["charged_cost_usd"]
-        assert result["final"]["evaluations"] + 1 == result["charged_evaluations"]
-        assert result["final"]["evaluations"] == 3
+    result = replay(models, questions, table, method=COHV_UCB, seed=42, budget_fraction=0.13,
+                    batch_size=1)
+    assert result["stop_reason"] == "budget_crossed"
+    assert result["final"]["cost_usd"] <= result["budget_usd"] < result["charged_cost_usd"]
+    assert result["final"]["evaluations"] + 1 == result["charged_evaluations"]
+    assert result["final"]["evaluations"] == 3

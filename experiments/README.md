@@ -83,16 +83,16 @@ On Windows PowerShell, omit the `source` line and use
 environment. The runner uses the committed matrices and runs on CPU without
 API keys or local lookup pickles.
 
-To run all five methods on MathQA:
+To run all three methods on MathQA:
 
 ```bash
 python -m experiments.combined_objective.run_cost_aware_pareto --benchmark mathqa --seed 42 43 44 --budget-fraction 0.10 --outdir experiments/combined_objective/results/cost_aware_mathqa
 ```
 
 For HotpotQA, use `--benchmark hotpotqa` and a separate output directory.
-The six SCOPE benchmark IDs appear in `--help`. To run the four methods
+The six SCOPE benchmark IDs appear in `--help`. To run the two methods
 without BoTorch, install `.[radial]` and pass
-`--methods copsi cost_aware_scalarization_ucb optimistic_hvi_per_dollar cohv_ucb`.
+`--methods copsi cohv_ucb`.
 
 The runner writes one `<benchmark>_<method>_seed<seed>.json` per run.
 The `final` field contains the last scored recommendation and its metrics.
@@ -114,10 +114,6 @@ the paper's affine cost scale and the full-data frontier.
   [Xue et al. (2026)](https://arxiv.org/abs/2608.04333). It freezes expected
   costs from the warm start for allocation and charges actual USD. Its
   terminal output preserves the paper's accept/reject decisions.
-- **Cost-aware scalarization UCB** cycles over 11 accuracy–cost weights and
-  maximizes the optimistic weighted score per predicted dollar.
-- **Optimistic HV improvement per dollar** maximizes the area an optimistic
-  point would add to the empirical frontier per predicted dollar.
 - **CoHV-UCB** uses an optimistic single-configuration hypervolume divided
   by a lower confidence bound on price. It uses the paper's experimental
   radius multipliers and warm-start price scales for the USD replay.

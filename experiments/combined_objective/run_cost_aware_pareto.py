@@ -39,23 +39,8 @@ from agentopt.model_selection.radial_gittins import PerArmQuestionSchedule
 
 COST_AWARE_QNEHVI = "cost_aware_qnehvi"
 COPSI = "copsi"
-SCALARIZATION_UCB = "cost_aware_scalarization_ucb"
-OPTIMISTIC_HVI = "optimistic_hvi_per_dollar"
 COHV_UCB = "cohv_ucb"
-METHODS = (COST_AWARE_QNEHVI, COPSI, SCALARIZATION_UCB, OPTIMISTIC_HVI, COHV_UCB)
-
-
-def _optimistic_hvi(upper: np.ndarray, front: np.ndarray) -> np.ndarray:
-    """Area added by each optimistic point to the same 2D incumbent front."""
-    if not len(front):
-        return upper.prod(axis=1)
-    ordered = front[np.argsort(front[:, 0])]
-    edges = ordered[:, 0]
-    starts = np.r_[0.0, edges[:-1]]
-    heights = np.maximum.accumulate(ordered[::-1, 1])[::-1]
-    widths = np.maximum(0.0, np.minimum(upper[:, :1], edges) - starts)
-    uncovered = np.maximum(0.0, upper[:, 1:] - heights)
-    return (widths * uncovered).sum(axis=1) + np.maximum(0, upper[:, 0] - edges[-1]) * upper[:, 1]
+METHODS = (COST_AWARE_QNEHVI, COPSI, COHV_UCB)
 
 
 def _copsi_classify(means: np.ndarray) -> tuple[int, bool]:
@@ -250,19 +235,10 @@ def _run_online(puller, method, references, warm_prices, cap, batch_size, pull,
                 sticky = int(candidates[local])
             arm = sticky
         else:
-            if method == COHV_UCB:
-                radius = 0.01 * np.sqrt(2 * log_horizon / counts)
-                upper = np.minimum(1, means[candidates] + radius[:, None])
-                lower_prices = np.maximum(price_floor / 2, raw[candidates, 1] - radius * price_scale)
-                scores = upper.prod(axis=1) / (lower_prices * sizes)
-            else:
-                radius = 0.5 * np.sqrt(math.log1p(puller.total_evaluations) / counts)
-                upper = np.minimum(1, means[candidates] + radius[:, None])
-                if method == OPTIMISTIC_HVI:
-                    scores = _optimistic_hvi(upper, means[list(empirical_raw_pareto_arms(puller))]) / prices
-                else:
-                    cost_weight = (step % 11) / 10
-                    scores = (upper @ np.array([1 - cost_weight, cost_weight])) / prices
+            radius = 0.01 * np.sqrt(2 * log_horizon / counts)
+            upper = np.minimum(1, means[candidates] + radius[:, None])
+            lower_prices = np.maximum(price_floor / 2, raw[candidates, 1] - radius * price_scale)
+            scores = upper.prod(axis=1) / (lower_prices * sizes)
             arm = int(candidates[np.lexsort((candidates, counts, -scores))[0]])
         if not pull(arm, batch_size, method):
             return "budget_crossed"
