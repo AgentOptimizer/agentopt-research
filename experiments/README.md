@@ -66,6 +66,61 @@ to both plotters. The estimated/actual plot requires a non-null
 `search_cost_checkpoint_10pct`; restrict its `--benchmarks` to runs that reached
 10% actual spend. An earlier stop remains valid for the other diagnostics.
 
+## Cost-aware Pareto baselines
+
+From the repository root, create a Python 3.10+ environment and install the
+replay and Bayesian dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[radial,bayesian]"
+python -m experiments.combined_objective.run_cost_aware_pareto --help
+```
+
+On Windows PowerShell, omit the `source` line and use
+`.\.venv\Scripts\python.exe` in place of `python` after creating the
+environment. The runner uses the committed matrices and runs on CPU without
+API keys or local lookup pickles.
+
+To run all three methods on MathQA:
+
+```bash
+python -m experiments.combined_objective.run_cost_aware_pareto --benchmark mathqa --seed 42 43 44 --budget-fraction 0.10 --outdir experiments/combined_objective/results/cost_aware_mathqa
+```
+
+For HotpotQA, use `--benchmark hotpotqa` and a separate output directory.
+The six SCOPE benchmark IDs appear in `--help`. To run the two methods
+without BoTorch, install `.[radial]` and pass
+`--methods copsi cohv_ucb`.
+
+The runner writes one `<benchmark>_<method>_seed<seed>.json` per run.
+The `final` field contains the last scored recommendation and its metrics.
+Use a fresh `--outdir` when repeating a run with the same benchmark, method,
+and seed.
+
+The replay uses the same seeded per-configuration question orders as
+two-axis CC-Gittins, with four warm questions per configuration. It tracks
+realized USD spend as a fraction of exhaustive search. Each result contains
+the last complete checkpoint within budget and separately records the charge
+if the final batch crossed the budget. Relative HV regret, GD, and IGD use
+the paper's affine cost scale and the full-data frontier.
+
+- **Cost-aware qNEHVI** divides BoTorch's acquisition by the predicted batch
+  cost. All observed configurations train the GP. Fully evaluated
+  configurations form the incumbent set, so eligible configurations can be
+  sampled again. This method requires the `bayesian` extra.
+- **CoPSI** uses the budget allocation and empirical gap elimination of
+  [Xue et al. (2026)](https://arxiv.org/abs/2608.04333). It freezes expected
+  costs from the warm start for allocation and charges actual USD. Its
+  terminal output preserves the paper's accept/reject decisions.
+- **CoHV-UCB** uses an optimistic single-configuration hypervolume divided
+  by a lower confidence bound on price. It uses the paper's experimental
+  radius multipliers and warm-start price scales for the USD replay.
+
+The adaptive scores use accuracy and reciprocal desirability of the estimated
+mean USD cost. Except for CoPSI, recommendations use the empirical Pareto set.
+
 ## Three-objective latency pilot
 
 The separate latency pilot uses the complete MathQA and HotpotQA matrices and

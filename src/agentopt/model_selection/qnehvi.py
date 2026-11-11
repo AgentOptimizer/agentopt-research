@@ -93,13 +93,19 @@ def select_qnehvi_index(
     reference_point: Sequence[float] = (0.0, 0.0),
     mc_samples: int = 64,
     seed: int = 0,
+    candidate_costs: Optional[Sequence[float]] = None,
+    baseline_features: Optional[np.ndarray] = None,
 ) -> int:
-    """Return the candidate index with largest qNEHVI.
+    """Return the candidate index with largest qNEHVI, optionally per dollar.
 
     ``train_objectives`` has one column per maximization-valued objective
     (at least two); ``reference_point`` must have the same length.
-    ``candidate_features`` may repeat previously observed configurations;
-    qNEHVI treats those as additional noisy evaluations of the same point.
+    The incumbent set defaults to the training designs. For repeated finite-arm
+    evaluations, pass an incumbent set that excludes the eligible candidates.
+    An empty incumbent matrix measures improvement over the reference point.
+    When supplied, ``candidate_costs`` are predicted total USD charges for
+    the next evaluation batch of each candidate. A CostNormalizedAcquisition
+    divides linear-scale qNEHVI scores by these point estimates.
     """
     _require_botorch()
     import torch
@@ -128,6 +134,16 @@ def select_qnehvi_index(
         raise ValueError("candidate_features must match train_features columns")
     if cand_x.shape[0] < 1:
         raise ValueError("candidate_features must be nonempty")
+    baseline_x = train_x if baseline_features is None else np.asarray(
+        baseline_features, dtype=np.float64
+    )
+    if (baseline_x.ndim != 2 or baseline_x.shape[1] != train_x.shape[1]
+            or not np.all(np.isfinite(baseline_x))):
+        raise ValueError("baseline_features must be finite and match train_features columns")
+    costs = None if candidate_costs is None else np.asarray(candidate_costs, dtype=np.float64)
+    if costs is not None and (costs.shape != (cand_x.shape[0],)
+                              or not np.all(np.isfinite(costs) & (costs > 0))):
+        raise ValueError("candidate_costs must contain one positive finite cost per candidate")
     ref = np.asarray(reference_point, dtype=np.float64)
     if ref.shape != (n_objectives,) or not np.all(np.isfinite(ref)):
         raise ValueError(f"reference_point must be a finite length-{n_objectives} vector")
@@ -161,15 +177,23 @@ def select_qnehvi_index(
     acq = qNoisyExpectedHypervolumeImprovement(
         model=model,
         ref_point=ref_t,
-        X_baseline=x_train,
+        X_baseline=torch.as_tensor(baseline_x, dtype=dtype),
         sampler=sampler,
-        prune_baseline=True,
+        prune_baseline=bool(len(baseline_x)),
     )
+    if costs is not None:
+        from agentopt.model_selection.cost_normalized_acquisition import CostNormalizedAcquisition
+
+        predicted_costs = torch.as_tensor(costs, dtype=dtype, device=x_cand.device)
+        # This call scores the fixed candidate list in its original order.
+        acq = CostNormalizedAcquisition(acq, lambda X: predicted_costs)
     with torch.no_grad():
         values = acq(x_cand.unsqueeze(1))
     scores = values.detach().cpu().reshape(-1).numpy()
     if scores.size != cand_x.shape[0]:
         raise RuntimeError("qNEHVI returned a score vector of unexpected length")
+    if not np.all(np.isfinite(scores)):
+        raise RuntimeError("qNEHVI returned nonfinite acquisition scores")
     return int(np.argmax(scores))
 
 
