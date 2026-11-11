@@ -103,6 +103,9 @@ def select_qnehvi_index(
     The incumbent set defaults to the training designs. For repeated finite-arm
     evaluations, pass an incumbent set that excludes the eligible candidates.
     An empty incumbent matrix measures improvement over the reference point.
+    When supplied, ``candidate_costs`` are predicted total USD charges for
+    the next evaluation batch of each candidate. A CostNormalizedAcquisition
+    divides linear-scale qNEHVI scores by these point estimates.
     """
     _require_botorch()
     import torch
@@ -178,6 +181,12 @@ def select_qnehvi_index(
         sampler=sampler,
         prune_baseline=bool(len(baseline_x)),
     )
+    if costs is not None:
+        from agentopt.model_selection.cost_normalized_acquisition import CostNormalizedAcquisition
+
+        predicted_costs = torch.as_tensor(costs, dtype=dtype, device=x_cand.device)
+        # This call scores the fixed candidate list in its original order.
+        acq = CostNormalizedAcquisition(acq, lambda X: predicted_costs)
     with torch.no_grad():
         values = acq(x_cand.unsqueeze(1))
     scores = values.detach().cpu().reshape(-1).numpy()
@@ -185,7 +194,7 @@ def select_qnehvi_index(
         raise RuntimeError("qNEHVI returned a score vector of unexpected length")
     if not np.all(np.isfinite(scores)):
         raise RuntimeError("qNEHVI returned nonfinite acquisition scores")
-    return int(np.argmax(scores if costs is None else scores / costs))
+    return int(np.argmax(scores))
 
 
 def _finite_2d(values: np.ndarray, name: str) -> np.ndarray:
