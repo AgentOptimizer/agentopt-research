@@ -17,7 +17,12 @@ eta decay, and finite-LCB recommendations.
 The canonical two-objective G0–G9 configurations and four ablation families are defined in
 [`gittins_ablation_v2.py`](experiments/combined_objective/gittins_ablation_v2.py).
 See the [experiment guide](experiments/README.md) for full runs, Slurm submission,
-validation, and plots. Use its experiment runner to reproduce the paper protocol.
+validation, plots, and the acquisition setting for reproducing saved results.
+
+Acquisition and stopping use posterior predictions of each configuration's
+complete benchmark mean. Recommendation applies quality-LCB and cost-UCB scores
+to predictions of those same benchmark means. The Gaussian posterior supplies
+predictions only for questions not yet evaluated.
 
 ## Setup and quick start
 
@@ -35,7 +40,7 @@ python3 -m venv .venv
 
 No model API calls or local lookup pickles are needed for this replay.
 Results go to
-`experiments/combined_objective/results/two_axis_finite_lcb_raw_mean_seed42_independent/exact_axes/<benchmark>/result.json`.
+`experiments/combined_objective/results/two_axis_full_benchmark_mean_seed42_independent/exact_axes/<benchmark>/result.json`.
 The full observation budget is an upper limit; the policy may stop earlier.
 For the canonical eight-benchmark × 20-seed ablation grid, use the task wrapper
 in the [experiment guide](experiments/README.md#retained-ablations).
@@ -55,6 +60,21 @@ for objective scaling, three-dimensional recommendations, and output plots.
 SciPy, JAX, Matplotlib, and pytest for replay and tests. Other extras
 cover scalar Gittins (`gittins`), Bayesian baselines (`bayesian`), and the full
 optional dependency set (`all`); see [pyproject.toml](pyproject.toml).
+
+## Acquisition configuration
+
+The two- and three-objective command-line runners default to
+`--acquisition-target finite_benchmark_mean`. Their dynamic programs use the
+benchmark-mean variance reductions, zero uncertainty at completion, and actual
+batch sizes and proportional prices, including a shorter final batch.
+
+Use `--acquisition-target latent_mean` to reproduce latent-mean acquisition.
+The low-level Python simulators retain `acquisition_target="latent_mean"` as
+their API default; pass `"finite_benchmark_mean"` explicitly for the benchmark-mean
+policy. Both modes support the same recommendation rules. New results record
+`acquisition_target`; historical results without this field use `latent_mean`.
+Use a separate output directory for each setting. Saved results are not
+interchangeable across acquisition settings.
 
 ## Data
 

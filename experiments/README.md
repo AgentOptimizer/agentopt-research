@@ -1,5 +1,20 @@
 # Benchmark experiments
 
+## Acquisition payoff
+
+The primary two- and three-objective runners use
+`--acquisition-target finite_benchmark_mean` by default. This setting targets
+the complete benchmark mean in allocation and completed-incumbent comparisons;
+its DP uses actual batch sizes and proportional evaluation prices.
+`--acquisition-target latent_mean` reproduces latent acquisition with the same
+recommendation layer. Historical outputs lacking `acquisition_target` are
+latent-mean runs. Keep outputs for the two settings in separate directories.
+The low-level simulator APIs retain the latent-mean default for compatibility;
+set `acquisition_target="finite_benchmark_mean"` explicitly when calling them.
+
+The manuscript figures generated before this change use `latent_mean` for
+acquisition and the same benchmark-mean recommendation rule.
+
 **CC-Gittins** supports quality–cost and quality–cost–latency Pareto recommendation. The canonical two-axis quality–cost configuration
 is G0 in [`gittins_ablation_v2.py`](combined_objective/gittins_ablation_v2.py).
 The two-objective experiment runner defaults to the exact deployment and quality axes,
