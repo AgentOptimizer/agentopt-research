@@ -121,6 +121,114 @@ the paper's affine cost scale and the full-data frontier.
 The adaptive scores use accuracy and reciprocal desirability of the estimated
 mean USD cost. Except for CoPSI, recommendations use the empirical Pareto set.
 
+## Held-out query evaluation
+
+This experiment measures how Pareto recommendations transfer to unseen
+queries from the same task. A permutation with split seed 2026 partitions
+each benchmark into five approximately equal query folds. Each run uses
+four folds for acquisition, calibration, and recommendation. After the run
+locks the recommended configuration IDs, it scores their mean quality and
+deployment cost on the reserved fold. All policies share the partition and
+use four search seeds per fold (42–45).
+
+The default comparison includes **CC-Gittins**, **Random Questions**, and
+**CoHV-UCB**. The two adaptive policies start with four independently ordered
+questions per configuration. Random Questions evaluates the same four
+initial questions across all configurations and then reveals one complete
+question at a time. All policies recommend the nondominated set under the
+same finite-pool LCB rule with beta = 1, which subtracts one predictive
+standard deviation from mean quality and adds one to mean deployment cost.
+
+CoHV-UCB divides the product of optimistic quality and cost desirability
+by a lower confidence bound on the evaluation-batch cost. Its confidence
+radius uses a horizon derived from the budget and warm-start prices.
+The optional **cost-aware scalarization UCB** policy cycles over 11
+weights from quality-only to cost-only. It divides the weighted sum of
+optimistic quality and cost desirability by the predicted evaluation-batch
+cost. It uses the same LCB recommendation rule as the other policies.
+
+Install replay and optional plotting dependencies from the repository root.
+
+```bash
+python -m pip install -e ".[radial,plots]"
+```
+
+Run a smoke comparison on one fold and search seed for each QA benchmark.
+
+```bash
+python -m experiments.combined_objective.run_heldout_pareto \
+  --benchmarks hotpotqa mathqa --folds 1 --seeds 42 \
+  --outdir experiments/combined_objective/results/heldout-smoke
+python -m experiments.combined_objective.summarize_heldout_pareto \
+  --outdir experiments/combined_objective/results/heldout-smoke
+python -m experiments.combined_objective.plot_heldout_pareto \
+  --outdir experiments/combined_objective/results/heldout-smoke
+```
+
+The default run covers all eight benchmarks and all 20 fold and search-seed
+combinations per benchmark. Use `--workers` to run independent fold jobs
+in parallel if local memory permits.
+
+```bash
+python -m experiments.combined_objective.run_heldout_pareto \
+  --outdir experiments/combined_objective/results/heldout-all8
+python -m experiments.combined_objective.summarize_heldout_pareto \
+  --outdir experiments/combined_objective/results/heldout-all8
+python -m experiments.combined_objective.plot_heldout_pareto \
+  --outdir experiments/combined_objective/results/heldout-all8
+```
+
+For a comparison that includes scalarization UCB, pass
+`--methods cc_gittins random_questions cohv_ucb cost_aware_scalarization_ucb`
+and use a dedicated output directory. Reuse an output directory to resume the
+same experiment. Run PowerShell examples as single lines without the trailing
+backslashes.
+
+The budget is a fraction of exhaustive USD cost over the search pool, including
+warm-up. Purchases are atomic batches for adaptive policies and all
+configurations for a question under Random Questions. The runner saves one
+`<benchmark>-fold<fold>-seed<seed>.json` per run with input hashes, split
+memberships, realized search costs, held-out objectives, recommendations after
+each complete affordable purchase, and affordable fixed 10% and 30% checkpoints.
+
+The summarizer writes `curve_summary.json` with each fold's metrics and the
+means across folds. It averages search seeds within each fold before averaging
+folds. It infers the benchmark, fold, and seed grid from the saved runs. To
+check a specific grid, pass `--benchmarks`, `--folds`, or `--seeds` explicitly.
+
+The budget grid covers 0–30% in steps of 0.25 percentage points and uses
+the latest recommendation within each cap. If a policy stops early, its
+final recommendation carries forward. Metrics use the reserved fold's
+exhaustive Pareto frontier as the reference. For scoring, a held-out mean
+deployment cost `D` maps to `1 - D / D_ref`, where `D_ref` is 1.05 times the
+largest held-out mean deployment cost on that fold. Before a run completes warm-up,
+hypervolume is zero and HV regret is the oracle's hypervolume. The aggregate
+GD and IGD curves start at the first cap where every included run has a
+recommendation. The optional plotter writes PNG and PDF curves for HV regret,
+GD, and IGD. Lower values are better for all three. The dotted line scores
+the exhaustive search-pool frontier on the held-out fold.
+
+## Paired recommendation rules
+
+The full-query readout comparison isolates the recommendation rule on an
+acquisition trajectory. Each policy uses the full query pool for acquisition.
+At each affordable half-percentage-point checkpoint through 30%, the runner applies posterior-mean
+recommendation (beta = 0) and quality-LCB/deployment-cost-UCB recommendation
+(beta = 1) to the same observations at the same realized cost. It scores both
+sets against the full-data frontier and also records a recommendation based on
+the empirical means of the purchased observations. Use the held-out protocol above to
+measure transfer across query folds.
+
+To compare the two cost-aware UCB policies on HotpotQA with four matched seeds,
+run the following with the replay dependencies installed.
+
+```bash
+python -m experiments.combined_objective.run_shared_readout \
+  --benchmark hotpotqa --seeds 42 43 44 45 \
+  --methods cohv_ucb cost_aware_scalarization_ucb \
+  --outdir experiments/combined_objective/results/shared-readout-hotpotqa
+```
+
 ## Three-objective latency pilot
 
 The separate latency pilot uses the complete MathQA and HotpotQA matrices and
