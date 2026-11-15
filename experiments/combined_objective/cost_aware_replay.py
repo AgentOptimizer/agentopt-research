@@ -3,6 +3,7 @@
 import json
 import math
 import os
+from collections.abc import Mapping
 from pathlib import Path
 import tempfile
 import time
@@ -22,8 +23,8 @@ from experiments.combined_objective.offline_radial_gittins import (
 CC_GITTINS = "cc_gittins"
 GITTINS_ACQUISITION_TARGET = "finite_benchmark_mean"
 RANDOM_QUESTIONS = "random_questions"
-DEFAULT_METHODS = (CC_GITTINS, RANDOM_QUESTIONS, COHV_UCB)
-METHODS = (*DEFAULT_METHODS, SCALARIZATION_UCB)
+DEFAULT_METHODS = (CC_GITTINS, RANDOM_QUESTIONS)
+METHODS = (*DEFAULT_METHODS, COHV_UCB, SCALARIZATION_UCB)
 PURCHASES = {COHV_UCB: cohv_purchases, SCALARIZATION_UCB: scalarization_ucb_purchases}
 TARGETS = (0.10, 0.30)
 READOUT = "finite_lcb_beta1"
@@ -78,9 +79,15 @@ def replay_search(
         or not all(math.isfinite(target) for target in targets) or targets[-1] != TARGETS[-1]
     ):
         raise ValueError("targets must be strictly increasing from a nonnegative cap to 0.30")
-    if readouts is not None:
-        readouts = tuple(readouts)
-        if not readouts or len(set(readouts)) != len(readouts) or not set(readouts) <= set(READOUTS):
+    if isinstance(readouts, Mapping):
+        if set(readouts) != set(methods):
+            raise ValueError("readouts must specify exactly the selected methods")
+        readouts_by_method = {method: tuple(readouts[method]) for method in methods}
+    else:
+        common_readouts = (READOUT,) if readouts is None else tuple(readouts)
+        readouts_by_method = dict.fromkeys(methods, common_readouts)
+    for rules in readouts_by_method.values():
+        if not rules or len(set(rules)) != len(rules) or not set(rules) <= set(READOUTS):
             raise ValueError("readouts must be distinct supported recommendation rules")
     started = time.perf_counter()
     n, k, batch = len(questions), len(models), BATCH_SIZE
@@ -175,7 +182,7 @@ def replay_search(
                     "warm_cost_fraction": spend / full_cost,
                 })
                 return
-            for rule in readouts or (READOUT,):
+            for rule in readouts_by_method[method]:
                 if rule == "empirical_means":
                     selected = raw_pareto_front_indices(finite.observed_means)
                 elif rule == "finite_mean_beta0":

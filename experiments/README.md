@@ -145,54 +145,60 @@ uncertainty after completion and proportional prices for partial final batches.
 Each policy uses the full query pool for acquisition. At each affordable
 half-percentage-point checkpoint through 30%, the runner applies posterior-mean
 recommendation (beta = 0) and quality-LCB/deployment-cost-UCB recommendation
-(beta = 1) to the same observations at the same realized cost. It scores both
-sets against the full-data frontier and also records a recommendation based on
-the empirical means of the purchased observations. Results record
+(beta = 1) to the same observations at the same realized cost. Random Questions
+also recommends the empirical Pareto set from its sampled questions, matching
+the readout used in the main comparison. All sets are scored against the same
+full-data frontier. Results record
 `cc_gittins_acquisition_target`; resuming a CC-Gittins result requires this
 setting to match. Use a fresh `--outdir` for results produced with a different
 acquisition target or without that metadata.
 
-The default comparison crosses three acquisition policies with the same readouts:
+The default comparison uses five combinations of acquisition and readout:
 
-| Acquisition | Posterior mean (beta = 0) | Conservative readout (beta = 1) |
-|---|---|---|
-| CC-Gittins | Same observations and spend as its conservative readout | Quality LCB and cost UCB |
-| Random Questions | Same observations and spend as its conservative readout | Quality LCB and cost UCB |
-| CoHV-UCB | Same observations and spend as its conservative readout | Quality LCB and cost UCB |
+| Acquisition | Empirical mean | Posterior mean (beta = 0) | Conservative readout (beta = 1) |
+|---|---|---|---|
+| CC-Gittins | — | ✓ | ✓ |
+| Random Questions | ✓ | ✓ | ✓ |
 
 Comparing CC-Gittins with Random Questions in the beta = 1 column measures
 the acquisition-policy advantage under a common conservative readout.
 Comparing beta = 0 with beta = 1 within a row isolates conservative scoring
 on a fixed acquisition trajectory. Comparing the acquisition-policy gaps
 across columns measures their interaction; acquisition and readout effects
-need not add independently. The empirical-mean readout is an additional
-reference: unlike the beta = 0 versus beta = 1 comparison, it also changes
-the posterior estimator.
+need not add independently. Comparing Random Questions' empirical and
+posterior means measures the effect of the estimator at fixed observations.
 
 All policies use the same Gaussian posterior family and warm-start estimation
-procedure. CC-Gittins and CoHV-UCB share independent four-question batches per
+procedure. CC-Gittins starts with independently drawn four-question batches per
 configuration. Random Questions starts with four questions shared across all
 configurations, so its fitted prior and noise values can differ. These runs
 compare complete sampling policies, including their initialization; they do
 not isolate adaptive allocation conditional on identical initial evidence.
 Every checkpoint uses the last complete purchase within its actual USD cap.
 
-To run the default comparison on HotpotQA with four seeds:
+Random Questions has the same sample count for every configuration at a
+checkpoint. With a common Gaussian prior and noise variance, the posterior
+predictive mean applies the same increasing affine transform to each
+configuration within each objective. The conservative readout then shifts
+each objective by the same amount for all configurations. In exact arithmetic
+these changes preserve Pareto membership, so the three curves can overlap.
+
+Run both benchmarks with matching seeds, then plot the saved checkpoints:
 
 ```bash
 python -m experiments.combined_objective.run_shared_readout \
-  --benchmark hotpotqa --seeds 42 43 44 45 \
-  --outdir experiments/combined_objective/results/shared-readout-hotpotqa
-```
-
-The optional scalarization-UCB comparison uses the same readouts. For example:
-
-```bash
+  --benchmark hotpotqa \
+  --outdir experiments/combined_objective/results/shared_readout_j7
 python -m experiments.combined_objective.run_shared_readout \
-  --benchmark hotpotqa --seeds 42 43 44 45 \
-  --methods cohv_ucb cost_aware_scalarization_ucb \
-  --outdir experiments/combined_objective/results/shared-readout-hotpotqa
+  --benchmark mathqa \
+  --outdir experiments/combined_objective/results/shared_readout_j7
+python -m experiments.combined_objective.plot_shared_readout \
+  --results experiments/combined_objective/results/shared_readout_j7 \
+  --output experiments/combined_objective/results/shared_readout_j7/recommendation_rules.pdf
 ```
+
+The plot shows seed means and bands of plus or minus two standard errors,
+starting at the first checkpoint available for both policies in every seed.
 
 ## Three-objective latency pilot
 

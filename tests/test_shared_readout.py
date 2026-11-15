@@ -35,7 +35,7 @@ def test_shared_readout_uses_finite_benchmark_acquisition(benchmark, monkeypatch
     result = json.loads((tmp_path / "mathqa-seed42.json").read_text())
     assert targets == ["finite_benchmark_mean"]
     assert result["cc_gittins_acquisition_target"] == "finite_benchmark_mean"
-    assert {row["readout"] for row in result["rows"]} == set(replay.READOUTS)
+    assert {row["readout"] for row in result["rows"]} == {"finite_mean_beta0", replay.READOUT}
     assert all(row["cost_fraction"] <= row["target_cost_fraction"] + 1e-10
                for row in result["rows"])
 
@@ -46,9 +46,13 @@ def test_readouts_share_observations_and_spend_for_each_policy(benchmark, tmp_pa
     grouped = {}
     for row in result["rows"]:
         grouped.setdefault((row["method"], row["target_cost_fraction"]), []).append(row)
-    assert {method for method, _ in grouped} == set(replay.DEFAULT_METHODS)
-    for rows in grouped.values():
-        assert {row["readout"] for row in rows} == set(replay.READOUTS)
+    expected = {
+        replay.CC_GITTINS: {"finite_mean_beta0", "finite_lcb_beta1"},
+        replay.RANDOM_QUESTIONS: {"empirical_means", "finite_mean_beta0", "finite_lcb_beta1"},
+    }
+    assert {method for method, _ in grouped} == set(expected)
+    for (method, _), rows in grouped.items():
+        assert {row["readout"] for row in rows} == expected[method]
         assert len({(row["actual_usd"], row["evaluations"]) for row in rows}) == 1
 
 

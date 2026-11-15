@@ -8,7 +8,6 @@ import json
 import math
 from pathlib import Path
 
-from experiments.combined_objective.cost_aware_purchases import SCALARIZATION_UCB
 from experiments.combined_objective.offline_multiobjective_random_search import mean_raw_vectors
 from experiments.combined_objective.offline_radial_gittins import (
     front_quality_metrics,
@@ -20,6 +19,9 @@ from experiments.combined_objective.cost_aware_replay import (
     CC_GITTINS,
     DEFAULT_METHODS,
     GITTINS_ACQUISITION_TARGET,
+    METHODS,
+    RANDOM_QUESTIONS,
+    READOUT,
     READOUTS,
     replay_search,
     write_json_once,
@@ -28,12 +30,23 @@ from experiments.combined_objective.run_two_direction_ablation import DATASETS, 
 
 
 TARGETS = tuple(i / 200 for i in range(61))
-METHODS = (*DEFAULT_METHODS, SCALARIZATION_UCB)
 PROTOCOL = "paper_question_orders_and_warm_calibration"
 DEFAULT_OUTDIR = Path("experiments/combined_objective/results/shared_readout")
 
 
+def method_readouts(methods):
+    """Pair posterior readouts and include the empirical Random Questions baseline."""
+    return {
+        method: READOUTS if method == RANDOM_QUESTIONS else ("finite_mean_beta0", READOUT)
+        for method in methods
+    }
+
+
 def run_benchmark(benchmark, seeds, methods, outdir):
+    methods = tuple(methods)
+    if not methods or len(set(methods)) != len(methods) or not set(methods) <= set(METHODS):
+        raise ValueError("methods must be distinct supported policies")
+    readouts = method_readouts(methods)
     models, questions, table, hashes = load_benchmark(benchmark)
     full_cost = math.fsum(table[model][q].cost for model in models for q in questions)
     truth = mean_raw_vectors(models, questions, table)
@@ -65,7 +78,7 @@ def run_benchmark(benchmark, seeds, methods, outdir):
             "benchmark": benchmark,
             "seed": seed,
             "methods": list(methods),
-            "readouts": list(READOUTS),
+            "readouts_by_method": {method: list(rules) for method, rules in readouts.items()},
             "input_sha256": hashes,
             "protocol": PROTOCOL,
             "cc_gittins_acquisition_target": GITTINS_ACQUISITION_TARGET if CC_GITTINS in methods else None,
@@ -75,7 +88,8 @@ def run_benchmark(benchmark, seeds, methods, outdir):
             with destination.open(encoding="utf-8") as handle:
                 existing = json.load(handle)
             if any(existing.get(key) != value for key, value in metadata.items()):
-                raise ValueError(f"{destination} uses a different protocol, method list, or input matrix")
+                raise ValueError(f"{destination} uses a different protocol, method list, readout, or input matrix. "
+                                 "Use a separate --outdir for this comparison.")
             print(f"Already complete: {destination}", flush=True)
 
         if destination.exists():
@@ -84,7 +98,7 @@ def run_benchmark(benchmark, seeds, methods, outdir):
 
         result = replay_search(
             models, questions, table, full_cost, seed,
-            methods=methods, save_curve=False, targets=TARGETS, readouts=READOUTS,
+            methods=methods, save_curve=False, targets=TARGETS, readouts=readouts,
         )
         for row in result["rows"]:
             row.update(score(tuple(row["recommendations"])))
