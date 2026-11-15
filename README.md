@@ -18,6 +18,8 @@ The canonical two-objective G0–G9 configurations and four ablation families ar
 [`gittins_ablation_v2.py`](experiments/combined_objective/gittins_ablation_v2.py).
 See the [experiment guide](experiments/README.md) for full runs, Slurm submission,
 validation, plots, and the acquisition setting for reproducing saved results.
+For the three cost-aware baselines, see the
+[installation and replay commands](experiments/README.md#cost-aware-pareto-baselines).
 
 Acquisition and stopping use posterior predictions of each configuration's
 complete benchmark mean. Recommendation applies quality-LCB and cost-UCB scores

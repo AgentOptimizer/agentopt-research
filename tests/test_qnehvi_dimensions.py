@@ -47,6 +47,31 @@ class QNEHVIDimensionTests(unittest.TestCase):
                 self.assertEqual(tuple(acquisition_cls.return_value.call_args.args[0].shape), (2, 1, 1))
 
     @unittest.skipUnless(importlib.util.find_spec("botorch"), "botorch is not installed")
+    def test_candidate_cost_changes_ranking_and_empty_incumbent_is_supported(self):
+        import torch
+
+        with (
+            patch("botorch.fit.fit_gpytorch_mll"),
+            patch(
+                "botorch.acquisition.multi_objective.monte_carlo."
+                "qNoisyExpectedHypervolumeImprovement"
+            ) as acquisition_cls,
+        ):
+            acquisition_cls.return_value.return_value = torch.tensor([0.4, 0.9])
+            winner = select_qnehvi_index(
+                self.train_features,
+                np.arange(12, dtype=float).reshape(6, 2) / 20,
+                self.candidate_features,
+                categorical_dims=[0],
+                candidate_costs=[1, 3],
+                baseline_features=np.empty((0, 1)),
+                mc_samples=8,
+            )
+        self.assertEqual(winner, 0)
+        self.assertEqual(tuple(acquisition_cls.call_args.kwargs["X_baseline"].shape), (0, 1))
+        self.assertFalse(acquisition_cls.call_args.kwargs["prune_baseline"])
+
+    @unittest.skipUnless(importlib.util.find_spec("botorch"), "botorch is not installed")
     def test_rejects_one_objective_and_wrong_reference_length(self):
         with self.assertRaisesRegex(ValueError, "at least two columns"):
             select_qnehvi_index(
