@@ -1,0 +1,33 @@
+{
+  "scope": "Three-objective ablations, G0-G10",
+  "palette": "Matplotlib tab10 / tab20b / tab20c; no red or pink",
+  "colors": {
+    "G0": "#ff7f0e",
+    "G1": "#7f7f7f",
+    "G2": "#8c564b",
+    "G3": "#bcbd22",
+    "G4": "#1f77b4",
+    "G5": "#2ca02c",
+    "G6": "#9467bd",
+    "G7": "#17becf",
+    "G8": "#6baed6",
+    "G9": "#756bb1",
+    "G10": "#393b79"
+  },
+  "configuration_ids": {
+    "four_direction_real_cost": "G0",
+    "q_only_real_cost": "G1",
+    "l_only_real_cost": "G2",
+    "d_only_real_cost": "G3",
+    "pure_axes_real_cost": "G4",
+    "six_ql_dense_real_cost": "G5",
+    "six_three_edges_real_cost": "G6",
+    "q_only_unit_cost": "G7",
+    "pure_axes_unit_cost": "G8",
+    "four_direction_unit_cost": "G9",
+    "four_direction_fixed_eta": "G10"
+  },
+  "base_linewidth_pt": 2.4,
+  "main_linewidth_pt": 3.24,
+  "linestyle": "-"
+}

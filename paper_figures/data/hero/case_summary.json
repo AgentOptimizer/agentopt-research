@@ -1,0 +1,1 @@
+{"dataset": "bird_dev", "n_seeds": 20, "exhaustive_cost_usd": 946.7815346036402, "cc_gittins_mean_cost_usd": 202.24065008610893, "cc_gittins_mean_cost_95pct_bootstrap_ci_usd": [202.24065008610893, 202.24065008610893], "cost_savings_percent": 78.6391429601788}

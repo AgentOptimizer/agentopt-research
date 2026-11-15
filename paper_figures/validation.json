@@ -1,0 +1,283 @@
+{
+  "date": "2026-11-15",
+  "python": "3.14.0",
+  "numpy": "2.3.5",
+  "matplotlib": "3.10.7",
+  "paper_figures": 26,
+  "supplementary_figures": 2,
+  "all_groups_rendered": true,
+  "input_checksums_verified": true,
+  "all_paper_reference_assets_unchanged": true,
+  "visual_review": "Inspected all 26 paper figure thumbnails and full-size recommendation / 3D frontier examples.",
+  "font_note": "Figure 1 uses Times New Roman text outlines because of its sketch path effects; other PDF text fonts are embedded Times New Roman and STIX mathematics.",
+  "outputs": [
+    {
+      "figure": 1,
+      "group": "hero",
+      "output": "bird_dev_cost_frontier_20seed_10pct.pdf",
+      "sha256": "051610bef6d692c5357fd006c3d1299bdf8fd2b486d30cc51b0935e135076e98",
+      "fonts": []
+    },
+    {
+      "figure": 2,
+      "group": "system_overview",
+      "output": "system_overview.pdf",
+      "sha256": "7f23704917af55963b0a7d8d0aaa214e177ee3f7bbe246c6572e7f08c6112267",
+      "fonts": [
+        "BCSUOG+TimesNewRomanPS-BoldMT",
+        "UDDZHE+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 3,
+      "group": "main_curves",
+      "output": "eight_methods_30pct_hv_regret.pdf",
+      "sha256": "477b15a8576221f6582d35a44ace24d52cb9e901fd5285cf34542e2bec2872c7",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 4,
+      "group": "main_curves",
+      "output": "eight_methods_30pct_generational_distance.pdf",
+      "sha256": "85a68c1e9a1e0e4c4522b5a2e95f35abe0004b5fc93b01c2688d6f378593b19c",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 5,
+      "group": "main_curves",
+      "output": "eight_methods_30pct_inverted_generational_distance.pdf",
+      "sha256": "de2bdea6117eae743dfb969714daa94ed1c7a24182d646fd97872e57151c00be",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 6,
+      "group": "stackoverflow_frontier",
+      "output": "figure6_larger_fonts.pdf",
+      "sha256": "fc24a57376e4cfbf913250cf22271fb93bcb854b122a5a214dd45874bb424c81",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 7,
+      "group": "three_main",
+      "output": "three_objective_eight_methods.pdf",
+      "sha256": "e3c890f5e277740dca87dca6b63aa30b2c4be109a4aa535aeaae6c289fcb00b0",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 8,
+      "group": "job_runtime",
+      "output": "figure8_job_elapsed_eight_methods.pdf",
+      "sha256": "05b22c66e42fc181c222d827716963ca6ff4ec5d956588732affd7be8229ae01",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 9,
+      "group": "frequencies",
+      "output": "gittins_20seed_frequency_frontiers_10pct.pdf",
+      "sha256": "4215d73df2bc3d4a6044d2c9b9e3deeea3cd8b079fe4bf16fd36e440566e40b4",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 10,
+      "group": "frequencies",
+      "output": "gittins_20seed_frequency_frontiers_30pct.pdf",
+      "sha256": "f3f00d478fb7dd0b65459f02572e60ec6ad8833a2630b60e405d8196c7c30bdc",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 11,
+      "group": "estimated_actual",
+      "output": "figure11_eight_methods_10pct.pdf",
+      "sha256": "2a71c0338001c5f3f9bd23d7adb8aa69ac9c2e7413d0509e9fcf3dee68ebd841",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 12,
+      "group": "estimated_actual",
+      "output": "figure12_eight_methods_30pct.pdf",
+      "sha256": "545e300ba96af0e29448e390b9cb63ec601367f95fec858c3a20f5afe1cf8ca4",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 13,
+      "group": "two_ablations",
+      "output": "curves/cost_mechanism/two_objective_cost_mechanism_ablation_hv_gd_igd_8x3.pdf",
+      "sha256": "e35e1c8106e66651d9c966969aaf966342e56d9fda4c6f854114a2faa50acd6d",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 14,
+      "group": "two_ablations",
+      "output": "curves/directions/two_objective_directions_ablation_hv_gd_igd_8x3.pdf",
+      "sha256": "787c6aba9af98bf61d38a6251668faea2a5acc62895e7facf4d38912cceb488b",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 15,
+      "group": "quality_frontier",
+      "output": "cc_vs_quality_only_frontiers_10pct.pdf",
+      "sha256": "6a6ee753dfd4c0d568390856f753780208ed63a2b5fc319300f0d5eaeeab5838",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 16,
+      "group": "two_direction_runtime",
+      "output": "direction_runtime_comparison_20seed.pdf",
+      "sha256": "9b3bd14201d5d18b7e0b0866feb5f1112b3ae643ce58d3cbe38e78ab86581aa9",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 17,
+      "group": "two_ablations",
+      "output": "curves/continuation/two_objective_continuation_ablation_hv_gd_igd_8x3.pdf",
+      "sha256": "4a54e71e366935d6eada43641abbb9e1800963f00d17819ab76ddf5e5d601e43",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT",
+        "FTXWZA+STIXGeneral-Italic"
+      ]
+    },
+    {
+      "figure": 18,
+      "group": "two_ablations",
+      "output": "curves/scheduler/two_objective_scheduler_ablation_hv_gd_igd_8x3.pdf",
+      "sha256": "492aa777dff12432423db74d105bcfbbc09acda1457eadb7bb029cd502e7ecf2",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 19,
+      "group": "two_prior",
+      "output": "two_objective_prior_variance.pdf",
+      "sha256": "37595fdf8b2a368380bb11c64a9407681b1e25f9518e18c39ecbd1371382a484",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 20,
+      "group": "recommendation",
+      "output": "recommendation_confidence_2d.pdf",
+      "sha256": "764e5c23319437fc25b59c93a737b731f5b15dc6c201d8ab374ba52a9b567e49",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT",
+        "FTXWZA+STIXGeneral-Italic"
+      ]
+    },
+    {
+      "figure": 21,
+      "group": "three_families",
+      "output": "cost_mechanism_ablation/three_objective_cost_mechanism_ablation_hv_gd_igd.pdf",
+      "sha256": "3adcc1003d3e0eb5fc6dd2f844113cd373a0a219779e75a0b7e38f0b37f14478",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 22,
+      "group": "three_directions",
+      "output": "three_objective_directions_affine_legend.pdf",
+      "sha256": "3e9b087973e2763ec5ab301c9a7406871fbbd93365b57cb853491049e985dedd",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 23,
+      "group": "three_direction_runtime",
+      "output": "three_objective_direction_runtime_seven_settings.pdf",
+      "sha256": "88183942d59d0b29de3302ab22e1275e15e26dfef87a14d8a37e0145975f5237",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 24,
+      "group": "three_families",
+      "output": "continuation_ablation/three_objective_continuation_ablation_hv_gd_igd.pdf",
+      "sha256": "4619fa6df47ae4bb399df6f7aea783bf60e6e7a307edcf545f054fac870b815e",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT",
+        "FTXWZA+STIXGeneral-Italic"
+      ]
+    },
+    {
+      "figure": 25,
+      "group": "three_prior",
+      "output": "three_objective_prior_variance.pdf",
+      "sha256": "9bb6bd1626b10c8f58ab4566c781938a5c61f729d7720ad361b9cc4d900d8fdb",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": 26,
+      "group": "recommendation",
+      "output": "recommendation_confidence_3d.pdf",
+      "sha256": "e997d94624be5502dc2f12f55f0e38747f9487821376dfcc7b6aa2a7367e3493",
+      "fonts": [
+        "CZRBLR+STIXGeneral-Regular",
+        "FHXFSG+TimesNewRomanPSMT",
+        "FTXWZA+STIXGeneral-Italic"
+      ]
+    },
+    {
+      "figure": null,
+      "group": "three_frontiers",
+      "output": "hotpotqa_all_methods_2x4_30pct.pdf",
+      "sha256": "468eb60a22d920e8379d101971c27c0fe6b133e8ea44d7c0a111922376a899ee",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    },
+    {
+      "figure": null,
+      "group": "three_frontiers",
+      "output": "mathqa_all_methods_2x4_30pct.pdf",
+      "sha256": "539f98ed618fe9ef32fd552869dd77fc8a67db4d0cac5e477d377fdf05bec2bb",
+      "fonts": [
+        "FHXFSG+TimesNewRomanPSMT"
+      ]
+    }
+  ],
+  "standalone_copy_smoke_test": "Passed: copied package outside its repository layout and rendered stackoverflow_frontier from bundled inputs."
+}

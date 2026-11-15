@@ -1,0 +1,44 @@
+{
+  "radial_gittins": {
+    "color": "tab:orange",
+    "label": "CC-Gittins",
+    "linewidth": 3.24,
+    "linestyle": "-"
+  },
+  "ege_sh": {
+    "color": "tab:green",
+    "label": "EGE-SH",
+    "linewidth": 2.4,
+    "linestyle": "-"
+  },
+  "ege_sr": {
+    "color": "tab:blue",
+    "label": "EGE-SR",
+    "linewidth": 2.4,
+    "linestyle": "-"
+  },
+  "ape_k": {
+    "color": "tab:purple",
+    "label": "APE-k",
+    "linewidth": 2.4,
+    "linestyle": "-"
+  },
+  "qnehvi": {
+    "color": "tab:pink",
+    "label": "qNEHVI",
+    "linewidth": 2.4,
+    "linestyle": "-"
+  },
+  "random_configurations": {
+    "color": "tab:brown",
+    "label": "Random configurations",
+    "linewidth": 2.4,
+    "linestyle": "-"
+  },
+  "random_questions": {
+    "color": "tab:cyan",
+    "label": "Random questions",
+    "linewidth": 2.4,
+    "linestyle": "-"
+  }
+}

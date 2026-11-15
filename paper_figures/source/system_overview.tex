@@ -1,0 +1,150 @@
+\documentclass[tikz,border=2pt]{standalone}
+\usepackage{amsmath,amssymb}
+\usepackage{fontspec}
+\setmainfont{Times New Roman}
+\setsansfont{Times New Roman}
+\usetikzlibrary{arrows.meta,calc,positioning}
+
+\definecolor{agentblue}{HTML}{2F6B9A}
+\definecolor{agentbluefill}{HTML}{EAF2F8}
+\definecolor{agentteal}{HTML}{2A7F74}
+\definecolor{agenttealfill}{HTML}{E8F4F1}
+\definecolor{agentorange}{HTML}{C5652D}
+\definecolor{agentorangefill}{HTML}{FBEFE8}
+\definecolor{agentgreen}{HTML}{3D7E55}
+\definecolor{agentgreenfill}{HTML}{EAF3EC}
+\definecolor{agentgray}{HTML}{5B6573}
+\definecolor{agentlight}{HTML}{F6F7F9}
+\definecolor{agentborder}{HTML}{AAB2BD}
+
+\begin{document}
+\begin{tikzpicture}[
+  x=1cm,y=1cm,font=\sffamily\fontsize{8}{9}\selectfont,>=Latex,
+  flow/.style={->,line width=0.8pt,draw=agentgray},
+  feedback/.style={->,line width=0.8pt,draw=agentorange,dashed},
+  readout/.style={flow,draw=agentgreen},
+  panel/.style={draw=agentborder,rounded corners=2pt,fill=white,line width=0.6pt},
+  role/.style={draw=agentblue,rounded corners=2pt,fill=agentbluefill,
+               minimum width=1.19cm,minimum height=0.68cm,align=center},
+  metric/.style={draw=agentteal,rounded corners=2pt,fill=agenttealfill,
+                 minimum width=1.96cm,minimum height=0.88cm,align=center},
+  box/.style={draw=agentborder,rounded corners=2pt,fill=agentlight,
+               minimum height=0.62cm,align=center},
+  controller/.style={box,draw=agentblue,fill=agentbluefill,
+                      text width=2.83cm,minimum height=1.0cm},
+  output/.style={box,draw=agentgreen,fill=agentgreenfill}
+]
+
+\draw[draw=agentteal,dashed,rounded corners=3pt,line width=0.8pt]
+  (0.05,0.15) rectangle (17.55,6.53);
+\node[anchor=west,font=\sffamily\bfseries\small,text=agentteal]
+  at (0.30,6.25) {From workflow runs to Pareto recommendations};
+\node[anchor=east,draw=agentborder,dashed,rounded corners=2pt,
+      fill=agentlight,text=agentgray,inner xsep=5pt,inner ysep=2pt]
+  at (17.27,6.25) {Optional extension: latency ↓};
+
+\draw[panel] (0.30,0.80) rectangle (5.10,5.94);
+\draw[panel] (5.38,0.80) rectangle (12.55,5.94);
+\draw[panel] (12.83,0.80) rectangle (17.30,5.94);
+\node[anchor=west,font=\sffamily\bfseries] at (0.47,5.64)
+  {1. Run and measure};
+\node[anchor=west,font=\sffamily\bfseries] at (5.58,5.64)
+  {2. Select the next evaluation};
+\node[anchor=west,font=\sffamily\bfseries] at (13.00,5.64)
+  {3. Pareto dominance};
+
+% Measurements: the deployment objective and the information price are distinct.
+\node[role] (roleone) at (1.11,4.85) {Role 1};
+\node[role] (roletwo) at (2.70,4.85) {Role 2};
+\node[role] (rolelast) at (4.29,4.85) {Final role};
+\draw[flow] (roleone.east) -- (roletwo.west);
+\draw[flow] (roletwo.east) -- node[above,text=agentgray] {⋯} (rolelast.west);
+
+\node[box,draw=agentteal,fill=agenttealfill,text width=4.03cm,minimum height=0.74cm]
+  (trace) at (2.70,3.71)
+  {\textbf{Workflow observations}\\Quality · deployment cost};
+\draw[flow] (roletwo.south) -- (trace.north);
+
+\node[metric] (quality) at (1.58,2.48)
+  {Quality ↑};
+\node[metric,draw=agentorange,fill=agentorangefill] (deployment) at (3.82,2.48)
+  {Deployment\\cost ↓};
+\coordinate (metricfork) at (2.70,3.00);
+\draw[flow,-] (trace.south) -- (metricfork);
+\draw[flow] (metricfork) -| (quality.north);
+\draw[flow] (metricfork) -| (deployment.north);
+\node[box,draw=agentorange,fill=agentorangefill,text width=4.03cm,
+      minimum height=0.78cm] at (2.70,1.40)
+  {\textbf{Costly assignments also cost more to evaluate}};
+
+% Exact objective axes; each controller reads the same configuration posterior.
+\node[box,text width=6.00cm,minimum height=0.64cm]
+  (posterior) at (8.96,4.88)
+  {\textbf{Shared quality--cost estimates}};
+\node[controller] (qaxis) at (7.22,3.72)
+  {\textbf{Quality search}\\[2pt]
+   seeks higher\\task quality};
+\node[controller,draw=agentorange,fill=agentorangefill] (caxis) at (10.70,3.72)
+  {\textbf{Cost search}\\[2pt]
+   seeks lower\\deployment cost};
+\draw[flow] ($(posterior.south)+(-1.74,0)$) -- (qaxis.north);
+\draw[flow] ($(posterior.south)+(1.74,0)$) -- (caxis.north);
+
+\node[box,text width=6.00cm,minimum height=0.88cm]
+  (schedule) at (8.96,2.34)
+  {\textbf{The searches take turns}\\[2pt]
+   If a search would stop, halve only its\\
+   evaluation-cost weight, when possible};
+\draw[flow] (qaxis.south) -- ($(schedule.north)+(-1.74,0)$);
+\draw[flow] (caxis.south) -- ($(schedule.north)+(1.74,0)$);
+\node[box,text width=6.00cm,minimum height=0.62cm]
+  (reveal) at (8.96,1.22)
+  {Evaluate the next batch};
+\draw[flow] (schedule.south) -- (reveal.north);
+
+% Every acquired observation returns to instrumentation and the shared posterior.
+\draw[flow] (trace.east) -- (5.24,3.71) -- (5.24,4.88) -- (posterior.west);
+\draw[feedback,-] (reveal.west) -- (5.24,1.22) -- (5.24,0.46) -- (0.18,0.46);
+\draw[feedback] (0.18,0.46) -- (0.18,4.85) -- (roleone.west);
+
+% Check Pareto dominance using quality LCB and cost UCB scores.
+\node[output,text width=3.73cm,minimum height=0.83cm]
+  (dominance) at (15.06,4.88)
+  {\textbf{Check Pareto dominance}\\[2pt]
+   Quality LCB ↑, cost UCB ↓};
+\draw[readout] (posterior.east) -- (dominance.west);
+\draw[readout]
+  (dominance.south) -- (15.06,4.18);
+
+\coordinate (origin) at (13.82,2.58);
+\draw[->,draw=agentgray,line width=0.65pt] (origin) -- ++(2.65,0);
+\draw[->,draw=agentgray,line width=0.65pt] (origin) -- ++(0,1.60);
+\node[anchor=north,text=agentgray,font=\sffamily\fontsize{7}{8}\selectfont]
+  (costlabel) at (15.06,2.51) {Cost UCB};
+\node[rotate=90,anchor=center,text=agentgray,font=\sffamily\fontsize{7}{8}\selectfont]
+  at (13.52,3.38) {Quality LCB};
+\foreach \x/\y in {
+  0.22/0.28,0.34/0.57,0.43/0.80,0.61/0.49,0.69/0.94,
+  0.90/0.73,1.06/1.05,1.20/0.84,1.40/1.19,1.55/0.96,
+  1.73/1.23,1.89/1.08,2.05/1.32,2.27/1.19,2.42/1.40,
+  0.22/0.99,0.62/1.20,1.20/1.36,1.86/1.47,2.35/1.50
+} {
+  \fill[agentborder!65] ($(origin)+(\x,{0.92*\y})$) circle (1.25pt);
+}
+\draw[draw=agentgreen,line width=0.9pt]
+  ($(origin)+(0.22,0.9108)$) -- ($(origin)+(0.62,1.104)$) --
+  ($(origin)+(1.20,1.2512)$) -- ($(origin)+(1.86,1.3524)$) --
+  ($(origin)+(2.35,1.380)$);
+\foreach \x/\y in {0.22/0.99,0.62/1.20,1.20/1.36,1.86/1.47,2.35/1.50} {
+  \fill[agentgreen] ($(origin)+(\x,{0.92*\y})$) circle (2.2pt);
+  \draw[white,line width=0.35pt] ($(origin)+(\x,{0.92*\y})$) circle (1.1pt);
+}
+\node[output,text width=3.73cm,minimum height=0.78cm]
+  (recommendations) at (15.06,1.44)
+  {\textbf{Pareto recommendations}\\[2pt]
+   Nondominated assignments};
+\draw[readout]
+  ($(costlabel.south)+(0,-0.03)$) -- (recommendations.north);
+
+\end{tikzpicture}
+\end{document}

@@ -1,0 +1,263 @@
+{
+  "paper_repository": "agentopt-paper (local Overleaf checkout)",
+  "paper_commit": "30fa52048d0bc22a5ff302bda06b1fc059a99597",
+  "paper_tex_sha256": {
+    "iclr_submission/main.tex": "d99360aa7135f2b85e47ca9b03f7978caf2ca423224f2cc6cb9694772cbc8511",
+    "sections/two_objective_recommendation_rule_ablation.tex": "d7a43db815e117211a499bcd26b6d278ca103c1d418e277ff1842625cf5757da",
+    "iclr_submission/three_objective_ablations.tex": "df5492d130f42816fde747894d4232e22f629bc1e196186547f77ef77021018c",
+    "sections/three_objective_recommendation_rule_ablation.tex": "21cb33a3517a732e20e2974a304a2c5c8dec92e90ecec9f25e85156f9409a6d2"
+  },
+  "snapshot_date": "2026-11-15",
+  "font_family": "Times New Roman",
+  "math_fontset": "STIX",
+  "figures": [
+    {
+      "figure": 1,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "bird_dev_cost_frontier_20seed_10pct.pdf",
+      "paper_asset_sha256": "d9c83346f5762ffd4ba19ef34c62a9a4d5ac4b7d49e08d58c9c5ceb1b804f344",
+      "group": "hero",
+      "renderer": "renderers/hero.py",
+      "output_stem": "bird_dev_cost_frontier_20seed_10pct"
+    },
+    {
+      "figure": 2,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "agentopt_cc_gittins_anytime_overview.pdf",
+      "paper_asset_sha256": "87b4f645c39d11f3085b647950b9ab35091a6497a5af0d3d0622d5c7819971cd",
+      "group": "system_overview",
+      "renderer": "source/system_overview.tex",
+      "output_stem": "system_overview"
+    },
+    {
+      "figure": 3,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/eight_datasets_hv_regret_eight_methods_affine.png",
+      "paper_asset_sha256": "2ce913c4b666ec542ca492ef3fc6c03a1a8816fa45af32c45792af1d371a7d6f",
+      "group": "main_curves",
+      "renderer": "renderers/main_curves.py",
+      "output_stem": "eight_methods_30pct_hv_regret"
+    },
+    {
+      "figure": 4,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/eight_datasets_generational_distance_eight_methods_affine.png",
+      "paper_asset_sha256": "239db262104e9c4299949be482d3abe890257e644974485d39ae29f7a348773f",
+      "group": "main_curves",
+      "renderer": "renderers/main_curves.py",
+      "output_stem": "eight_methods_30pct_generational_distance"
+    },
+    {
+      "figure": 5,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/eight_datasets_inverted_generational_distance_eight_methods_affine.png",
+      "paper_asset_sha256": "efc086f5a438fee6c2a50b74db9f52adacfd45e9c9dd297eda2f8ac5353c9f1c",
+      "group": "main_curves",
+      "renderer": "renderers/main_curves.py",
+      "output_stem": "eight_methods_30pct_inverted_generational_distance"
+    },
+    {
+      "figure": 6,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "frontier/stackoverflow_2x4_method_frontiers_10pct.pdf",
+      "paper_asset_sha256": "196e519e4d41620daf90055683a1cb6ac3ca6b9daebaafee46be06af32e771a1",
+      "group": "stackoverflow_frontier",
+      "renderer": "renderers/stackoverflow_frontier.py",
+      "output_stem": "figure6_larger_fonts"
+    },
+    {
+      "figure": 7,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/three_objective_four_hv_igd_affine.pdf",
+      "paper_asset_sha256": "6085f203a7f3683856b68e15fbea832846a8211b07f14035883997b2f0d46a79",
+      "group": "three_main",
+      "renderer": "renderers/three_main.py",
+      "output_stem": "three_objective_eight_methods"
+    },
+    {
+      "figure": 8,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/total_wall_clock_runtime_eight_methods_job_elapsed.pdf",
+      "paper_asset_sha256": "e6240f98db2d827dabe14ab2dacf5ebb8c6f88b5fd20928f5e1d9f1704317979",
+      "group": "job_runtime",
+      "renderer": "renderers/job_runtime.py",
+      "output_stem": "figure8_job_elapsed_eight_methods"
+    },
+    {
+      "figure": 9,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "frontier/gittins_20seed_frequency_frontiers_10pct.png",
+      "paper_asset_sha256": "eb06818f7783a492d09896b6f46e6be805c079cd4818332f0e2cc548b1bc974c",
+      "group": "frequencies",
+      "renderer": "renderers/frequencies.py",
+      "output_stem": "gittins_20seed_frequency_frontiers_10pct"
+    },
+    {
+      "figure": 10,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "frontier/gittins_20seed_frequency_frontiers_30pct.png",
+      "paper_asset_sha256": "347b76a5e1a8ef55a8b5a510a705c20fcccffb40b7bdae7572083be81252af76",
+      "group": "frequencies",
+      "renderer": "renderers/frequencies.py",
+      "output_stem": "gittins_20seed_frequency_frontiers_30pct"
+    },
+    {
+      "figure": 11,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "frontier/estimated_actual_pareto_10pct_seed42_eight_methods.pdf",
+      "paper_asset_sha256": "5f415d6afca4060ce566b590ccac7a934bbd7d97743c7191bbf87cab8903ed0e",
+      "group": "estimated_actual",
+      "renderer": "renderers/estimated_actual.py",
+      "output_stem": "figure11_eight_methods_10pct"
+    },
+    {
+      "figure": 12,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "frontier/estimated_actual_pareto_30pct_seed42_eight_methods.pdf",
+      "paper_asset_sha256": "158d57ad25afbc04555a542833d68e76087b02724a9deab7239c2a7adb4e5584",
+      "group": "estimated_actual",
+      "renderer": "renderers/estimated_actual.py",
+      "output_stem": "figure12_eight_methods_30pct"
+    },
+    {
+      "figure": 13,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/ablation_v2/cost_mechanism/two_objective_cost_mechanism_ablation_hv_gd_igd_8x3_affine_wider_columns.pdf",
+      "paper_asset_sha256": "98c249f6e52ecb1b039513a1932a27b3e286ac2195dfb3661cc0f79435a54363",
+      "group": "two_ablations",
+      "renderer": "renderers/two_ablations.py",
+      "output_stem": "curves/cost_mechanism/two_objective_cost_mechanism_ablation_hv_gd_igd_8x3"
+    },
+    {
+      "figure": 14,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/ablation_v2/directions/two_objective_directions_ablation_hv_gd_igd_8x3_affine_wider_columns.pdf",
+      "paper_asset_sha256": "5e640ce19843bedf948102a5c07eb998f3448e5140cd272abcb94b7a7bc384ab",
+      "group": "two_ablations",
+      "renderer": "renderers/two_ablations.py",
+      "output_stem": "curves/directions/two_objective_directions_ablation_hv_gd_igd_8x3"
+    },
+    {
+      "figure": 15,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/ablation_v2/directions/cc_vs_quality_only_frontiers_10pct_colorbar_left.pdf",
+      "paper_asset_sha256": "d1afca388e1deab66c8942b470be73fdf4bbce16b13b5ac107b4ba3737b48ad7",
+      "group": "quality_frontier",
+      "renderer": "renderers/quality_frontier.py",
+      "output_stem": "cc_vs_quality_only_frontiers_10pct"
+    },
+    {
+      "figure": 16,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/ablation_v2/directions/directions_policy_runtime_20seed.png",
+      "paper_asset_sha256": "f874c63368034e0ccc9f2b9e70f6fdd78714a9f0c96d34ffdd9680753514e206",
+      "group": "two_direction_runtime",
+      "renderer": "renderers/two_direction_runtime.py",
+      "output_stem": "direction_runtime_comparison_20seed"
+    },
+    {
+      "figure": 17,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/ablation_v2/continuation/two_objective_continuation_ablation_hv_gd_igd_8x3_affine_wider_columns.pdf",
+      "paper_asset_sha256": "ccb23a2a5ca8a10783e0c0a9ec476527fb355d18f1b2bec1b2b848e7b2d9cd6e",
+      "group": "two_ablations",
+      "renderer": "renderers/two_ablations.py",
+      "output_stem": "curves/continuation/two_objective_continuation_ablation_hv_gd_igd_8x3"
+    },
+    {
+      "figure": 18,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/ablation_v2/scheduler/two_objective_scheduler_ablation_hv_gd_igd_8x3_affine_wider_columns.pdf",
+      "paper_asset_sha256": "ea750c8cce1a5f17d979b5b81cada37fbc326d7c59e8cac397a9e4ed18c8ba74",
+      "group": "two_ablations",
+      "renderer": "renderers/two_ablations.py",
+      "output_stem": "curves/scheduler/two_objective_scheduler_ablation_hv_gd_igd_8x3"
+    },
+    {
+      "figure": 19,
+      "paper_tex": "iclr_submission/main.tex",
+      "paper_asset": "curves/ablation_v2/prior_variance/two_objective_prior_variance_ablation_hv_gd_igd_8x3_affine_wider_columns.pdf",
+      "paper_asset_sha256": "c297df67d217c9f4ab49aee6f087c15e0a89fb67036bed450994e7f7aa0a7f0e",
+      "group": "two_prior",
+      "renderer": "renderers/two_prior.py",
+      "output_stem": "two_objective_prior_variance"
+    },
+    {
+      "figure": 20,
+      "paper_tex": "sections/two_objective_recommendation_rule_ablation.tex",
+      "paper_asset": "curves/ablation_v2/recommendation_rule/two_objective_recommendation_rule_hotpotqa_mathqa_affine.pdf",
+      "paper_asset_sha256": "5882abf4994593724fbd8d3acba49cc7c48a77888f4bb482d2c30b0f4ddbadd3",
+      "group": "recommendation",
+      "renderer": "renderers/recommendation.py",
+      "output_stem": "recommendation_confidence_2d"
+    },
+    {
+      "figure": 21,
+      "paper_tex": "iclr_submission/three_objective_ablations.tex",
+      "paper_asset": "curves/ablation_three_objective/three_objective_cost_mechanism_affine_legend.pdf",
+      "paper_asset_sha256": "0de3b38bc6da23e81dc78e2359bad9df52878782ef1c611defd3fa910e076749",
+      "group": "three_families",
+      "renderer": "renderers/three_families.py",
+      "output_stem": "cost_mechanism_ablation/three_objective_cost_mechanism_ablation_hv_gd_igd"
+    },
+    {
+      "figure": 22,
+      "paper_tex": "iclr_submission/three_objective_ablations.tex",
+      "paper_asset": "curves/ablation_three_objective/three_objective_directions_affine_legend.pdf",
+      "paper_asset_sha256": "38516b4da06d0c4aded99688162cda7d75b70c394d0da28c1061ea8cefaba641",
+      "group": "three_directions",
+      "renderer": "renderers/three_directions.py",
+      "output_stem": "three_objective_directions_affine_legend"
+    },
+    {
+      "figure": 23,
+      "paper_tex": "iclr_submission/three_objective_ablations.tex",
+      "paper_asset": "curves/ablation_three_objective/three_objective_direction_runtime_seven_settings.png",
+      "paper_asset_sha256": "4108bb348ede487b739481de1fc8f52e4d776ceafb486cf03b9ee25ec6b7ef1a",
+      "group": "three_direction_runtime",
+      "renderer": "renderers/three_direction_runtime.py",
+      "output_stem": "three_objective_direction_runtime_seven_settings"
+    },
+    {
+      "figure": 24,
+      "paper_tex": "iclr_submission/three_objective_ablations.tex",
+      "paper_asset": "curves/ablation_three_objective/three_objective_continuation_affine_legend.pdf",
+      "paper_asset_sha256": "7d338b7b6c9e4a001a4a4815a284472d2a1460bdc470a42f2216e6984bd10d41",
+      "group": "three_families",
+      "renderer": "renderers/three_families.py",
+      "output_stem": "continuation_ablation/three_objective_continuation_ablation_hv_gd_igd"
+    },
+    {
+      "figure": 25,
+      "paper_tex": "iclr_submission/three_objective_ablations.tex",
+      "paper_asset": "curves/ablation_three_objective/three_objective_prior_variance_affine.pdf",
+      "paper_asset_sha256": "954c196bb1f6c7a516e9bdaf07249a8a7358e062f4a323fcfdd34547820648c5",
+      "group": "three_prior",
+      "renderer": "renderers/three_prior.py",
+      "output_stem": "three_objective_prior_variance"
+    },
+    {
+      "figure": 26,
+      "paper_tex": "sections/three_objective_recommendation_rule_ablation.tex",
+      "paper_asset": "curves/ablation_three_objective/three_objective_recommendation_rule_affine.pdf",
+      "paper_asset_sha256": "ac5fc0af66cc302a5191e8dc62248d9a819dac0eed5b25109bd30de9f86d2ef2",
+      "group": "recommendation",
+      "renderer": "renderers/recommendation.py",
+      "output_stem": "recommendation_confidence_3d"
+    }
+  ],
+  "supplementary": [
+    {
+      "group": "three_frontiers",
+      "renderer": "renderers/three_frontiers.py",
+      "output_stem": "hotpotqa_all_methods_2x4_30pct",
+      "description": "Complete 20-seed eight-method 3D frontiers, 30% budget; not referenced in this manuscript snapshot"
+    },
+    {
+      "group": "three_frontiers",
+      "renderer": "renderers/three_frontiers.py",
+      "output_stem": "mathqa_all_methods_2x4_30pct",
+      "description": "Complete 20-seed eight-method 3D frontiers, 30% budget; not referenced in this manuscript snapshot"
+    }
+  ]
+}
