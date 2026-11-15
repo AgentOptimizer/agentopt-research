@@ -80,6 +80,11 @@ def _values(sample: Any) -> np.ndarray:
     return values
 
 
+from agentopt.model_selection.finite_benchmark_gittins import (
+    FiniteBenchmarkGittinsCache, deterministic_direction_utility, validate_acquisition_target,
+)
+
+
 def simulate_three_objective_gittins(
     models: Sequence[str],
     datapoints: Sequence[int],
@@ -92,6 +97,7 @@ def simulate_three_objective_gittins(
     warm_start_question_order: str = "independent",
     directions: Iterable[Sequence[float]] = DEFAULT_DIRECTIONS,
     recommendation_beta: float = 1.0,
+    acquisition_target: str = "latent_mean",
     lambda_initial: float = 1.0,
     lambda_decay: float = 0.5,
     grid_size: int = 129,
@@ -117,8 +123,13 @@ def simulate_three_objective_gittins(
     finite target moments (arrays indexed by global arm index). A USD cap is
     a soft expected-cost reservation and can be exceeded by a realized batch.
     Numerical-floor stopping can leave dominated arms unfinished.
+    ``acquisition_target="finite_benchmark_mean"`` uses benchmark predictions
+    for acquisition and exact observed terminal utilities. The low-level API
+    default ``"latent_mean"`` preserves the latent acquisition protocol.
     """
     started = time.perf_counter()
+    validate_acquisition_target(acquisition_target)
+    finite_acquisition = acquisition_target == "finite_benchmark_mean"
     seed = _integer(seed, "seed", 0)
     batch_size = _integer(batch_size, "batch_size")
     warm_start_batch_size = _integer(warm_start_batch_size, "warm_start_batch_size")
@@ -220,6 +231,29 @@ def simulate_three_objective_gittins(
     floor_stops: set[int] = set()
     axis_cache = AxisGittinsBoundaryCache()
     radial_cache = RadialGittinsBoundaryCache(cache_dir=boundary_cache_dir)
+    finite_cache = FiniteBenchmarkGittinsCache()
+    acquisition_moment_cache = {}
+
+    def acquisition_moments(pair, arm):
+        posterior = reward_pairs[pair][arm]
+        if not finite_acquisition:
+            return posterior.mean, posterior.var
+        key = (pair, arm)
+        cached = acquisition_moment_cache.get(key)
+        if cached is not None and cached[0] == counts[arm]:
+            return cached[1], cached[2]
+        axis = (1, 2)[pair]
+        mean, variance = finite_test_mean_moments(
+            raw_pairs[pair][arm], sums[arm, [0, axis]], int(counts[arm]),
+            n_questions, pair_question_noise[pair],
+        )
+        if counts[arm] == n_questions:
+            mean = np.asarray(observed[arm]).mean(axis=0)[[0, axis]]
+        mean[1] = 1.0 - mean[1] / calibrations[pair].cost_reference_usd
+        variance[1] /= calibrations[pair].cost_reference_usd**2
+        acquisition_moment_cache[key] = (int(counts[arm]), mean, variance)
+        return mean, variance
+
     index_cache: dict[tuple[Any, ...], float] = {}
     trace: list[dict[str, Any]] = []
     eta_events: list[dict[str, Any]] = []
@@ -228,7 +262,10 @@ def simulate_three_objective_gittins(
     grid_retries: list[dict[str, Any]] = []
     grid_lower, grid_upper = np.zeros(2), np.ones(2)
     warm_reward_means = np.asarray([posterior.mean for posterior in reward_pairs[0].values()])
-    warm_reward_std = np.sqrt(initial_variances[0])
+    if finite_acquisition:
+        warm_reward_means = np.asarray([acquisition_moments(0, arm)[0] for arm in range(n_arms)])
+    warm_reward_std = (np.sqrt(acquisition_moments(0, 0)[1]) if finite_acquisition
+                       else np.sqrt(initial_variances[0]))
     grid_lower[1] = min(0.0, float(warm_reward_means[:, 1].min() - 6 * warm_reward_std[1]))
     grid_upper[1] = max(1.0, float(warm_reward_means[:, 1].max() + 6 * warm_reward_std[1]))
     grid_version = 0
@@ -299,6 +336,12 @@ def simulate_three_objective_gittins(
                 objective_upper=grid_upper, z_padding=padding,
             )
             try:
+                if finite_acquisition:
+                    return finite_cache.get(
+                        direction=pair_direction, effective_pull_cost=cost,
+                        initial_var=initial_variances[0], question_noise_var=reward_batch_noise[0] * batch_size,
+                        n_total=n_questions, n_observed=warm_start_batch_size, batch_size=batch_size, grid=grid,
+                    )
                 return radial_cache.get(
                     direction=pair_direction, effective_pull_cost=cost,
                     initial_var=initial_variances[0], obs_noise_var=reward_batch_noise[0],
@@ -320,8 +363,18 @@ def simulate_three_objective_gittins(
             axis = int(active[0])
             pair, local_axis = (1, 1) if axis == 2 else (0, axis)
             posterior = reward_pairs[pair][arm]
+            mean, variance = acquisition_moments(pair, arm)
             if completed:
-                return float(posterior.mean[local_axis])
+                return float(mean[local_axis])
+            if finite_acquisition:
+                local_direction = (1.0, 0.0) if local_axis == 0 else (0.0, 1.0)
+                table_for_arm = finite_cache.get(
+                    direction=local_direction,
+                    effective_pull_cost=float(etas[direction_index] * base_effective_costs[arm]),
+                    initial_var=initial_variances[pair], question_noise_var=reward_batch_noise[pair] * batch_size,
+                    n_total=n_questions, n_observed=warm_start_batch_size, batch_size=batch_size, grid=base_grid,
+                )
+                return table_for_arm.index(int(pulls[arm]), float(mean[local_axis]))
             table_for_arm = axis_cache.get(
                 effective_pull_cost=float(etas[direction_index] * base_effective_costs[arm]),
                 initial_var=float(initial_variances[pair][local_axis]),
@@ -330,10 +383,13 @@ def simulate_three_objective_gittins(
             )
             return table_for_arm.index(int(pulls[arm]), float(posterior.mean[local_axis]))
         posterior = reward_pairs[0][arm]
+        mean, variance = acquisition_moments(0, arm)
         if completed:
+            if finite_acquisition:
+                return deterministic_direction_utility(mean, direction[:2])
             return terminal_expected_radial_utility(posterior.mean, posterior.var, direction[:2])
         table_for_arm = radial_table(direction, arm, float(etas[direction_index] * base_effective_costs[arm]))
-        u, delta, _ = radial_posterior_coordinates(posterior.mean, posterior.var, direction[:2])
+        u, delta, _ = radial_posterior_coordinates(mean, variance, direction[:2])
         return float(u - table_for_arm.boundary(int(pulls[arm]), delta))
 
     for arm in range(n_arms):
@@ -395,7 +451,9 @@ def simulate_three_objective_gittins(
         }
         if should_stop:
             trace.append(event)
-            remaining_penalty = max(float((horizons[arm] - pulls[arm]) * etas[direction_index] * base_effective_costs[arm]) for arm in unfinished)
+            remaining_penalty = max(float(
+                ((n_questions - counts[arm]) / batch_size if finite_acquisition else horizons[arm] - pulls[arm])
+                * etas[direction_index] * base_effective_costs[arm]) for arm in unfinished)
             threshold = max(stop_tolerance, np.finfo(float).eps * max(1.0, abs(best_value), abs(best_completed_value)))
             old_eta = float(etas[direction_index])
             next_eta = old_eta * lambda_decay
@@ -446,9 +504,9 @@ def simulate_three_objective_gittins(
         batch_cost = float(batch[:, 2].sum())
         total_cost += batch_cost
         floor_stops.clear()
-        posterior = reward_pairs[0][best_arm]
-        radius = 6 * math.sqrt(float(posterior.var[1]))
-        lower, upper = float(posterior.mean[1] - radius), float(posterior.mean[1] + radius)
+        mean, variance = acquisition_moments(0, best_arm)
+        radius = 6 * math.sqrt(float(variance[1]))
+        lower, upper = float(mean[1] - radius), float(mean[1] + radius)
         if lower < grid_lower[1] or upper > grid_upper[1]:
             old_lower, old_upper = grid_lower.copy(), grid_upper.copy()
             span = grid_upper[1] - grid_lower[1]
@@ -487,6 +545,8 @@ def simulate_three_objective_gittins(
     bruteforce_cost = float(sum(row[:, 2].sum() for row in full_rows))
     parameters = {
         "seed": seed, "batch_size": batch_size, "warm_start_batch_size": warm_start_batch_size,
+        "acquisition_target": acquisition_target,
+        "finite_acquisition_cache_stats": finite_cache.stats_snapshot() if finite_acquisition else None,
         "question_order": question_order, "warm_start_question_order": warm_start_question_order,
         "directions": [list(direction) for direction in resolved_directions],
         "direction_labels": ["Q" if direction == (1., 0., 0.) else "L" if direction == (0., 1., 0.) else "D" if direction == (0., 0., 1.) else "(Q+L)/2" for direction in resolved_directions],
@@ -498,7 +558,8 @@ def simulate_three_objective_gittins(
         "direction_utility": "support-restricted radial; Q-L balanced ray uses min(Q_reward,L_reward)",
         "search_cost_units": "USD", "grid_size": grid_size, "boundary_build_backend": "scipy",
         "boundary_margin_cells": 4, "boundary_z_padding_extra": 2.0,
-        "planning_batch_semantics": "DP stages assume full batches; realized final partial batch uses per-question noise divided by its actual size",
+        "planning_batch_semantics": ("actual batch sizes and proportional prices" if finite_acquisition else
+                                     "DP stages assume full batches; realized final partial batch uses per-question noise divided by its actual size"),
         "effective_cost_bin_ratio": effective_cost_bin_ratio, "effective_cost_bin_anchor": effective_cost_bin_anchor,
         "observation_budget_fraction": float(observation_budget_fraction),
         "max_total_question_evaluations": max_total_question_evaluations, "question_cap": question_cap,
@@ -512,7 +573,8 @@ def simulate_three_objective_gittins(
         "objective_grid_lower": grid_lower.tolist(), "objective_grid_upper": grid_upper.tolist(),
         "objective_grid_expansions": grid_expansions, "boundary_grid_retries": grid_retries,
         "posterior_independence_assumption": "independent Gaussian coordinates; shared physical Q,L,D observations",
-        "terminal_completion_semantics": "acquisition terminal value is latent posterior utility, matching two-objective protocol",
+        "terminal_completion_semantics": ("observed full-benchmark utility with zero posterior variance" if finite_acquisition else
+                                          "acquisition terminal value is latent posterior utility, matching two-objective protocol"),
     }
     return {
         "selector": "three_objective_cc_gittins" if index_provider is None else "three_objective_custom_index",

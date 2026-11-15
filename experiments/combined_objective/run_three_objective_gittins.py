@@ -27,9 +27,11 @@ from experiments.combined_objective.three_objective_metrics import (
     load_three_objective_benchmark,
 )
 
+from agentopt.model_selection.finite_benchmark_gittins import ACQUISITION_TARGETS, validate_acquisition_target
+
 DIRECTIONS = ((1., 0., 0.), (.5, .5, 0.), (0., 1., 0.), (0., 0., 1.))
 DIRECTION_LABELS = ("Q", "(Q+L)/2", "L", "D")
-DEFAULT_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_ql_midpoint_d"
+DEFAULT_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_full_benchmark_mean"
 
 
 def write_json(path: Path, value) -> None:
@@ -74,17 +76,21 @@ def source_hashes() -> dict:
         )], *[
         ROOT / "src/agentopt/model_selection" / name for name in (
             "radial_gittins.py", "radial_gittins_dp.py", "axis_gittins_dp.py",
+            "gittins_schedules.py", "finite_benchmark_gittins.py",
         )]]
     return {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
 
 
 def run_one(benchmark: str, *, seed: int, outdir: Path,
-            observation_budget_fraction: float = 1., grid_size: int = 129) -> dict:
+            observation_budget_fraction: float = 1., grid_size: int = 129,
+            acquisition_target: str = "finite_benchmark_mean") -> dict:
+    validate_acquisition_target(acquisition_target)
     models, questions, table, hashes = load_three_objective_benchmark(benchmark)
     path = outdir / f"seed_{seed}" / benchmark / "result.json"
     config = {
         "schema_version": 1,
         "benchmark": benchmark, "seed": seed,
+        "acquisition_target": acquisition_target,
         "objective_order": ["Q", "L", "D"],
         "raw_objectives": ["accuracy_max", "mean_latency_seconds_min", "mean_cost_usd_min"],
         "directions": [list(d) for d in DIRECTIONS],
@@ -101,7 +107,9 @@ def run_one(benchmark: str, *, seed: int, outdir: Path,
     }
     if path.exists():
         saved = json.loads(path.read_text())
-        mismatches = [k for k, v in config.items() if saved.get("config", {}).get(k) != v]
+        existing = dict(saved.get("config", {}))
+        existing.setdefault("acquisition_target", "latent_mean")
+        mismatches = [k for k, v in config.items() if existing.get(k) != v]
         if mismatches:
             raise ValueError(f"Refusing to reuse {path}; changed {mismatches}. Use a new --outdir.")
         print(f"Reusing {path}", flush=True)
@@ -127,7 +135,7 @@ def run_one(benchmark: str, *, seed: int, outdir: Path,
         batch_size=4, warm_start_batch_size=4, grid_size=grid_size,
         question_order="independent", warm_start_question_order="independent",
         observation_budget_fraction=observation_budget_fraction,
-        progress_callback=progress,
+        progress_callback=progress, acquisition_target=acquisition_target,
     )
     simulation_seconds = time.perf_counter() - started
     run = enrich_run(run)
@@ -227,6 +235,7 @@ def export_results(payloads: list[dict], output: Path) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--benchmarks", nargs="+", choices=("mathqa", "hotpotqa"), default=["mathqa", "hotpotqa"])
+    parser.add_argument("--acquisition-target", choices=ACQUISITION_TARGETS, default="finite_benchmark_mean")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
     parser.add_argument("--observation-budget-fraction", type=float, default=1.)
@@ -243,7 +252,8 @@ def main() -> None:
     else:
         payloads = [run_one(b, seed=args.seed, outdir=args.outdir,
                            observation_budget_fraction=args.observation_budget_fraction,
-                           grid_size=args.grid_size) for b in args.benchmarks]
+                           grid_size=args.grid_size,
+                           acquisition_target=args.acquisition_target) for b in args.benchmarks]
     if not args.skip_export:
         export_results(payloads, args.outdir / f"seed_{args.seed}")
 

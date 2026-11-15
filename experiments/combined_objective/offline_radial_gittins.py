@@ -74,6 +74,10 @@ from agentopt.model_selection.radial_gittins import (
     fit_empirical_bayes_warm_start,
 )
 from agentopt.model_selection.axis_gittins_dp import AxisGittinsBoundaryCache
+from agentopt.model_selection.finite_benchmark_gittins import (
+    ACQUISITION_TARGETS, FiniteBenchmarkGittinsCache,
+    deterministic_direction_utility, validate_acquisition_target,
+)
 from agentopt.model_selection.radial_gittins_dp import (
     BoundaryGridError,
     RadialGittinsBoundaryCache,
@@ -1720,6 +1724,7 @@ def simulate_radial_gittins(
     direction_scheduler: str = "round_robin",
     eta_decay_schedule: str = "global_stop",
     recommendation_rule: str = "completed_only",
+    acquisition_target: str = "latent_mean",
     recommendation_beta: float = 1.0,
     recommendation_min_samples: int = 0,
     fixed_prior_mean: Optional[Sequence[float] | float] = None,
@@ -1790,9 +1795,9 @@ def simulate_radial_gittins(
     follows the common order restricted to its available questions.
 
     Adaptive replay uses full batches, then one smaller final batch when the
-    remaining questions do not fill ``batch_size``. Gittins tables still plan
-    every stage as a full batch; only the realized last update uses the actual
-    batch size and scaled observation noise.
+    remaining questions do not fill ``batch_size``. Latent-mean tables plan
+    full batches; benchmark-mean tables use the actual final batch size for
+    both the information increment and its proportional evaluation price.
 
     The dollar-budget reservation is soft when it uses frozen warm-start
     expected costs: a realized batch can overshoot the cap. Supplying
@@ -1858,7 +1863,13 @@ def simulate_radial_gittins(
     filtered by strict Pareto dominance. Completed predictions naturally
     equal empirical means with zero uncertainty. Means/sums are updated only
     for the evaluated arm; membership uses a two-dimensional sorting sweep.
-    Acquisition and its latent posterior stay unchanged. These are Gaussian
+    Recommendation does not alter the acquisition target. The default
+    ``acquisition_target='latent_mean'`` preserves the low-level API default;
+    ``'finite_benchmark_mean'`` uses full-benchmark means for acquisition and
+    completed incumbents, with variance reductions and actual batch sizes in
+    its own SciPy boundary cache. Use raw_mean and unbinned horizons for this
+    target. Missing acquisition-target metadata in saved runs means latent_mean.
+    These are Gaussian
     model-based conservative coordinates, not a joint confidence guarantee
     or an optimality result for the finite-test target.
 
@@ -1922,6 +1933,12 @@ def simulate_radial_gittins(
     """
     wall_start = time.perf_counter()
     timing_origin = wall_start
+    validate_acquisition_target(acquisition_target)
+    finite_acquisition = acquisition_target == "finite_benchmark_mean"
+    if finite_acquisition and cost_model != "raw_mean":
+        raise ValueError("finite_benchmark_mean acquisition requires cost_model='raw_mean'")
+    if finite_acquisition and (horizon_bin_width != 1 or boundary_build_backend == "jax"):
+        raise ValueError("finite_benchmark_mean requires horizon_bin_width=1 and the auto/scipy backend")
     if cost_model not in {"reciprocal", "raw_mean"}:
         raise ValueError("cost_model must be 'reciprocal' or 'raw_mean'")
     if recommendation_rule not in RECOMMENDATION_RULES:
@@ -2460,6 +2477,34 @@ def simulate_radial_gittins(
     cache_size_before = len(cache)
     cache_stats_before = _boundary_cache_stats_snapshot(cache)
     axis_cache = AxisGittinsBoundaryCache()
+    finite_axis_radial_cache = FiniteBenchmarkGittinsCache()
+    acquisition_moment_cache = {}
+
+    def acquisition_moments(arm):
+        if not finite_acquisition:
+            posterior = posteriors[arm]
+            return posterior.mean, posterior.var
+        n = len(observed_scores[arm])
+        cached = acquisition_moment_cache.get(arm)
+        if cached is not None and cached[0] == n:
+            return cached[1], cached[2]
+        low, high = calibration.normalizer.score_bounds
+        observed_sum = np.array([
+            (float(np.sum(observed_scores[arm])) - n * low) / (high - low),
+            float(np.sum(observed_costs[arm])),
+        ])
+        mean, variance = finite_test_mean_moments(
+            model_posteriors[arm], observed_sum, n, len(available_by_arm[arm]),
+            calibration.warm_obs_noise_var * batch_size,
+        )
+        if n == len(available_by_arm[arm]):
+            mean = np.array([(float(np.mean(observed_scores[arm])) - low) / (high - low),
+                             float(np.mean(observed_costs[arm]))])
+        mean[1] = 1.0 - mean[1] / calibration.cost_reference_usd
+        variance[1] /= calibration.cost_reference_usd**2
+        acquisition_moment_cache[arm] = (n, mean, variance)
+        return mean, variance
+
     online_value_cache = _VersionedArmValueCache(n_arms)
     direction_boundary_tables: Dict[
         Tuple[float, float],
@@ -2475,10 +2520,10 @@ def simulate_radial_gittins(
         """Expand from observed posterior evidence without clipping or oracle bounds."""
         if cost_model != "raw_mean":
             return
-        posterior = posteriors[arm_index]
-        radius = 6.0 * math.sqrt(float(posterior.var[1]))
-        lower = float(posterior.mean[1]) - radius
-        upper = float(posterior.mean[1]) + radius
+        mean, variance = acquisition_moments(arm_index)
+        radius = 6.0 * math.sqrt(float(variance[1]))
+        lower = float(mean[1]) - radius
+        upper = float(mean[1]) + radius
         if lower >= objective_grid_lower[1] and upper <= objective_grid_upper[1]:
             return
         old_lower, old_upper = objective_grid_lower.copy(), objective_grid_upper.copy()
@@ -2498,13 +2543,17 @@ def simulate_radial_gittins(
         direction_boundary_tables.clear()
         online_value_cache.clear_radial_indices()
 
+    if finite_acquisition:
+        for arm in range(n_arms):
+            _expand_observed_objective_grid(arm, warm_required)
+
     def _prewarm_direction_boundaries(
         direction: Tuple[float, float],
         unfinished_arms: Sequence[int],
     ) -> None:
         """Build one direction's unique cold tables once per lambda stage."""
         nonlocal auto_jax_disabled, auto_jax_workload_skips
-        if _direction_axis(direction) is not None:
+        if finite_acquisition or _direction_axis(direction) is not None:
             return
         if direction in direction_boundary_tables:
             return
@@ -2592,6 +2641,9 @@ def simulate_radial_gittins(
     ) -> float:
         direction = resolved_directions[int(direction_index)]
         posterior = posteriors[int(arm_index)]
+        if finite_acquisition:
+            mean, _ = acquisition_moments(int(arm_index))
+            return deterministic_direction_utility(mean, direction, resolved_reference)
         return terminal_expected_direction_utility(
             posterior.mean,
             posterior.var,
@@ -2933,6 +2985,24 @@ def simulate_radial_gittins(
 
             def compute_radial_index(arm_index: int) -> float:
                 axis = _direction_axis(direction)
+                if finite_acquisition:
+                    mean, variance = acquisition_moments(arm_index)
+                    grid = base_boundary_grid if axis is not None else grid_for_arm(direction, arm_index)
+                    build = lambda: finite_axis_radial_cache.get(
+                        direction=direction, effective_pull_cost=float(effective_pull_costs[arm_index]),
+                        initial_var=initial_var, question_noise_var=noise_var * batch_size,
+                        n_total=len(available_by_arm[arm_index]),
+                        n_observed=resolved_warm_start_batch_size, batch_size=batch_size,
+                        grid=grid_for_arm(direction, arm_index) if axis is None else grid,
+                    )
+                    table_for_arm = (build() if axis is not None else
+                                     _build_with_boundary_retries(direction, (arm_index,), build))
+                    stage = int(adaptive_pulls[arm_index])
+                    if axis is not None:
+                        return table_for_arm.index(stage, float(mean[axis]),
+                                                   reference=float(resolved_reference[axis]))
+                    u, delta, _ = radial_posterior_coordinates(mean, variance, direction, resolved_reference)
+                    return u - table_for_arm.boundary(stage, delta)
                 if axis is not None:
                     # Endpoints use a scalar required-completion problem.
                     # Its table depends only on the active variance/noise,
@@ -3054,7 +3124,8 @@ def simulate_radial_gittins(
             if history is not None:
                 history.append(dict(visit_event))
             remaining_penalty = max(
-                float(planning_horizons[i] - adaptive_pulls[i])
+                (schedule.remaining(i) / batch_size if finite_acquisition else
+                 float(planning_horizons[i] - adaptive_pulls[i]))
                 * float(effective_pull_costs[i]) for i in unfinished
             )
             index_scale = max(1.0, abs(status.best_completed_index), abs(status.best_unfinished_index))
@@ -3137,7 +3208,8 @@ def simulate_radial_gittins(
                     _append_trace(visit_event)
                     global_step += 1
                     remaining_penalty = max(
-                        float(planning_horizons[i] - adaptive_pulls[i])
+                        (schedule.remaining(i) / batch_size if finite_acquisition else
+                         float(planning_horizons[i] - adaptive_pulls[i]))
                         * float(effective_pull_costs[i])
                         for i in unfinished
                     )
@@ -3622,6 +3694,12 @@ def simulate_radial_gittins(
 
     params: Dict[str, Any] = {
         "batch_size": batch_size,
+        "acquisition_target": acquisition_target,
+        "acquisition_terminal_value": "observed_full_benchmark_utility" if finite_acquisition else "latent_posterior_utility",
+        "acquisition_transition_variance": "full_benchmark_variance_reduction" if finite_acquisition else "latent_variance_reduction",
+        "acquisition_batch_schedule": "actual_batch_sizes_and_proportional_prices" if finite_acquisition else "full_batch_planning",
+        "finite_acquisition_cache_stats": finite_axis_radial_cache.stats_snapshot() if finite_acquisition else None,
+        "acquisition_boundary_backend": "scipy" if finite_acquisition else boundary_build_backend,
         "warm_start_batch_size": resolved_warm_start_batch_size,
         "warm_start_question_order": warm_start_question_order,
         "initialization": (
@@ -4162,7 +4240,7 @@ def main() -> None:
         help="Optional per-batch upper bound in USD, shared by every arm",
     )
     parser.add_argument("--eta", type=float, default=1.0)
-    parser.add_argument("--cost-model", choices=("reciprocal", "raw_mean"), default="reciprocal")
+    parser.add_argument("--cost-model", choices=("reciprocal", "raw_mean"), default="raw_mean")
     parser.add_argument("--cost-reference-usd", type=float, default=None,
                         help="Frozen cost scale/reference; raw_mean defaults to the largest warm arm mean")
     parser.add_argument(
@@ -4249,6 +4327,8 @@ def main() -> None:
         action="store_true",
         help="Use arm-specific available tails instead of the common universe",
     )
+    parser.add_argument("--acquisition-target", choices=ACQUISITION_TARGETS, default="finite_benchmark_mean",
+                        help="Acquisition payoff; latent_mean reproduces saved latent-mean trajectories.")
     parser.add_argument("--horizon-bin-width", type=int, default=1)
     parser.add_argument(
         "--grid-size",
@@ -4351,6 +4431,7 @@ def main() -> None:
             direction_scheduler=args.direction_scheduler,
             eta_decay_schedule=args.eta_decay_schedule,
             recommendation_rule=args.recommendation_rule,
+            acquisition_target=args.acquisition_target,
             recommendation_beta=args.recommendation_beta,
             recommendation_min_samples=args.recommendation_min_samples,
             observation_budget_fraction=args.budget_fraction,
