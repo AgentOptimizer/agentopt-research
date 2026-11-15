@@ -29,6 +29,8 @@ from agentopt.model_selection.radial_gittins_dp import (  # noqa: E402
     RadialGittinsBoundaryCache,
     RadialGittinsGrid,
 )
+from agentopt.model_selection.finite_benchmark_gittins import ACQUISITION_TARGETS, validate_acquisition_target
+
 from experiments.combined_objective.compare_lcb_recommendations import (  # noqa: E402
     compact_lcb_run,
 )
@@ -76,7 +78,7 @@ PRIMARY_PAIR = "exact_axes"
 DEFAULT_OUTDIR = (
     ROOT
     / "experiments/combined_objective/results"
-    / "two_axis_finite_lcb_raw_mean_seed42_independent"
+    / "two_axis_full_benchmark_mean_seed42_independent"
 )
 
 
@@ -357,8 +359,10 @@ def run_one(
     direction_scheduler: str = "round_robin",
     acquisition_cost_mode: str = "real",
     continuation_mode: str = "eta_decay",
+    acquisition_target: str = "finite_benchmark_mean",
     ablation_name: str | None = None,
 ) -> dict[str, Any]:
+    validate_acquisition_target(acquisition_target)
     run_started_at_utc = datetime.now(timezone.utc).isoformat()
     run_started = time.perf_counter()
     directions = PAIRS[pair_name]
@@ -385,6 +389,7 @@ def run_one(
             "pair_name": pair_name,
             "directions": [list(direction) for direction in directions],
             "acquisition_cost_mode": acquisition_cost_mode,
+            "acquisition_target": acquisition_target,
             "continuation_mode": continuation_mode,
             "eta_decay_schedule": resolved_eta_decay_schedule,
             "direction_scheduler": direction_scheduler,
@@ -401,7 +406,8 @@ def run_one(
             "observation_budget_fraction": observation_budget_fraction,
             "input_sha256": benchmark_input_hashes(benchmark),
         }
-        existing = saved.get("config", {})
+        existing = dict(saved.get("config", {}))
+        existing.setdefault("acquisition_target", "latent_mean")
         mismatches = [
             key for key, value in requested.items() if existing.get(key) != value
         ]
@@ -432,6 +438,7 @@ def run_one(
         direction_scheduler=direction_scheduler,
         eta_decay_schedule=resolved_eta_decay_schedule,
         recommendation_rule="finite_lcb",
+        acquisition_target=acquisition_target,
         recommendation_beta=1.0,
         recommendation_min_samples=0,
         question_order="independent",
@@ -496,6 +503,7 @@ def run_one(
             "requested_eta_decay_schedule": eta_decay_schedule,
             "direction_scheduler": direction_scheduler,
             "acquisition_cost_mode": acquisition_cost_mode,
+            "acquisition_target": acquisition_target,
             "continuation_mode": continuation_mode,
             "expected_batch_cost_usd_override": expected_batch_cost_usd,
             "anytime": anytime,
@@ -506,6 +514,10 @@ def run_one(
                 (ROOT / "experiments/combined_objective/offline_radial_gittins.py").read_bytes()
             ).hexdigest(),
             "runner_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "boundary_source_sha256": {
+                name: hashlib.sha256((ROOT / "src/agentopt/model_selection" / name).read_bytes()).hexdigest()
+                for name in ("axis_gittins_dp.py", "radial_gittins_dp.py", "gittins_schedules.py", "finite_benchmark_gittins.py")
+            },
             "wall_time_seconds": simulation_wall_time,
             "wall_time_scope": "simulate_radial_gittins_only",
             "run_started_at_utc": run_started_at_utc,
@@ -576,6 +588,7 @@ def main() -> None:
             "(0, 1) + (1, 0) axes. Other choices are retained ablations."
         ),
     )
+    parser.add_argument("--acquisition-target", choices=ACQUISITION_TARGETS, default="finite_benchmark_mean")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
     parser.add_argument("--observation-budget-fraction", type=float, default=1.0)
@@ -626,6 +639,7 @@ def main() -> None:
                     observation_budget_fraction=args.observation_budget_fraction,
                     direction_scheduler=args.direction_scheduler,
                     acquisition_cost_mode=args.acquisition_cost_mode,
+                    acquisition_target=args.acquisition_target,
                     continuation_mode=args.continuation_mode,
                     ablation_name=args.ablation_name,
                 )

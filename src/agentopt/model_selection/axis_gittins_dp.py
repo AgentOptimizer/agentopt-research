@@ -25,6 +25,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .gittins_schedules import validate_dp_schedule
+
 
 def _positive_scalar(value: float, name: str) -> float:
     array = np.asarray(value, dtype=np.float64)
@@ -127,6 +129,8 @@ def build_axis_gittins_boundary_table(
     obs_noise_var: float,
     horizon: int,
     grid_size: int = 129,
+    variance_schedule: np.ndarray | None = None,
+    stage_costs: np.ndarray | None = None,
 ) -> AxisGittinsBoundaryTable:
     """Build a boundary schedule for one active objective and positive cost.
 
@@ -134,6 +138,8 @@ def build_axis_gittins_boundary_table(
     after any prior-fitting warmup. ``horizon`` counts subsequent pulls needed
     to complete the arm. The schedule uses scalar inputs deliberately: neither
     the unused objective's mean nor its variance belongs in an axis index.
+    Explicit variance and price schedules support fixed-benchmark targets and
+    partial final batches; default schedules retain latent-mean semantics.
     """
     from scipy.optimize import brentq
 
@@ -142,7 +148,11 @@ def build_axis_gittins_boundary_table(
     noise = _positive_scalar(obs_noise_var, "obs_noise_var")
     horizon = _integer(horizon, "horizon", 0)
     grid_size = _integer(grid_size, "grid_size", 17)
-    variances = scalar_posterior_variance_schedule(initial, noise, horizon)
+    variances = (scalar_posterior_variance_schedule(initial, noise, horizon)
+                 if variance_schedule is None else variance_schedule)
+    variances, prices = validate_dp_schedule(
+        variances, np.full(horizon, cost) if stage_costs is None else stage_costs, horizon, 1,
+    )
     total_std = math.sqrt(max(0.0, float(variances[0] - variances[-1])))
     scale = max(total_std, cost)
     scaled_cost = cost / scale
@@ -156,10 +166,12 @@ def build_axis_gittins_boundary_table(
 
     for stage in range(horizon - 1, -1, -1):
         std = float(transition_stds[stage])
-        remaining_cost = (horizon - stage) * scaled_cost
+        stage_price = scaled_cost if stage_costs is None else float(prices[stage] / scale)
+        remaining_cost = ((horizon - stage) * scaled_cost if stage_costs is None
+                          else float(prices[stage:].sum() / scale))
 
         def continuation(x: np.ndarray | float) -> np.ndarray:
-            return _hinge_expectation(x, knots, changes, std) - scaled_cost
+            return _hinge_expectation(x, knots, changes, std) - stage_price
 
         # Finishing without further retirement decisions guarantees expected
         # payoff x - remaining_cost, so this is a natural upper bracket.

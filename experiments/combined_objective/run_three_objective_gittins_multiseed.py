@@ -3,8 +3,8 @@
 
 Compact outputs retain every physical-batch recommendation and metric, while
 omitting repeated all-arm posterior arrays and the detailed physical trace.
-The four-direction seed 42 is copied from the validated original pilot, which
-remains untouched. The axes-only variant evaluates every seed independently.
+Saved results are reused only when acquisition payoff, protocol, inputs and
+sources match. Each new full-benchmark run evaluates its own trajectory.
 """
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT), str(ROOT / "src")]
 
 from experiments.combined_objective.offline_three_objective_gittins import simulate_three_objective_gittins
+from agentopt.model_selection.finite_benchmark_gittins import ACQUISITION_TARGETS, validate_acquisition_target
 from experiments.combined_objective.run_three_objective_gittins import (
     DEFAULT_OUTDIR as ORIGINAL_ROOT,
     DIRECTIONS,
@@ -38,8 +39,8 @@ from experiments.combined_objective.run_three_objective_gittins import (
 )
 from experiments.combined_objective.three_objective_metrics import enrich_run, load_three_objective_benchmark
 
-DEFAULT_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_20seed"
-DEFAULT_AXES_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_axes_20seed"
+DEFAULT_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_full_benchmark_20seed"
+DEFAULT_AXES_OUTDIR = ROOT / "experiments/combined_objective/results/three_objective_full_benchmark_axes_20seed"
 VARIANT_DIRECTIONS = {
     "four_directions": DIRECTIONS,
     "axes_only": ((1., 0., 0.), (0., 1., 0.), (0., 0., 1.)),
@@ -101,12 +102,14 @@ def compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def base_config(benchmark: str, seed: int, input_hashes: dict[str, str],
-                variant: str = "four_directions") -> dict[str, Any]:
-    """The exact original seed-42 numerical protocol and seven source hashes."""
+                variant: str = "four_directions", acquisition_target: str = "finite_benchmark_mean") -> dict[str, Any]:
+    """Frozen replay protocol, acquisition payoff, input and source hashes."""
+    validate_acquisition_target(acquisition_target)
     if variant not in VARIANT_DIRECTIONS:
         raise ValueError(f"unknown direction variant: {variant}")
     config = {
         "schema_version": 1, "benchmark": benchmark, "seed": seed,
+        "acquisition_target": acquisition_target,
         "objective_order": ["Q", "L", "D"],
         "raw_objectives": ["accuracy_max", "mean_latency_seconds_min", "mean_cost_usd_min"],
         "directions": [list(direction) for direction in VARIANT_DIRECTIONS[variant]],
@@ -121,7 +124,6 @@ def base_config(benchmark: str, seed: int, input_hashes: dict[str, str],
         "observation_budget_fraction": 1.,
         "input_sha256": input_hashes, "source_sha256": source_hashes(),
     }
-    # Keep four-direction configs byte-compatible with the preserved pilot.
     if variant != "four_directions":
         config["variant"] = variant
     return config
@@ -129,7 +131,9 @@ def base_config(benchmark: str, seed: int, input_hashes: dict[str, str],
 
 def validate_config(saved: dict[str, Any], expected: dict[str, Any], path: Path | str) -> None:
     """Fail closed when inputs, protocol or any frozen source have changed."""
-    mismatch = [key for key, value in expected.items() if saved.get("config", {}).get(key) != value]
+    existing = dict(saved.get("config", {}))
+    existing.setdefault("acquisition_target", "latent_mean")
+    mismatch = [key for key, value in expected.items() if existing.get(key) != value]
     if mismatch:
         raise ValueError(f"Refusing to reuse {path}; changed {mismatch}")
     run = saved.get("run", {})
@@ -153,10 +157,10 @@ def _receipt(payload: dict[str, Any], path: Path, status: str) -> dict[str, Any]
 
 def run_one(benchmark: str, seed: int, outdir: str | Path | None = None,
             original_root: str | Path = ORIGINAL_ROOT,
-            variant: str = "four_directions") -> dict[str, Any]:
+            variant: str = "four_directions", acquisition_target: str = "finite_benchmark_mean") -> dict[str, Any]:
     """Replay or resume one pair, writing compact JSON and returning a receipt."""
     models, questions, table, input_hashes = load_three_objective_benchmark(benchmark)
-    expected = base_config(benchmark, seed, input_hashes, variant=variant)
+    expected = base_config(benchmark, seed, input_hashes, variant=variant, acquisition_target=acquisition_target)
     if outdir is None:
         outdir = DEFAULT_AXES_OUTDIR if variant == "axes_only" else DEFAULT_OUTDIR
     path = Path(outdir) / f"seed_{seed}" / benchmark / "result.json"
@@ -172,7 +176,7 @@ def run_one(benchmark: str, seed: int, outdir: str | Path | None = None,
         return result
 
     original = Path(original_root) / f"seed_{seed}" / benchmark / "result.json"
-    if variant == "four_directions" and seed == 42 and original.exists():
+    if acquisition_target == "latent_mean" and variant == "four_directions" and seed == 42 and original.exists():
         saved = json.loads(original.read_text())
         validate_config(saved, expected, original)
         if saved["run"]["model_names"] != models or saved["run"]["question_ids"] != questions:
@@ -209,7 +213,7 @@ def run_one(benchmark: str, seed: int, outdir: str | Path | None = None,
         batch_size=4, warm_start_batch_size=4, grid_size=129,
         question_order="independent", warm_start_question_order="independent",
         lambda_initial=1., lambda_decay=.5, recommendation_beta=1.,
-        observation_budget_fraction=1., progress_callback=progress,
+        observation_budget_fraction=1., progress_callback=progress, acquisition_target=acquisition_target,
     )
     simulation_seconds = time.perf_counter() - started
     run = enrich_run(run)
@@ -233,7 +237,7 @@ def run_one(benchmark: str, seed: int, outdir: str | Path | None = None,
     return result
 
 
-def _worker(arguments: tuple[str, int, str, str, str]) -> dict[str, Any]:
+def _worker(arguments: tuple[str, int, str, str, str, str]) -> dict[str, Any]:
     return run_one(*arguments)
 
 
@@ -244,6 +248,7 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=2,
                         help="Default 2 for the 8 GB host; compact saving does not shrink the live engine state")
     parser.add_argument("--variant", choices=tuple(VARIANT_DIRECTIONS), default="four_directions")
+    parser.add_argument("--acquisition-target", choices=ACQUISITION_TARGETS, default="finite_benchmark_mean")
     parser.add_argument("--outdir", type=Path,
                         help="Defaults to separate four-direction or axes-only result root")
     parser.add_argument("--original-root", type=Path, default=ORIGINAL_ROOT)
@@ -254,7 +259,7 @@ def main() -> None:
         parser.error("benchmarks must be unique")
     if args.outdir is None:
         args.outdir = DEFAULT_AXES_OUTDIR if args.variant == "axes_only" else DEFAULT_OUTDIR
-    jobs = [(benchmark, seed, str(args.outdir), str(args.original_root), args.variant)
+    jobs = [(benchmark, seed, str(args.outdir), str(args.original_root), args.variant, args.acquisition_target)
             for seed in args.seeds for benchmark in args.benchmarks]
     receipts = []
     # Dense seed-42 sources are deliberately loaded serially before workers
@@ -267,7 +272,7 @@ def main() -> None:
             remaining.append(job)
     args.outdir.mkdir(parents=True, exist_ok=True)
     manifest = {"seeds": args.seeds, "benchmarks": args.benchmarks, "workers": args.workers,
-                "variant": args.variant, "storage_schema": STORAGE_SCHEMA,
+                "variant": args.variant, "acquisition_target": args.acquisition_target, "storage_schema": STORAGE_SCHEMA,
                 "requested_runs": len(jobs), "runs": receipts}
     dump_json(args.outdir / "manifest.json", manifest)
     if remaining:

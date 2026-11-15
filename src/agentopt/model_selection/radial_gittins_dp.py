@@ -24,6 +24,7 @@ from zipfile import BadZipFile
 
 import numpy as np
 
+from .gittins_schedules import validate_dp_schedule
 from .radial_gittins import expected_min_of_two_normals
 
 
@@ -709,8 +710,15 @@ def build_radial_gittins_boundary_table(
     obs_noise_var: VectorLike,
     horizon: int,
     grid: RadialGittinsGrid = RadialGittinsGrid(),
+    variance_schedule: np.ndarray | None = None,
+    stage_costs: np.ndarray | None = None,
 ) -> RadialGittinsBoundaryTable:
-    """Solve the finite-horizon radial retirement DP."""
+    """Solve the radial retirement DP, optionally with explicit stage schedules.
+
+    The terminal reward uses the last variance row. A full-benchmark schedule
+    ends at zero, so its completed reward is the known direction-wise minimum.
+    Explicit schedules are built through a separate finite-target memory cache.
+    """
     direction_array = _direction(direction)
     initial = _two_vector(initial_var, "initial_var", positive=True)
     noise = _two_vector(obs_noise_var, "obs_noise_var", positive=True)
@@ -723,7 +731,11 @@ def build_radial_gittins_boundary_table(
 
     z_grid = grid.z_grid
     delta_grid = grid.delta_grid
-    variances = posterior_variance_schedule(initial, noise, horizon)
+    variances = (posterior_variance_schedule(initial, noise, horizon)
+                 if variance_schedule is None else variance_schedule)
+    variances, prices = validate_dp_schedule(
+        variances, np.full(horizon, cost) if stage_costs is None else stage_costs, horizon, 2,
+    )
     factors = _scaling_factors(direction_array)
     x1_grid, x2_grid = _direction_aware_state_grids(
         grid,
@@ -746,7 +758,7 @@ def build_radial_gittins_boundary_table(
             x2_grid,
             kernel_stddevs=grid.kernel_stddevs,
         )
-        q_values = expectation - cost
+        q_values = expectation - float(prices[stage])
         boundaries[stage], violation = _boundary_from_q(
             q_values,
             x1_grid,

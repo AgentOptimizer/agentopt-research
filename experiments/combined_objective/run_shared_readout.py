@@ -16,8 +16,10 @@ from experiments.combined_objective.offline_radial_gittins import (
     mean_cost_metric_vectors,
     raw_pareto_front_indices,
 )
-from experiments.combined_objective.run_heldout_pareto import (
+from experiments.combined_objective.cost_aware_replay import (
+    CC_GITTINS,
     DEFAULT_METHODS,
+    GITTINS_ACQUISITION_TARGET,
     READOUTS,
     replay_search,
     write_json_once,
@@ -66,6 +68,7 @@ def run_benchmark(benchmark, seeds, methods, outdir):
             "readouts": list(READOUTS),
             "input_sha256": hashes,
             "protocol": PROTOCOL,
+            "cc_gittins_acquisition_target": GITTINS_ACQUISITION_TARGET if CC_GITTINS in methods else None,
         }
 
         def check_existing():

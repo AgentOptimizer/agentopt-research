@@ -1,8 +1,5 @@
-"""Replay acquisition on four query folds and score frozen sets on the fifth."""
+"""Matched cost-aware acquisition trajectories and finite-pool readouts."""
 
-import argparse
-from concurrent.futures import ProcessPoolExecutor
-from functools import lru_cache
 import json
 import math
 import os
@@ -14,27 +11,16 @@ import numpy as np
 
 from agentopt.model_selection.radial_gittins import PerArmQuestionSchedule
 from experiments.combined_objective.cost_aware_purchases import (
-    COHV_UCB,
-    SCALARIZATION_UCB,
-    cohv_purchases,
-    scalarization_ucb_purchases,
+    COHV_UCB, SCALARIZATION_UCB, cohv_purchases, scalarization_ucb_purchases,
 )
-from experiments.combined_objective.offline_multiobjective_random_search import mean_raw_vectors
 from experiments.combined_objective.offline_radial_gittins import (
-    RadialGittinsBoundaryCache,
-    RadialGittinsGrid,
-    _FiniteRecommendationCache,
-    _scaled_batch_noise,
-    fit_empirical_bayes_warm_start,
-    front_quality_metrics,
-    hypervolume_2d,
-    mean_cost_metric_vectors,
-    raw_pareto_front_indices,
+    RadialGittinsBoundaryCache, RadialGittinsGrid, _FiniteRecommendationCache,
+    _scaled_batch_noise, fit_empirical_bayes_warm_start, raw_pareto_front_indices,
     simulate_radial_gittins,
 )
-from experiments.combined_objective.run_two_direction_ablation import DATASETS, load_benchmark
 
 CC_GITTINS = "cc_gittins"
+GITTINS_ACQUISITION_TARGET = "finite_benchmark_mean"
 RANDOM_QUESTIONS = "random_questions"
 DEFAULT_METHODS = (CC_GITTINS, RANDOM_QUESTIONS, COHV_UCB)
 METHODS = (*DEFAULT_METHODS, SCALARIZATION_UCB)
@@ -42,12 +28,8 @@ PURCHASES = {COHV_UCB: cohv_purchases, SCALARIZATION_UCB: scalarization_ucb_purc
 TARGETS = (0.10, 0.30)
 READOUT = "finite_lcb_beta1"
 READOUTS = ("empirical_means", "finite_mean_beta0", READOUT)
-SPLIT_SEED = 2026
 BATCH_SIZE = 4
-FOLDS = tuple(range(1, 6))
-SEEDS = tuple(range(42, 46))
 COST_TOLERANCE = 1e-10
-DEFAULT_OUTDIR = Path(__file__).resolve().parent / "results" / "heldout_pareto"
 
 
 class AtReportingLimit(Exception):
@@ -141,6 +123,7 @@ def replay_search(
                 models, questions, table, directions=((0., 1.), (1., 0.)),
                 anytime=True, eta_decay_schedule="direction_stop", cost_model="raw_mean",
                 recommendation_rule="completed_only",
+                acquisition_target=GITTINS_ACQUISITION_TARGET,
                 prior_variance=calibration.prior_var,
                 question_order="independent", warm_start_question_order="independent",
                 seed=seed, batch_size=batch, lambda_initial=1., lambda_decay=.5,
@@ -270,48 +253,10 @@ def replay_search(
         "warm_cost_fraction_by_method": warm_cost_fraction_by_method,
         "quality_prior_variance_by_method": quality_prior_variance_by_method,
         "cc_gittins_stop": cc_stop,
+        "cc_gittins_acquisition_target": GITTINS_ACQUISITION_TARGET if CC_GITTINS in methods else None,
         "cohv_ucb_budget_fraction": TARGETS[-1] if COHV_UCB in methods else None,
         "cc_gittins_seconds": cc_seconds, "wall_seconds": time.perf_counter() - started,
     }
-
-
-def score_heldout(run, models, heldout_queries, table, exhaustive_search_frontier):
-    """Read the held-out matrix only after all recommendations are frozen."""
-    heldout_objectives = mean_raw_vectors(models, heldout_queries, table)
-    score_vectors, cost_reference = mean_cost_metric_vectors(heldout_objectives)
-    oracle = raw_pareto_front_indices(heldout_objectives)
-    oracle_vectors = score_vectors[list(oracle)]
-    oracle_ids = set(oracle)
-    reference = (0.0, 0.0)
-    oracle_hv = hypervolume_2d(oracle_vectors, reference)
-
-    @lru_cache(maxsize=None)
-    def score(selected):
-        metrics = front_quality_metrics(score_vectors[list(selected)], oracle_vectors,
-                                        reference, oracle_hv)
-        matched = len(oracle_ids.intersection(selected))
-        return {
-            "hv": metrics.hypervolume,
-            "hv_regret": metrics.hypervolume_regret,
-            "gd": metrics.generational_distance,
-            "igd": metrics.inverted_generational_distance,
-            "precision": matched / len(selected),
-            "recall": matched / len(oracle),
-        }
-
-    for row in run["rows"]:
-        row.update(score(row["recommendations"]))
-    for curve in run.get("curve_by_method", {}).values():
-        for row in curve:
-            row.update(score(row["recommendations"]))
-    run.update(
-        heldout_objectives=heldout_objectives.tolist(),
-        heldout_oracle=oracle,
-        heldout_oracle_hv=oracle_hv,
-        cost_reference_usd=cost_reference,
-        exhaustive_search_frontier=exhaustive_search_frontier,
-        exhaustive_search_heldout_metrics=score(exhaustive_search_frontier),
-    )
 
 
 def write_json_once(destination: Path, result: dict) -> bool:
@@ -337,89 +282,3 @@ def write_json_once(destination: Path, result: dict) -> bool:
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-
-
-def _resume(destination, metadata, methods):
-    try:
-        with destination.open(encoding="utf-8") as handle:
-            prior = json.load(handle)
-    except (OSError, ValueError) as exc:
-        raise ValueError(f"Cannot resume {destination}: {exc}") from exc
-    if not isinstance(prior, dict):
-        raise ValueError(f"Cannot resume {destination}: expected a JSON object")
-
-    changed = [key for key, value in metadata.items() if prior.get(key) != value]
-    curves = prior.get("curve_by_method")
-    if not isinstance(curves, dict) or set(curves) != set(methods):
-        changed.append("methods")
-    if changed:
-        raise ValueError(
-            f"Cannot resume {destination}: mismatched {', '.join(changed)}. "
-            "Use a new --outdir for a different replay."
-        )
-
-
-def _run_benchmark(benchmark, folds, seeds, methods, outdir):
-    models, questions, table, hashes = load_benchmark(benchmark)
-    shuffled = np.random.default_rng(SPLIT_SEED).permutation(questions)
-    buckets = np.array_split(shuffled, len(FOLDS))
-    for fold in folds:
-        heldout_ids = set(buckets[fold - 1].tolist())
-        heldout = [int(q) for q in questions if q in heldout_ids]
-        search = [int(q) for q in questions if q not in heldout_ids]
-        search_table = {model: {q: table[model][q] for q in search} for model in models}
-        full_cost = math.fsum(entry.cost for samples in search_table.values() for entry in samples.values())
-        exhaustive_frontier = raw_pareto_front_indices(mean_raw_vectors(models, search, search_table))
-        for seed in seeds:
-            destination = outdir / f"{benchmark}-fold{fold}-seed{seed}.json"
-            metadata = {
-                "benchmark": benchmark, "fold": fold, "seed": seed, "split_seed": SPLIT_SEED,
-                "search_queries": search, "heldout_queries": heldout, "input_sha256": hashes,
-                "full_search_cost_usd": full_cost, "models": list(models), "readout": READOUT,
-            }
-            if destination.exists():
-                _resume(destination, metadata, methods)
-                print(f"Reused {destination}", flush=True)
-                continue
-            run = replay_search(models, search, search_table, full_cost, seed,
-                                methods=methods, save_curve=True)
-            score_heldout(run, models, heldout, table, exhaustive_frontier)
-            run.update(metadata)
-            if write_json_once(destination, run):
-                print(f"Saved {destination} ({run['wall_seconds']:.1f}s for search)", flush=True)
-            else:
-                _resume(destination, metadata, methods)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--benchmarks", nargs="+", choices=tuple(DATASETS), default=tuple(DATASETS))
-    parser.add_argument("--folds", nargs="+", type=int, choices=FOLDS, default=FOLDS)
-    parser.add_argument("--seeds", nargs="+", type=int, default=SEEDS)
-    parser.add_argument("--methods", nargs="+", choices=METHODS, default=DEFAULT_METHODS)
-    parser.add_argument("--outdir", type=Path, default=DEFAULT_OUTDIR)
-    parser.add_argument("--workers", type=int, default=1, help="independent benchmark/fold processes")
-    args = parser.parse_args()
-    for key in ("benchmarks", "folds", "seeds", "methods"):
-        values = getattr(args, key)
-        if len(values) != len(set(values)):
-            parser.error(f"--{key} cannot contain duplicates")
-    if args.workers < 1 or any(seed < 0 for seed in args.seeds):
-        parser.error("--workers must be positive and --seeds nonnegative")
-
-    if args.workers == 1:
-        for benchmark in args.benchmarks:
-            _run_benchmark(benchmark, args.folds, args.seeds, args.methods, args.outdir)
-        return
-
-    with ProcessPoolExecutor(max_workers=args.workers) as executor:
-        futures = [
-            executor.submit(_run_benchmark, benchmark, (fold,), args.seeds, args.methods, args.outdir)
-            for benchmark in args.benchmarks for fold in args.folds
-        ]
-        for future in futures:
-            future.result()
-
-
-if __name__ == "__main__":
-    main()
