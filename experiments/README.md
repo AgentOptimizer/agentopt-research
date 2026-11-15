@@ -136,6 +136,44 @@ the paper's affine cost scale and the full-data frontier.
 The adaptive scores use accuracy and reciprocal desirability of the estimated
 mean USD cost. Except for CoPSI, recommendations use the empirical Pareto set.
 
+## Held-out evaluation across SCOPE datasets
+
+Each comparison starts with configurations that have complete accuracy and cost
+observations in both caches. Configurations are matched by their role-to-model
+assignments. CC-Gittins uses the finite benchmark mean of the **search** questions
+for acquisition and quality-LCB/cost-UCB recommendation. At each requested
+budget, the replay freezes the last recommendation available at or below the
+cap, using realized USD search cost including warm-up. A cap below warm-up spend
+has no recommendation. The budget denominator covers exhaustive search on the
+common configuration pool.
+
+The test cache supplies mean quality and deployment cost for every configuration
+in the pool. The scorer compares the complete frozen set with the test Pareto
+frontier of that pool, including configurations that become dominated on test.
+Each result records the configuration mapping, input hashes, query IDs, budget
+checkpoints, test objectives, and frontier metrics. The replay uses recorded
+observations and makes no model API calls.
+
+Restaurant Valid to Restaurant Test is the default pair (36 configurations,
+156 search questions and 86 test questions).
+
+```bash
+python -m experiments.combined_objective.run_heldout_pareto \
+  --pair restaurant --seeds 42 --budgets 0.10 0.30
+```
+
+Use `--pair data_transformation` for Bing Query Logs to Stack Overflow
+(23 configurations, 102 search questions and 710 test questions). Add
+`--dry-run` to validate the inputs and report pool sizes without replaying.
+
+BIRD Mini Dev to BIRD Dev has 27 common complete configurations. For
+`--pair bird`, pass `--bird-question-map /path/to/map.json` with a `source`
+describing the exact dataset versions and cache ordering, and a `mini_to_dev`
+object mapping every Mini Dev cache question ID to the list of all matching
+Dev cache question IDs. The scorer excludes the union of those Dev IDs.
+The integer IDs in the matrices are dataset-local positions, so equal IDs or
+the first 500 Dev columns cannot identify the overlapping questions.
+
 ## Three-objective latency pilot
 
 The separate latency pilot uses the complete MathQA and HotpotQA matrices and
